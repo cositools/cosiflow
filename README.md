@@ -16,7 +16,7 @@ docker build --platform linux/arm64 -t airflow:1.0.0 -f Dockerfile .
 
 Linux:
 ```
-docker build -t airflow:1.0.0 -f Dockerfile .
+docker build -t airflow:1.1.0 -f Dockerfile .
 ```
 
 2) Execute the docker compose to start containers
@@ -32,13 +32,25 @@ If you want to enter into the postgre docker container: docker-compose exec cosi
 
 6) Connect to the web server using a browser
 
-get password from docker logs
 
-```
-docker compose -f docker-compose.yaml logs | grep pass
-```
+localhost:8080
+
+Note: if you use a remote server you can change the docker-compose.yaml file to use another port.
+
+For example:
+
+  ports:
+    - "28080:8080"
+
+then from your local pc you can forward the port in this way:
+
+ssh -N -L 28080:localhost:28080 [user]@[remote machine]
+
+and open the airflow webpace from your local pc at localhost:28080
 
 Login with username: admin  password: -
+
+The password is inside the docker-compose.yaml file and can be changed.
 
 7) To shutdown the dockers:
 
