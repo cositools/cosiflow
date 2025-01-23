@@ -69,7 +69,6 @@ RUN  mkdir /data01
 RUN chown -R gamma:gamma /data01
 RUN  mkdir /data02
 RUN chown -R gamma:gamma /data02
-COPY ./entrypoint.sh /home/gamma/entrypoint.sh
 RUN chmod +x /home/gamma/entrypoint.sh
 
 USER gamma
