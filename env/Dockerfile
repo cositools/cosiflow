@@ -28,6 +28,12 @@ ARG MINICONDA=Miniconda3-latest-Linux-aarch64.sh
 # INTEL/AMD processors
 ARG MINICONDA=Miniconda3-latest-Linux-x86_64.sh
 
+#RUN export AIRFLOW_HOME=$HOME/airflow && mkdir $AIRFLOW_HOME
+
+#COPY airflow.cfg.postgresql $AIRFLOW_HOME/airflow.cfg
+
+RUN mkdir -p ${HOME}/airflow/dags
+
 # Scarica Miniconda utilizzando la variabile
 RUN wget https://repo.anaconda.com/miniconda/$MINICONDA \
     && chmod +x $MINICONDA \
@@ -38,11 +44,23 @@ RUN chown -R gamma:gamma /home/gamma
 
 USER gamma
 
+COPY entrypoint.sh /home/gamma/entrypoint.sh
+
 RUN export PATH=$PATH:/opt/conda/bin && conda config --append channels conda-forge && conda config --set channel_priority strict
 
 #RUN export PATH=$PATH:/opt/conda/bin && conda create -n gamma -f /home/gamma/env/environment.yml
 
-RUN export PATH=$PATH:/opt/conda/bin && conda create -n gamma python=3.12 pip jupyter numpy scipy matplotlib pandas plotly scikit-learn tensorboard tensorflow inotify_simple -y 
+RUN export PATH=$PATH:/opt/conda/bin && conda create -n gamma python=3.12 pip psycopg2 jupyter numpy scipy matplotlib pandas plotly scikit-learn tensorboard tensorflow inotify_simple -y 
+
+RUN export PATH=$PATH:/opt/conda/bin && source activate gamma && export AIRFLOW_VERSION=2.10.3 && \
+           export PYTHON_VERSION="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" && \
+           export CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt" && \
+           pip install "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINT_URL}" && \
+           airflow db init && \
+           airflow users create --username admin --lastname Admin --firstname Airflow --email admin@example.com --role Admin --password 6Te3MbEndhKt23km
+
+
+RUN export PATH=$PATH:/opt/conda/bin && conda create -n cosipy python=3.10 pip jupyter notebook && source activate cosipy && git clone https://github.com/cositools/cosipy.git && cd cosipy && git checkout develop && pip install -e .
 
 USER root
 RUN  mkdir /shared_dir
@@ -51,7 +69,6 @@ RUN  mkdir /data01
 RUN chown -R gamma:gamma /data01
 RUN  mkdir /data02
 RUN chown -R gamma:gamma /data02
-COPY ./entrypoint.sh /home/gamma/entrypoint.sh
 RUN chmod +x /home/gamma/entrypoint.sh
 
 USER gamma
@@ -65,5 +82,4 @@ RUN mkdir /home/gamma/workspace/log
 
 ENV PATH="/opt/conda/bin:$PATH"
 
-
-#ENTRYPOINT ["bash", "/home/gamma/entrypoint.sh"]
+#ENTRYPOINT ["/home/gamma/entrypoint.sh"]

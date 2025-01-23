@@ -1,0 +1,32 @@
+
+
+services:
+  postgres:
+    image: postgres
+    container_name: cosi_postgres
+    environment:
+      - POSTGRES_USER=airflow_user
+      - POSTGRES_PASSWORD=secure_password
+      - POSTGRES_DB=airflow_db
+    volumes:
+      - ${HOME}/postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  airflow:
+    image: airflow:1.1.0
+    container_name: cosi_airflow
+    environment:
+      - DISPLAY=${DISPLAY}
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow_user:secure_password@cosi_postgres:5432/airflow_db
+    volumes:
+      #- ./entrypoint.sh:/home/gamma/entrypoint.sh
+      - ../dags:${HOME}/airflow/dags
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/cosiflow:/shared_dir
+    ports:
+      - "8080:8080"
+    restart: always   
+    entrypoint: ["bash", "/home/gamma/entrypoint.sh"]
+
+volumes:
+  postgres_data:
