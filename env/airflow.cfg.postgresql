@@ -4,7 +4,7 @@
 #
 # Variable: AIRFLOW__CORE__DAGS_FOLDER
 #
-dags_folder = /shared_dir/airflow/dags
+dags_folder = $HOME/airflow/dags
 
 # Hostname by providing a path to a callable, which will resolve the hostname.
 # The format is "package.function".
@@ -128,7 +128,7 @@ load_examples = True
 #
 # Variable: AIRFLOW__CORE__PLUGINS_FOLDER
 #
-plugins_folder = /shared_dir/airflow/plugins
+plugins_folder = $HOME/airflow/plugins
 
 # Should tasks be executed via forking of the parent process
 # 
@@ -641,7 +641,7 @@ check_migrations = True
 #
 # Variable: AIRFLOW__LOGGING__BASE_LOG_FOLDER
 #
-base_log_folder = /shared_dir/airflow/logs
+base_log_folder = $HOME/airflow/logs
 
 # Airflow can store logs remotely in AWS S3, Google Cloud Storage or Elastic Search.
 # Set this to ``True`` if you want to enable remote logging.
@@ -823,7 +823,7 @@ log_processor_filename_template = {{ filename }}.log
 #
 # Variable: AIRFLOW__LOGGING__DAG_PROCESSOR_MANAGER_LOG_LOCATION
 #
-dag_processor_manager_log_location = /shared_dir/airflow/logs/dag_processor_manager/dag_processor_manager.log
+dag_processor_manager_log_location = $HOME/airflow/logs/dag_processor_manager/dag_processor_manager.log
 
 # Whether DAG processor manager will write logs to stdout
 #
@@ -1393,7 +1393,7 @@ access_denied_message = Access is Denied
 #
 # Variable: AIRFLOW__WEBSERVER__CONFIG_FILE
 #
-config_file = /shared_dir/airflow/webserver_config.py
+config_file = $HOME/airflow/webserver_config.py
 
 # The base url of your website: Airflow cannot guess what domain or CNAME you are using.
 # This is used to create links in the Log Url column in the Browse - Task Instances menu,
@@ -2167,8 +2167,8 @@ orphaned_tasks_check_interval = 300.0
 # Determines the directory where logs for the child processes of the scheduler will be stored
 #
 # Variable: AIRFLOW__SCHEDULER__CHILD_PROCESS_LOG_DIRECTORY
-#
-child_process_log_directory = /shared_dir/airflow/logs/scheduler
+
+child_process_log_directory = $HOME/airflow/logs/scheduler
 
 # Local task jobs periodically heartbeat to the DB. If the job has
 # not heartbeat in this many seconds, the scheduler will mark the

@@ -25,9 +25,9 @@ docker build -t airflow:1.1.0 -f Dockerfile .
 docker compose up -d
 ```
 
-If you want to enter into the postgre docker container: docker-compose exec cosi_postgres bash
+If you want to enter into the postgre docker container: docker-compose exec postgres bash
 
-If you want to enter into the postgre docker container: docker-compose exec cosi_airflow bash
+If you want to enter into the postgre docker container: docker-compose exec airflow bash
 
 
 6) Connect to the web server using a browser
@@ -50,7 +50,11 @@ and open the airflow webpace from your local pc at localhost:28080
 
 Login with username: admin  password: -
 
-The password is inside the Dockerfile and can be changed before building the container.
+To obtain the password execute this command after the initialization of the containers
+
+```
+docker compose logs | grep pass
+```
 
 7) To shutdown the dockers:
 
