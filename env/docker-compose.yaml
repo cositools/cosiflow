@@ -25,6 +25,7 @@ services:
       - ${HOME}/cosiflow:/shared_dir
     ports:
       - "8080:8080"
+      - "28888:28888" #jupyter notebook
     #restart: always   
     entrypoint: ["bash", "/home/gamma/entrypoint.sh"]
     #entrypoint: ["tail", "-f", "/dev/null"]
