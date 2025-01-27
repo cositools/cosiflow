@@ -6,17 +6,9 @@ import time
 import datetime
 import logging
 from logging.handlers import RotatingFileHandler
-from inotify_simple import INotify, flags
 from airflow.exceptions import AirflowSkipException
 from airflow.operators.dagrun_operator import TriggerDagRunOperator
 from airflow.decorators import task, dag
-
-#airflow dags trigger cosi_data_analysis_pipeline_v3
-#airflow dags list-runs -d cosi_data_analysis_pipeline_v3 --state running
-
-#@task.external_python(serializer="dill",python='/home/gamma/.conda/envs/cosipy/bin/python')
-#def process_file(**keyargs):
-#    print(keyargs)
 
 #AIRFLOW
 class DataPipeline:
@@ -24,10 +16,6 @@ class DataPipeline:
         self.base_dir = '/home/gamma/workspace/data'
         self.heasarc_dir = '/home/gamma/workspace/heasarc'
         self.logger_dir = '/home/gamma/workspace/log'
-
-        #self.inotify = INotify()
-        #self.watch_flags = flags.CLOSE_WRITE
-        #self.inotify.add_watch(f'{self.base_dir}/input', self.watch_flags)
 
         # Logger setup for both Celery and the pipeline
         self.logger = logging.getLogger('data_pipeline_logger')
@@ -169,10 +157,10 @@ with DAG('cosipy_external_python_v2', default_args={'owner': 'airflow'}, schedul
         python_callable=pipeline.ingest_and_store_dl0_sensor,
     )
  
-    # Definisci il task per triggerare il DAG stesso
+    
     trigger_next_run = TriggerDagRunOperator(
         task_id="trigger_next_run",
-		trigger_dag_id="cosipy_external_python_v2",  # Stesso DAG
+		trigger_dag_id="cosipy_external_python_v2", 
 		dag=dag,
 	)
     
@@ -183,8 +171,6 @@ with DAG('cosipy_external_python_v2', default_args={'owner': 'airflow'}, schedul
         op_args=["{{ task_instance.xcom_pull(task_ids='ingest_and_store_dl0_sensor', key='stored_dl0_file') }}"],
         dag=dag,
     )
-
-    #process_file_task = process_file()
 
     wait_for_new_file_sensor_task  >> ingest_and_store_dl0_task_sensor >> generate_plots  >> trigger_next_run
     
