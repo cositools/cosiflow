@@ -39,6 +39,7 @@ RUN chown -R gamma:gamma /home/gamma
 USER gamma
 
 COPY entrypoint.sh /home/gamma/entrypoint.sh
+COPY setup_env.sh /home/gamma/setup_env.sh
 
 RUN export PATH=$PATH:/opt/conda/bin && conda config --append channels conda-forge && conda config --set channel_priority strict
 
@@ -62,6 +63,8 @@ RUN chown -R gamma:gamma /data01
 RUN  mkdir /data02
 RUN chown -R gamma:gamma /data02
 RUN chmod +x /home/gamma/entrypoint.sh
+RUN chmod +x /home/gamma/setup_env.sh
+
 
 USER gamma
 RUN mkdir /home/gamma/workspace
