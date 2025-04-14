@@ -24,6 +24,18 @@ docker build -t airflow:1.1.0 -f Dockerfile .
 
 ## Execute the docker compose to start containers
 
+Before running the following command to start the containers, make sure to create a `.env` file with the following structure in `cosiflow/env`:
+
+```env
+AIRFLOW_ADMIN_USERNAME=admin
+AIRFLOW_ADMIN_EMAIL=admin@localhost
+AIRFLOW_ADMIN_PASSWORD=<AIRFLOW_PASS>
+```
+
+Replace `<AIRFLOW_PASS>` with your desired password.
+
+Now you can start the containers.
+
 ```bash
 docker compose up -d
 ```
