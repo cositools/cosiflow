@@ -9,6 +9,7 @@ from logging.handlers import RotatingFileHandler
 from inotify_simple import INotify, flags
 from airflow.exceptions import AirflowSkipException
 from airflow.operators.dagrun_operator import TriggerDagRunOperator
+from datetime import timedelta
 
 # Import necessary Airflow classes and standard libraries
 
@@ -89,9 +90,9 @@ class DataPipeline:
                 os.makedirs(f'{self.heasarc_dir}/dl0', exist_ok=True)
                 timestamp_utc = datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d_%H-%M-%S')
                 new_dir = f'{self.heasarc_dir}/dl0/{timestamp_utc}'
-                os.makedirs(new_dir, exist_ok=True)
-                stored_file_path = f"{new_dir}/{os.path.basename(input_files)}"
-                os.rename(input_files, stored_file_path)
+                os.rename(input_files, new_dir)
+                # List the files in the new directory and get the tar.gz file
+                stored_file_path = os.path.join(new_dir, os.listdir(new_dir)[0])
                 self.logger.info(f"Stored DL0 file: {stored_file_path}")
                 # Push the new file path to XCom for further use
                 ti.xcom_push(key='stored_dl0_file', value=stored_file_path)
@@ -110,11 +111,13 @@ class DataPipeline:
 pipeline = DataPipeline()
 
 # Define the Airflow DAG to orchestrate DL0 file monitoring, ingestion, and plotting
-with DAG('cosipy_test_v0', default_args={'owner': 'airflow'}, schedule=None, 
-        #start_date=datetime.now(),
-        max_active_tasks=5,  # Maximum number of tasks that can be executed simultaneously per DAG
-        max_active_runs=4  # Maximum number of DAG instances that can be executed simultaneously
-        ) as dag:
+with DAG('cosipy_test_v0', 
+         default_args={'owner': 'airflow'}, 
+         schedule=None, 
+         #start_date=datetime.now(),
+         max_active_tasks=5,  # Maximum number of tasks that can be executed simultaneously per DAG
+         max_active_runs=4  # Maximum number of DAG instances that can be executed simultaneously
+         ) as dag:
 
     # Task to detect the arrival of new files in the input directory
     wait_for_new_file_sensor_task = PythonOperator(
@@ -147,3 +150,42 @@ with DAG('cosipy_test_v0', default_args={'owner': 'airflow'}, schedule=None,
     )
 
     wait_for_new_file_sensor_task  >> ingest_and_store_dl0_task_sensor >> generate_plots  >> trigger_next_run
+
+# DAG separato che esegue lo script di inizializzazione ogni ora e poi lancia il DAG principale
+with DAG('cosipy_initialize_dag',
+         default_args={'owner': 'airflow',
+                       'start_date': datetime.datetime(2025, 1, 1),},
+         schedule_interval=timedelta(hours=2),  # Runs every 2 hours
+         catchup=False,
+         max_active_runs=1,
+         ) as init_dag:
+
+    initialize_pipeline_task = BashOperator(
+        task_id='initialize_pipeline_task',
+        bash_command="""
+            cd /shared_dir/pipeline &&
+            source activate cosipy && 
+            python /shared_dir/pipeline/initialize_pipeline.py
+        """,
+        dag=init_dag
+    )
+    
+    copy_initfile_task = BashOperator(
+        task_id='copy_initfile_task',
+        bash_command="""
+            FILE_NAME=GalacticScan.inc1.id1.crab2hr.extracted.tra.gz &&
+            TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S") &&
+            DEST_DIR="/home/gamma/workspace/data/input/$TIMESTAMP" &&
+            mkdir -p "$DEST_DIR" &&
+            mv "/home/gamma/workspace/data/$FILE_NAME" "$DEST_DIR/" 
+        """,
+        dag=init_dag
+    )
+
+    trigger_main_dag = TriggerDagRunOperator(
+        task_id="trigger_cosipy_test_v0",
+        trigger_dag_id="cosipy_test_v0",
+        dag=init_dag
+    )
+
+    initialize_pipeline_task >> copy_initfile_task >> trigger_main_dag
