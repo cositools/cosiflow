@@ -1,17 +1,25 @@
 services:
   postgres:
-    image: postgres
+    image: postgres:15
     container_name: cosi_postgres
     environment:
       - POSTGRES_USER=airflow_user
       - POSTGRES_PASSWORD=secure_password
       - POSTGRES_DB=airflow_db
-    #volumes:
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow_user"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # volumes:
      # - ${HOME}/postgres_data:/var/lib/postgresql/data
     #restart: always
 
   airflow:
     image: airflow:1.1.0
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
     container_name: cosi_airflow
     environment:
       - AIRFLOW_HOME=/home/gamma/airflow
@@ -24,12 +32,32 @@ services:
       - ./airflow.cfg.postgresql:/home/gamma/airflow/airflow.cfg
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${HOME}/cosiflow:/shared_dir
+      - ${HOME}/cosiflow/pipeline/data:/home/gamma/workspace/heasarc
     ports:
       - "8080:8080"
       - "28888:28888" #jupyter notebook
+    depends_on:
+      postgres:
+        condition: 
+          service_healthy
+      
     #restart: always   
-    entrypoint: ["bash", "/home/gamma/entrypoint.sh"]
+    entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh"]
     #entrypoint: ["tail", "-f", "/dev/null"]
+
+  webgui:
+    build:
+      context: .
+      dockerfile: Dockerfile.webgui
+    container_name: cosi_webgui
+    environment:
+      - DISPLAY=${DISPLAY}
+    volumes:
+      - ${HOME}/cosiflow/pipeline/data:/home/gamma/workspace/heasarc
+      - ${HOME}/cosiflow:/shared_dir
+    ports:
+      - "8081:8081"
+    entrypoint: ["bash", "/home/gamma/entrypoint-webgui.sh"]
 
 volumes:
   postgres_data:
