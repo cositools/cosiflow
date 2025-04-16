@@ -10,7 +10,7 @@ from inotify_simple import INotify, flags
 from airflow.exceptions import AirflowSkipException
 from airflow.operators.dagrun_operator import TriggerDagRunOperator
 from datetime import timedelta
-
+import shutil
 # Import necessary Airflow classes and standard libraries
 
 # Define a data pipeline class for monitoring, ingesting, and storing DL0 files
@@ -90,7 +90,11 @@ class DataPipeline:
                 os.makedirs(f'{self.heasarc_dir}/dl0', exist_ok=True)
                 timestamp_utc = datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d_%H-%M-%S')
                 new_dir = f'{self.heasarc_dir}/dl0/{timestamp_utc}'
-                os.rename(input_files, new_dir)
+                if os.path.isdir(input_files):
+                    shutil.move(input_files, new_dir)
+                else:
+                    os.makedirs(os.path.dirname(new_dir), exist_ok=True)
+                    shutil.move(input_files, new_dir)
                 # List the files in the new directory and get the tar.gz file
                 stored_file_path = os.path.join(new_dir, os.listdir(new_dir)[0])
                 self.logger.info(f"Stored DL0 file: {stored_file_path}")
