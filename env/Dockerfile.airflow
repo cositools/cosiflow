@@ -68,7 +68,6 @@ RUN mkdir /home/gamma/workspace
 #dir to run pipeline
 RUN mkdir /home/gamma/workspace/data
 RUN mkdir /home/gamma/workspace/data/input
-# RUN mkdir /home/gamma/workspace/heasarc
 RUN mkdir /home/gamma/workspace/log
 
 

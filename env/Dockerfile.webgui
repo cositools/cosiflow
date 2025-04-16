@@ -13,7 +13,7 @@ USER root
 RUN chmod +x /home/gamma/entrypoint-webgui.sh
 
 # Crea le directory richieste (opzionale)
-RUN mkdir -p /home/gamma/workspace/heasarc
+# RUN mkdir -p /home/gamma/workspace/heasarc
 
 # Installa eventuali pacchetti (opzionale)
 # RUN pip install flask ...
