@@ -155,15 +155,18 @@ with DAG('cosipy_test_v0',
 
     wait_for_new_file_sensor_task  >> ingest_and_store_dl0_task_sensor >> generate_plots  >> trigger_next_run
 
-# DAG separato che esegue lo script di inizializzazione ogni ora e poi lancia il DAG principale
+# Separate DAG that runs the initialization script every two hours and then triggers the main DAG
 with DAG('cosipy_initialize_dag',
-         default_args={'owner': 'airflow',
-                       'start_date': datetime.datetime(2025, 1, 1),},
-         schedule_interval=timedelta(hours=2),  # Runs every 2 hours
-         catchup=False,
-         max_active_runs=1,
+         default_args={
+             'owner': 'airflow',
+             'start_date': datetime.datetime.now(),  # Start immediately
+         },
+         schedule_interval=datetime.timedelta(hours=2),  # Execute every 2 hours
+         catchup=False,  # Do not run past scheduled runs
+         max_active_runs=1,  # Only one instance of this DAG can run at a time
          ) as init_dag:
 
+    # Task to run the pipeline initialization script in the cosipy environment
     initialize_pipeline_task = BashOperator(
         task_id='initialize_pipeline_task',
         bash_command="""
@@ -174,6 +177,7 @@ with DAG('cosipy_initialize_dag',
         dag=init_dag
     )
     
+    # Task to move a specific initial file to a timestamped folder in the input directory
     copy_initfile_task = BashOperator(
         task_id='copy_initfile_task',
         bash_command="""
@@ -186,10 +190,12 @@ with DAG('cosipy_initialize_dag',
         dag=init_dag
     )
 
+    # Task to trigger the main DAG that handles monitoring and processing
     trigger_main_dag = TriggerDagRunOperator(
         task_id="trigger_cosipy_test_v0",
         trigger_dag_id="cosipy_test_v0",
         dag=init_dag
     )
 
+    # Define task execution order
     initialize_pipeline_task >> copy_initfile_task >> trigger_main_dag
