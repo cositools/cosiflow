@@ -18,6 +18,7 @@ services:
     environment:
       - AIRFLOW_HOME=/home/gamma/airflow
       - DISPLAY=${DISPLAY}
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
     volumes:
       - ../dags:/home/gamma//airflow/dags
       - ./airflow.cfg.postgresql:/home/gamma/airflow/airflow.cfg
