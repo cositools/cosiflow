@@ -111,7 +111,6 @@ pipeline = DataPipeline()
 
 # Define the Airflow DAG to orchestrate DL0 file monitoring, ingestion, and plotting
 with DAG('cosipy_test_v0', default_args={'owner': 'airflow'}, schedule=None, 
-        #start_date=datetime.now(),
         max_active_tasks=5,  # Maximum number of tasks that can be executed simultaneously per DAG
         max_active_runs=4  # Maximum number of DAG instances that can be executed simultaneously
         ) as dag:
