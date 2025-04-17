@@ -9,7 +9,6 @@ from logging.handlers import RotatingFileHandler
 from inotify_simple import INotify, flags
 from airflow.exceptions import AirflowSkipException
 from airflow.operators.dagrun_operator import TriggerDagRunOperator
-from datetime import timedelta
 import shutil
 # Import necessary Airflow classes and standard libraries
 
