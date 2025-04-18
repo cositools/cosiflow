@@ -152,7 +152,7 @@ with DAG('cosipy_test_v0', default_args={'owner': 'airflow'}, schedule=None,
     wait_for_new_file_sensor_task  >> ingest_and_store_dl0_task_sensor >> generate_plots  >> trigger_next_run
 
 # Separate DAG that runs the initialization script every two hours and then triggers the main DAG
-with DAG('cosipy_initialize_dag',
+with DAG('cosipy_contactsimulator',
          default_args={
              'owner': 'airflow',
              'start_date': datetime.datetime.now(),  # Start immediately
