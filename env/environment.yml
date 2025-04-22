@@ -1,0 +1,11 @@
+name: cosienv
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - root=6.26
+  - root_base=6.26
+  - pip
+  - python=3.10  # Specifica la versione di Python se necessario
+  - pip:
+    - cosipy
