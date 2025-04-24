@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 from inotify_simple import INotify, flags
 from airflow.exceptions import AirflowSkipException
 from airflow.operators.dagrun_operator import TriggerDagRunOperator
-
+import shutil
 # Import necessary Airflow classes and standard libraries
 
 # Define a data pipeline class for monitoring, ingesting, and storing DL0 files
@@ -89,9 +89,13 @@ class DataPipeline:
                 os.makedirs(f'{self.heasarc_dir}/dl0', exist_ok=True)
                 timestamp_utc = datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d_%H-%M-%S')
                 new_dir = f'{self.heasarc_dir}/dl0/{timestamp_utc}'
-                os.makedirs(new_dir, exist_ok=True)
-                stored_file_path = f"{new_dir}/{os.path.basename(input_files)}"
-                os.rename(input_files, stored_file_path)
+                if os.path.isdir(input_files):
+                    shutil.move(input_files, new_dir)
+                else:
+                    os.makedirs(os.path.dirname(new_dir), exist_ok=True)
+                    shutil.move(input_files, new_dir)
+                # List the files in the new directory and get the tar.gz file
+                stored_file_path = os.path.join(new_dir, os.listdir(new_dir)[0])
                 self.logger.info(f"Stored DL0 file: {stored_file_path}")
                 # Push the new file path to XCom for further use
                 ti.xcom_push(key='stored_dl0_file', value=stored_file_path)
@@ -146,3 +150,51 @@ with DAG('cosipy_test_v0', default_args={'owner': 'airflow'}, schedule=None,
     )
 
     wait_for_new_file_sensor_task  >> ingest_and_store_dl0_task_sensor >> generate_plots  >> trigger_next_run
+
+# Separate DAG that runs the initialization script every two hours and then triggers the main DAG
+with DAG('cosipy_contactsimulator',
+         default_args={
+             'owner': 'airflow',
+             'start_date': datetime.datetime(2025, 4, 23, 14, 0, 0),  # Set the start date for the DAG to a specific time.
+             # NOTE: you cannot use datetime.datetime.now() since it is re-evaluated every time the file is imported (i.e. 
+             #       every DAG parse by Airflow). This makes the start_date unstable, and can cause weird behavior like 
+             #       no scheduled runs, or inconsistent triggers.
+         },
+         schedule_interval=datetime.timedelta(hours=2),  # Execute every 2 hours
+         catchup=False,  # Do not run past scheduled runs
+         max_active_runs=1,  # Only one instance of this DAG can run at a time
+         ) as init_dag:
+
+    # Task to run the pipeline initialization script in the cosipy environment
+    initialize_pipeline_task = BashOperator(
+        task_id='initialize_pipeline_task',
+        bash_command="""
+            cd /shared_dir/pipeline &&
+            source activate cosipy && 
+            python /shared_dir/pipeline/initialize_pipeline.py
+        """,
+        dag=init_dag
+    )
+    
+    # Task to move a specific initial file to a timestamped folder in the input directory
+    copy_initfile_task = BashOperator(
+        task_id='copy_initfile_task',
+        bash_command="""
+            FILE_NAME=GalacticScan.inc1.id1.crab2hr.extracted.tra.gz &&
+            TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S") &&
+            DEST_DIR="/home/gamma/workspace/data/input/$TIMESTAMP" &&
+            mkdir -p "$DEST_DIR" &&
+            mv "/home/gamma/workspace/data/$FILE_NAME" "$DEST_DIR/" 
+        """,
+        dag=init_dag
+    )
+
+    # Task to trigger the main DAG that handles monitoring and processing
+    trigger_main_dag = TriggerDagRunOperator(
+        task_id="trigger_cosipy_test_v0",
+        trigger_dag_id="cosipy_test_v0",
+        dag=init_dag
+    )
+
+    # Define task execution order
+    initialize_pipeline_task >> copy_initfile_task >> trigger_main_dag
