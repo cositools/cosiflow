@@ -155,7 +155,10 @@ with DAG('cosipy_test_v0', default_args={'owner': 'airflow'}, schedule=None,
 with DAG('cosipy_contactsimulator',
          default_args={
              'owner': 'airflow',
-             'start_date': datetime.datetime.now(),  # Start immediately
+             'start_date': datetime.datetime(2025, 4, 23, 14, 0, 0),  # Set the start date for the DAG to a specific time.
+             # NOTE: you cannot use datetime.datetime.now() since it is re-evaluated every time the file is imported (i.e. 
+             #       every DAG parse by Airflow). This makes the start_date unstable, and can cause weird behavior like 
+             #       no scheduled runs, or inconsistent triggers.
          },
          schedule_interval=datetime.timedelta(hours=2),  # Execute every 2 hours
          catchup=False,  # Do not run past scheduled runs
