@@ -23,7 +23,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
   
       } catch (err) {
-        container.innerHTML = `<p>Errore nel caricamento delle cartelle: ${err}</p>`;
+        container.innerHTML = `<p>Error loading folders: ${err}</p>`;
       }
     }
   
@@ -40,9 +40,9 @@ document.addEventListener("DOMContentLoaded", function () {
         const ul = document.getElementById(listId);
         ul.innerHTML = files.length
           ? files.map(file => `<li><a href="${folderPath + file}" target="_blank">${file}</a></li>`).join("")
-          : "<li><em>Nessun PDF trovato</em></li>";
+          : "<li><em>No PDF found</em></li>";
       } catch (err) {
-        document.getElementById(listId).innerHTML = `<li>Errore nel caricamento: ${err}</li>`;
+        document.getElementById(listId).innerHTML = `<li>Loading error: ${err}</li>`;
       }
     }
   
