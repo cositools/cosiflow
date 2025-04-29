@@ -3,17 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <title>DL3 Explorer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #f9f9f9;
+        }
+
+        h1 {
+            color: #2c3e50;
+        }
+
+        .nav-buttons {
+            margin-bottom: 20px;
+        }
+
+        .nav-buttons a {
+            display: inline-block;
+            background-color: #3498db;
+            color: white;
+            padding: 10px 16px;
+            margin-right: 10px;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        .nav-buttons a:hover {
+            background-color: #2980b9;
+        }
+
+        ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+
+        li {
+            margin: 8px 0;
+        }
+
+        a.file-link {
+            color: #34495e;
+            text-decoration: none;
+        }
+
+        a.file-link:hover {
+            text-decoration: underline;
+        }
+    </style>
 </head>
 <body>
     <h1>DL3 File Browser</h1>
+
+    <div class="nav-buttons">
+        <a href="{{ url_for('dl3_explorer_bp.explorer_home') }}">Explorer Home</a>
+        <a href="{{ url_for('Airflow.index') }}">Airflow Home</a>
+    </div>
 
     {% if folders and folders|length > 0 %}
         <h2>Folders:</h2>
         <ul>
         {% for folder in folders %}
             <li>
-                <a href="{{ url_for('dl3_explorer_bp.explorer_folder', foldername=folder) }}">
-                    {{ folder }}
+                <a class="file-link" href="{{ url_for('dl3_explorer_bp.explorer_folder', foldername=folder) }}">
+                    📁 {{ folder }}
                 </a>
             </li>
         {% endfor %}
@@ -25,8 +78,8 @@
         <ul>
         {% for file in files %}
             <li>
-                <a href="{{ url_for('dl3_explorer_bp.download_file', filepath=foldername ~ '/' ~ file) }}">
-                    {{ file }}
+                <a class="file-link" href="{{ url_for('dl3_explorer_bp.download_file', filepath=foldername ~ '/' ~ file) }}">
+                    📄 {{ file }}
                 </a>
             </li>
         {% endfor %}
