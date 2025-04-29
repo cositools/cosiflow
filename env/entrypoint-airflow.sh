@@ -48,5 +48,6 @@ else
   echo "ℹ️ Admin user already exists. Skipping creation."
 fi
 
-# Start Airflow
-airflow standalone
+# Start webserver (in background) and scheduler
+airflow webserver --port 8080 &
+airflow scheduler
