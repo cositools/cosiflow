@@ -33,7 +33,7 @@ services:
       - ./airflow.cfg.postgresql:/home/gamma/airflow/airflow.cfg
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${HOME}/cosiflow:/shared_dir
-      - ${HOME}/cosiflow/pipeline/data:/home/gamma/workspace/heasarc
+      - ${HOME}/cosiflow/data:/home/gamma/workspace/heasarc
     ports:
       - "8080:8080"
       - "28888:28888" #jupyter notebook
@@ -45,20 +45,6 @@ services:
     #restart: always   
     entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh"]
     #entrypoint: ["tail", "-f", "/dev/null"]
-
-  webgui:
-    build:
-      context: .
-      dockerfile: Dockerfile.webgui
-    container_name: cosi_webgui
-    environment:
-      - DISPLAY=${DISPLAY}
-    volumes:
-      - ${HOME}/cosiflow/pipeline/data:/home/gamma/workspace/heasarc
-      - ${HOME}/cosiflow:/shared_dir
-    ports:
-      - "8081:8081"
-    entrypoint: ["bash", "/home/gamma/entrypoint-webgui.sh"]
 
 volumes:
   postgres_data:
