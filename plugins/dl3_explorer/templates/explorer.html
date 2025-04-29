@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DL3 Explorer</title>
+</head>
+<body>
+    <h1>DL3 File Browser</h1>
+
+    {% if folders and folders|length > 0 %}
+        <h2>Folders:</h2>
+        <ul>
+        {% for folder in folders %}
+            <li>
+                <a href="{{ url_for('dl3_explorer_bp.explorer_folder', foldername=folder) }}">
+                    {{ folder }}
+                </a>
+            </li>
+        {% endfor %}
+        </ul>
+    {% endif %}
+
+    {% if files and files|length > 0 %}
+        <h2>Files in {{ foldername }}:</h2>
+        <ul>
+        {% for file in files %}
+            <li>
+                <a href="{{ url_for('dl3_explorer_bp.download_file', filepath=foldername ~ '/' ~ file) }}">
+                    {{ file }}
+                </a>
+            </li>
+        {% endfor %}
+        </ul>
+    {% endif %}
+</body>
+</html>

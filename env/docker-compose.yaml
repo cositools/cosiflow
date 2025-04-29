@@ -28,7 +28,8 @@ services:
     # env_file:
     #  - .env
     volumes:
-      - ../dags:/home/gamma//airflow/dags
+      - ../dags:/home/gamma/airflow/dags
+      - ../plugins:/home/gamma/airflow/plugins
       - ./airflow.cfg.postgresql:/home/gamma/airflow/airflow.cfg
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${HOME}/cosiflow:/shared_dir
