@@ -25,6 +25,9 @@ services:
       - AIRFLOW_HOME=/home/gamma/airflow
       - DISPLAY=${DISPLAY}
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - ALERT_SMTP_SERVER=mailhog
+      - ALERT_SMTP_PORT=1025
+      - ALERT_EMAIL_SENDER=donotreply@cosiflow.alert.errors.it
     # env_file:
     #  - .env
     volumes:
@@ -46,5 +49,11 @@ services:
     entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh"]
     #entrypoint: ["tail", "-f", "/dev/null"]
 
+  mailhog:
+    image: mailhog/mailhog
+    container_name: cosi_mailhog
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI: http://localhost:8025
 volumes:
   postgres_data:
