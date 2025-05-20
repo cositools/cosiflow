@@ -134,4 +134,4 @@ This directory `/home/gamma/workspace/heasarc/dl0` contains several folders with
 
 Inside the folder we have the results of the analysis.
 
-We can visualize the results at the following link http://localhost:8081.
+We can visualize the results at the following link <http://localhost:28080/dl3browser> or redirecting to the page of dl3 explorer from the menu of airflow framework.
