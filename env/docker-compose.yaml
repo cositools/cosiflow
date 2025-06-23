@@ -33,6 +33,7 @@ services:
     volumes:
       - ../dags:/home/gamma/airflow/dags
       - ../plugins:/home/gamma/airflow/plugins
+      - ../callbacks:/home/gamma/airflow/callbacks
       - ./airflow.cfg.postgresql:/home/gamma/airflow/airflow.cfg
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${HOME}/cosiflow:/shared_dir
