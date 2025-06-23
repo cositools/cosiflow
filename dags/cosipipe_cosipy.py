@@ -1,71 +1,59 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash_operator import BashOperator
+from airflow.operators.dagrun_operator import TriggerDagRunOperator
+from airflow.exceptions import AirflowSkipException, AirflowFailException
+import datetime
+from inotify_simple import INotify, flags
+from functools import wraps
+import shutil
+import random
 import os
 import time
-import datetime
-import logging
+
 import sys
-sys.path.append('/shared_dir/pipeline')
-from logging_config import get_data_pipeline_logger
-from inotify_simple import INotify, flags
-from airflow.exceptions import AirflowSkipException, AirflowFailException
-from airflow.operators.dagrun_operator import TriggerDagRunOperator
-import shutil
-from functools import wraps
+import os
+airflow_home = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
+sys.path.append(os.path.join(airflow_home, "callbacks"))
+from on_failure_callback import notify_email
 
-import random
 
-# Decorator to handle exceptions in Airflow PythonOperator tasks.
-# It logs meaningful messages for Airflow-specific exceptions (Skip/Fail)
-# and also logs unexpected exceptions with full traceback for debugging.
-def airflow_task_handler(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        # Attempt to use the instance logger if available, fallback to module logger
-        logger = args[0].logger
-
-        try:
-            # Execute the actual task function
-            return func(*args, **kwargs)
-        except FileNotFoundError as e:
-            logger.error(f"File not found: {e}", exc_info=True)
-            raise AirflowSkipException(f"File not found: {e}")
-        except AirflowSkipException as e:
-            # Expected: task should be skipped (e.g., no input file)
-            logger.warning(f"Task skipped: {e}", exc_info=True)
-            raise
-        except AirflowFailException as e:
-            # Expected: task should fail intentionally without retries
-            logger.error(f"Task failed intentionally: {e}", exc_info=True)
-            raise
-        except Exception as e:
-            # Unexpected error: log with full traceback for debugging
-            logger.error(f"Unexpected error in task '{func.__name__}': {e}", exc_info=True)
-            raise
-    return wrapper
 
 # Import necessary Airflow classes and standard libraries
 
 # Define a data pipeline class for monitoring, ingesting, and storing DL0 files
 class DataPipeline:
+    # Decorator to handle exceptions in Airflow PythonOperator tasks.
+    # It logs meaningful messages for Airflow-specific exceptions (Skip/Fail)
+    # and also logs unexpected exceptions with full traceback for debugging.
+    def task_handler(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            try:
+                return func(self, *args, **kwargs)
+            except FileNotFoundError as e:
+                raise AirflowSkipException(f"File not found: {e}")
+            except AirflowSkipException as e:
+                raise
+            except AirflowFailException as e:
+                raise
+            except Exception as e:
+                raise
+        return wrapper
+
     def __init__(self):
         # Define directory paths for input, processed data (heasarc), and logs
         self.base_dir = '/home/gamma/workspace/data'
         self.heasarc_dir = '/home/gamma/workspace/heasarc'
-        self.logger_dir = '/home/gamma/workspace/log'
 
         # Set up inotify to watch the input directory for file-close-write events
         self.inotify = INotify()
         self.watch_flags = flags.CLOSE_WRITE
         self.inotify.add_watch(f'{self.base_dir}/input', self.watch_flags)
-
-        # Configure logger with both file rotation and console output
-        self.logger = get_data_pipeline_logger(self.logger_dir)
         
     
     # Return the path to the oldest file in the input directory, or None if the directory is empty
-    @airflow_task_handler
+    @task_handler
     def get_oldest_file_in_input_dir(self) -> str:
         input_directory = os.path.join(self.base_dir, 'input')
         input_files = os.listdir(input_directory)
@@ -81,18 +69,18 @@ class DataPipeline:
 
     # Move the given input file to a timestamped folder inside the heasarc directory
     # Return the full path to the stored file
-    @airflow_task_handler
+    @task_handler
     def store_input_file(self, input_file: str) -> str:
         # Check if the file exists
         if not os.path.exists(input_file):
             raise FileNotFoundError(f"Input file {input_file} does not exist.")
         
-        # ⚠️ Simulazione di errore
+        # ⚠️ Simulate a connection error for testing purposes
         if random.random() < 1/3:
             raise ConnectionError("Simulated connection error during file storage.")
 
         
-        self.logger.info(f"Processing DL0 file: {input_file}")
+        print(f"Processing DL0 file: {input_file}")
         
         # Create base directory for storage
         os.makedirs(f'{self.heasarc_dir}/dl0', exist_ok=True)
@@ -109,27 +97,27 @@ class DataPipeline:
         
         # Extract and return the full path of the stored file
         stored_file_path = os.path.join(new_dir, os.listdir(new_dir)[0])
-        self.logger.info(f"Stored DL0 file: {stored_file_path}")
+        print(f"Stored DL0 file: {stored_file_path}")
         return stored_file_path
 
-    @airflow_task_handler
+    @task_handler
     def check_new_file_sensor(self, **kwargs):
         ti = kwargs['ti']
-        self.logger.info("Daemon process started for continuous file monitoring...")
+        print("Daemon process started for continuous file monitoring...")
         while True:
             oldest_file = self.get_oldest_file_in_input_dir()
             if oldest_file:
-                self.logger.info(f"New file detected: {oldest_file}")
+                print(f"New file detected: {oldest_file}")
                 ti.xcom_push(key='new_file_path', value=oldest_file)
                 return True
             time.sleep(5)
 
-    @airflow_task_handler
+    @task_handler
     def ingest_and_store_dl0_sensor(self, **kwargs):
         ti = kwargs['ti']
         input_file = ti.xcom_pull(key='new_file_path', task_ids='wait_for_new_file_sensor_task')
         if not input_file:
-            self.logger.warning("No input files found in the directory. Exiting task gracefully.")
+            print("No input files found in the directory. Exiting task gracefully.")
             raise FileNotFoundError("No input files found, skipping task.")
         stored_path = self.store_input_file(input_file)
         ti.xcom_push(key='stored_dl0_file', value=stored_path)
@@ -137,9 +125,15 @@ class DataPipeline:
 pipeline = DataPipeline()
 
 # Define the Airflow DAG to orchestrate DL0 file monitoring, ingestion, and plotting
-with DAG('cosipy_test_v0', default_args={'owner': 'airflow'}, schedule=None, 
-        max_active_tasks=5,  # Maximum number of tasks that can be executed simultaneously per DAG
-        max_active_runs=4  # Maximum number of DAG instances that can be executed simultaneously
+with DAG('cosipy_test_v0', 
+         default_args={
+             'owner': 'airflow',
+             'email_on_failure': True,
+             'email': ['failure_list'],
+             'on_failure_callback': notify_email,}, 
+         schedule=None, 
+         max_active_tasks=5,  # Maximum number of tasks that can be executed simultaneously per DAG
+         max_active_runs=4  # Maximum number of DAG instances that can be executed simultaneously
         ) as dag:
 
     # Task to detect the arrival of new files in the input directory
@@ -182,6 +176,9 @@ with DAG('cosipy_contactsimulator',
              # NOTE: you cannot use datetime.datetime.now() since it is re-evaluated every time the file is imported (i.e. 
              #       every DAG parse by Airflow). This makes the start_date unstable, and can cause weird behavior like 
              #       no scheduled runs, or inconsistent triggers.
+            'email_on_failure': True,
+            'email': ['failure_list'],
+            'on_failure_callback': notify_email,
          },
          schedule_interval=datetime.timedelta(minutes=2),  # Execute every 2 hours
          catchup=False,  # Do not run past scheduled runs
