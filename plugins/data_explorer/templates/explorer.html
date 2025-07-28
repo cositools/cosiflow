@@ -33,6 +33,15 @@
             background-color: #2980b9;
         }
 
+        .current-path {
+            background-color: #ecf0f1;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-family: monospace;
+            border-left: 4px solid #3498db;
+        }
+
         ul {
             list-style-type: none;
             padding-left: 0;
@@ -60,12 +69,17 @@
         <a href="{{ url_for('Airflow.index') }}">Airflow Home</a>
     </div>
 
+    <!-- Mostra il path corrente -->
+    <div class="current-path">
+        <strong>Current Path:</strong> {{ current_path }}
+    </div>
+
     {% if folders and folders|length > 0 %}
         <h2>Folders:</h2>
         <ul>
         {% for folder in folders %}
             <li>
-                <a class="file-link" href="{{ url_for('heasarc_explorer_bp.explorer_folder', foldername=folder) }}">
+                <a class="file-link" href="{{ url_for('heasarc_explorer_bp.explorer_folder', foldername=foldername ~ '/' ~ folder if foldername else folder) }}">
                     📁 {{ folder }}
                 </a>
             </li>

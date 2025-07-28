@@ -27,7 +27,7 @@ def explorer_home():
         return redirect('/login/?next=/heasarcbrowser/')
     try:
         folders = sorted([f for f in os.listdir(DL0_FOLDER) if os.path.isdir(os.path.join(DL0_FOLDER, f))])
-        return render_template("explorer.html", folders=folders)
+        return render_template("explorer.html", folders=folders, current_path=DL0_FOLDER)
     except PermissionError:
         abort(403)
     except Exception as e:
@@ -42,8 +42,10 @@ def explorer_folder(foldername):
         if not os.path.commonpath([DL0_FOLDER, folder_path]).startswith(DL0_FOLDER):
             abort(403)
 
-        files = sorted([f for f in os.listdir(folder_path) if f.endswith(".pdf")])
-        return render_template("explorer.html", folders=[], files=files, foldername=foldername)
+        # Show all files in the folder, not only pdfs
+        files   = sorted([f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))])
+        folders = sorted([f for f in os.listdir(folder_path) if not os.path.isfile(os.path.join(folder_path, f))])
+        return render_template("explorer.html", folders=folders, files=files, foldername=foldername, current_path=folder_path)
     except PermissionError:
         abort(403)
     except Exception as e:
