@@ -46,6 +46,10 @@ COPY entrypoint-airflow.sh /home/gamma/entrypoint-airflow.sh
 
 RUN export PATH=$PATH:/opt/conda/bin && conda config --append channels conda-forge && conda config --set channel_priority strict
 
+# Accept Conda Terms of Service for required channels
+RUN export PATH=$PATH:/opt/conda/bin && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+RUN export PATH=$PATH:/opt/conda/bin && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
 RUN export PATH=$PATH:/opt/conda/bin && conda create -n gamma python=3.12 pip psycopg2 jupyter numpy scipy matplotlib pandas plotly scikit-learn tensorboard tensorflow inotify_simple -y 
 
 RUN export PATH=$PATH:/opt/conda/bin && source activate gamma && export AIRFLOW_VERSION=2.10.3 && \
@@ -69,11 +73,6 @@ RUN chmod +x /home/gamma/entrypoint-airflow.sh
 
 USER gamma
 RUN mkdir /home/gamma/workspace
-#dir to run pipeline
-RUN mkdir /home/gamma/workspace/data
-RUN mkdir /home/gamma/workspace/data/input
-RUN mkdir /home/gamma/workspace/log
-
 
 ENV PATH="/opt/conda/bin:$PATH"
 

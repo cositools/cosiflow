@@ -37,7 +37,7 @@ services:
       - ./airflow.cfg.postgresql:/home/gamma/airflow/airflow.cfg
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${HOME}/cosiflow:/shared_dir
-      - ${HOME}/cosiflow/data:/home/gamma/workspace/heasarc
+      - ${HOME}/cosiflow/data:/home/gamma/workspace/data
     ports:
       - "8080:8080"
       - "28888:28888" #jupyter notebook

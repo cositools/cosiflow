@@ -46,6 +46,41 @@ fi
 # Always use this email backend
 export AIRFLOW__EMAIL__EMAIL_BACKEND=airflow.utils.email.send_email_smtp
 
+# Export COSI directory structure environment variables if present
+if [ -n "${COSI_DATA_DIR:-}" ]; then
+  export COSI_DATA_DIR="$COSI_DATA_DIR"
+fi
+
+if [ -n "${COSI_OBS_DIR:-}" ]; then
+  export COSI_OBS_DIR="$COSI_OBS_DIR"
+fi
+
+if [ -n "${COSI_TRANSIENT_DIR:-}" ]; then
+  export COSI_TRANSIENT_DIR="$COSI_TRANSIENT_DIR"
+fi
+
+if [ -n "${COSI_TRIGGER_DIR:-}" ]; then
+  export COSI_TRIGGER_DIR="$COSI_TRIGGER_DIR"
+fi
+
+if [ -n "${COSI_MAPS_DIR:-}" ]; then
+  export COSI_MAPS_DIR="$COSI_MAPS_DIR"
+fi
+
+if [ -n "${COSI_SOURCE_DIR:-}" ]; then
+  export COSI_SOURCE_DIR="$COSI_SOURCE_DIR"
+fi
+
+if [ -n "${COSI_INPUT_DIR:-}" ]; then
+  export COSI_INPUT_DIR="$COSI_INPUT_DIR"
+fi
+
+if [ -n "${COSI_LOG_DIR:-}" ]; then
+  export COSI_LOG_DIR="$COSI_LOG_DIR"
+fi
+
+# Create COSI directory structure if not present
+mkdir -p $COSI_DATA_DIR/{obs,transient,trigger,maps,source}
 
 # Activate conda environment
 source activate gamma
