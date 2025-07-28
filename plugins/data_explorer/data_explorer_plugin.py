@@ -6,24 +6,25 @@ from airflow.models import BaseOperator
 from flask import Blueprint, render_template, send_from_directory, redirect, url_for, session
 from flask_login import login_required, current_user
 
-DL0_FOLDER = os.path.join(os.path.expanduser("~"), "workspace", "heasarc", "dl0")
+# Get from the env variable COSI_DATA_DIR the path to the data directory if it is not set, use the default path
+DL0_FOLDER = os.environ.get("COSI_DATA_DIR", "/home/gamma/workspace/data")
 
 # Definiamo il percorso assoluto alla cartella del plugin
 plugin_folder = os.path.dirname(os.path.abspath(__file__))
 
 # Blueprint con percorso assoluto a templates e static
-dl3_explorer_bp = Blueprint(
-    "dl3_explorer_bp",
+heasarc_explorer_bp = Blueprint(
+    "heasarc_explorer_bp",
     __name__,
     template_folder=os.path.join(plugin_folder, "templates"),
     static_folder=os.path.join(plugin_folder, "static"),
-    url_prefix='/dl3browser'
+    url_prefix='/heasarcbrowser'
 )
 
-@dl3_explorer_bp.route('/')
+@heasarc_explorer_bp.route('/')
 def explorer_home():
     if not current_user.is_authenticated:
-        return redirect('/login/?next=/dl3browser/')
+        return redirect('/login/?next=/heasarcbrowser/')
     try:
         folders = sorted([f for f in os.listdir(DL0_FOLDER) if os.path.isdir(os.path.join(DL0_FOLDER, f))])
         return render_template("explorer.html", folders=folders)
@@ -33,7 +34,7 @@ def explorer_home():
         error_traceback = traceback.format_exc()
         return f"Error loading folders: {e}\n\nTraceback:\n{error_traceback}", 500
 
-@dl3_explorer_bp.route('/folder/<path:foldername>')
+@heasarc_explorer_bp.route('/folder/<path:foldername>')
 @login_required
 def explorer_folder(foldername):
     try:
@@ -49,7 +50,7 @@ def explorer_folder(foldername):
         error_traceback = traceback.format_exc()
         return f"Error loading files: {e}\n\nTraceback:\n{error_traceback}", 500
 
-@dl3_explorer_bp.route('/download/<path:filepath>')
+@heasarc_explorer_bp.route('/download/<path:filepath>')
 @login_required
 def download_file(filepath):
     abs_path = os.path.join(DL0_FOLDER, filepath)
@@ -60,7 +61,7 @@ class DummyOperator(BaseOperator):
     def execute(self, context):
         pass
 
-class DL3ExplorerPlugin(AirflowPlugin):
-    name = "dl3_explorer_plugin"
+class heasarcExplorerPlugin(AirflowPlugin):
+    name = "heasarc_explorer_plugin"
     operators = [DummyOperator]
-    flask_blueprints = [dl3_explorer_bp]
+    flask_blueprints = [heasarc_explorer_bp]

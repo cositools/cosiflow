@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>DL3 Explorer</title>
+    <title>COSI Data Explorer</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -53,10 +53,10 @@
     </style>
 </head>
 <body>
-    <h1>DL3 File Browser</h1>
+    <h1>Data File Browser</h1>
 
     <div class="nav-buttons">
-        <a href="{{ url_for('dl3_explorer_bp.explorer_home') }}">Explorer Home</a>
+        <a href="{{ url_for('heasarc_explorer_bp.explorer_home') }}">Explorer Home</a>
         <a href="{{ url_for('Airflow.index') }}">Airflow Home</a>
     </div>
 
@@ -65,7 +65,7 @@
         <ul>
         {% for folder in folders %}
             <li>
-                <a class="file-link" href="{{ url_for('dl3_explorer_bp.explorer_folder', foldername=folder) }}">
+                <a class="file-link" href="{{ url_for('heasarc_explorer_bp.explorer_folder', foldername=folder) }}">
                     📁 {{ folder }}
                 </a>
             </li>
@@ -78,7 +78,7 @@
         <ul>
         {% for file in files %}
             <li>
-                <a class="file-link" href="{{ url_for('dl3_explorer_bp.download_file', filepath=foldername ~ '/' ~ file) }}">
+                <a class="file-link" href="{{ url_for('heasarc_explorer_bp.download_file', filepath=foldername ~ '/' ~ file) }}">
                     📄 {{ file }}
                 </a>
             </li>
