@@ -43,19 +43,29 @@ class DataPipeline:
 
     def __init__(self):
         # Define directory paths for input, processed data (heasarc), and logs
-        self.base_dir = '/home/gamma/workspace/data'
-        self.heasarc_dir = '/home/gamma/workspace/heasarc'
+        self.base_dir = os.getenv('COSI_INPUT_DIR', '/home/gamma/workspace/data/input')
+        self.heasarc_dir = os.getenv('COSI_TRANSIENT_DIR', '/home/gamma/workspace/data/transient')
+        self.obs_dir = os.getenv('COSI_OBS_DIR', '/home/gamma/workspace/data/obs')
+        self.transient_dir = os.getenv('COSI_TRANSIENT_DIR', '/home/gamma/workspace/data/transient')
+        self.trigger_dir = os.getenv('COSI_TRIGGER_DIR', '/home/gamma/workspace/data/trigger')
+        self.maps_dir = os.getenv('COSI_MAPS_DIR', '/home/gamma/workspace/data/maps')
+        self.source_dir = os.getenv('COSI_SOURCE_DIR', '/home/gamma/workspace/data/source')
 
         # Set up inotify to watch the input directory for file-close-write events
         self.inotify = INotify()
         self.watch_flags = flags.CLOSE_WRITE
-        self.inotify.add_watch(f'{self.base_dir}/input', self.watch_flags)
+        
+        # Create the input directory if it doesn't exist
+        os.makedirs(self.base_dir, exist_ok=True)
+        
+        # Fix: use self.base_dir directly, not self.base_dir/input
+        self.inotify.add_watch(self.base_dir, self.watch_flags)
         
     
     # Return the path to the oldest file in the input directory, or None if the directory is empty
     @task_handler
     def get_oldest_file_in_input_dir(self) -> str:
-        input_directory = os.path.join(self.base_dir, 'input')
+        input_directory = os.getenv('COSI_INPUT_DIR', '/home/gamma/workspace/data/input')
         input_files = os.listdir(input_directory)
         if input_files:
             # Build full paths and get the file with the oldest creation time
@@ -133,7 +143,8 @@ with DAG('cosipy_test_v0',
              'on_failure_callback': notify_email,}, 
          schedule=None, 
          max_active_tasks=5,  # Maximum number of tasks that can be executed simultaneously per DAG
-         max_active_runs=4  # Maximum number of DAG instances that can be executed simultaneously
+         max_active_runs=4,   # Maximum number of DAG instances that can be executed simultaneously
+         tags=["test", "cosipy", "cosipipe"],
         ) as dag:
 
     # Task to detect the arrival of new files in the input directory
@@ -183,6 +194,7 @@ with DAG('cosipy_contactsimulator',
          schedule_interval=datetime.timedelta(minutes=2),  # Execute every 2 hours
          catchup=False,  # Do not run past scheduled runs
          max_active_runs=1,  # Only one instance of this DAG can run at a time
+         tags=["test", "cosipy", "cosipipe"],
          ) as init_dag:
 
     # Task to run the pipeline initialization script in the cosipy environment
