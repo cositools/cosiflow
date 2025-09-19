@@ -5,7 +5,7 @@ RUN dnf install -y wget epel-release git cmake3 gcc-c++ gcc binutils \
 compat-openssl10 libX11-devel libXpm-devel libXft-devel libXext-devel \ 
 gsl-devel openssl-devel wget bzip2-devel libffi-devel xz-devel sqlite-devel \
 ncurses ncurses-devel make xz libzstd libzstd-devel which rsync \
-nmap-ncat chrony 
+nmap-ncat chrony unzip
 
 RUN dnf install -y oracle-epel-release-el8
 RUN dnf config-manager --enable ol8_codeready_builder
@@ -58,7 +58,7 @@ RUN export PATH=$PATH:/opt/conda/bin && source activate gamma && export AIRFLOW_
            pip install "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINT_URL}" 
           
 
-RUN export PATH=$PATH:/opt/conda/bin && conda create -n cosipy python=3.10 pip jupyter notebook && source activate cosipy && git clone https://github.com/cositools/cosipy.git && cd cosipy && git checkout develop && pip install -e .
+RUN export PATH=$PATH:/opt/conda/bin && conda create -n cosipy python=3.10 pip jupyter notebook && source activate cosipy && pip install py7zr && git clone https://github.com/cositools/cosipy.git && cd cosipy && git checkout v0.3.x && pip install -e .
 
 RUN mkdir -p ${HOME}/airflow
 
