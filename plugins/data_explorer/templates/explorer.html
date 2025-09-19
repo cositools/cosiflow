@@ -3,21 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <title>COSI Data Explorer</title>
+    <!-- CSS styles for the data explorer interface -->
     <style>
+        /* Main body styling with clean, modern appearance */
         body {
             font-family: Arial, sans-serif;
             margin: 40px;
             background-color: #f9f9f9;
         }
 
+        /* Page title styling */
         h1 {
             color: #2c3e50;
         }
 
+        /* Navigation buttons container */
         .nav-buttons {
             margin-bottom: 20px;
         }
 
+        /* Individual navigation button styling */
         .nav-buttons a {
             display: inline-block;
             background-color: #3498db;
@@ -29,10 +34,12 @@
             font-weight: bold;
         }
 
+        /* Hover effect for navigation buttons */
         .nav-buttons a:hover {
             background-color: #2980b9;
         }
 
+        /* Current path display styling */
         .current-path {
             background-color: #ecf0f1;
             padding: 10px;
@@ -42,44 +49,47 @@
             border-left: 4px solid #3498db;
         }
 
+        /* Remove default list styling */
         ul {
             list-style-type: none;
             padding-left: 0;
         }
 
+        /* List item spacing */
         li {
             margin: 8px 0;
         }
 
+        /* File and folder link styling */
         a.file-link {
             color: #34495e;
             text-decoration: none;
         }
 
+        /* Hover effect for file and folder links */
         a.file-link:hover {
             text-decoration: underline;
         }
     </style>
 </head>
 <body>
+    <!-- Main page header -->
     <h1>Data File Browser</h1>
 
+    <!-- Navigation buttons for easy access to other pages -->
     <div class="nav-buttons">
         <a href="{{ url_for('heasarc_explorer_bp.explorer_home') }}">Explorer Home</a>
         <a href="{{ url_for('Airflow.index') }}">Airflow Home</a>
     </div>
 
-    <!-- Mostra il path corrente -->
-    <div class="current-path">
-        <strong>Current Path:</strong> {{ current_path }}
-    </div>
-
+    <!-- Display folders if any exist in the current directory -->
     {% if folders and folders|length > 0 %}
         <h2>Folders:</h2>
         <ul>
         {% for folder in folders %}
             <li>
-                <a class="file-link" href="{{ url_for('heasarc_explorer_bp.explorer_folder', foldername=foldername ~ '/' ~ folder if foldername else folder) }}">
+                <!-- Folder links navigate to subdirectories -->
+                <a class="file-link" href="{{ url_for('heasarc_explorer_bp.explorer_folder', foldername=folder) }}">
                     📁 {{ folder }}
                 </a>
             </li>
@@ -87,11 +97,13 @@
         </ul>
     {% endif %}
 
+    <!-- Display files if any exist in the current directory -->
     {% if files and files|length > 0 %}
         <h2>Files in {{ foldername }}:</h2>
         <ul>
         {% for file in files %}
             <li>
+                <!-- File links trigger download functionality -->
                 <a class="file-link" href="{{ url_for('heasarc_explorer_bp.download_file', filepath=foldername ~ '/' ~ file) }}">
                     📄 {{ file }}
                 </a>
