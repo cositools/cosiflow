@@ -70,6 +70,179 @@
         a.file-link:hover {
             text-decoration: underline;
         }
+
+        /* Main container with two columns */
+        .main-container {
+            display: flex;
+            gap: 20px;
+            min-height: 600px;
+        }
+
+        /* Left column for file/folder listing */
+        .file-list {
+            flex: 1;
+            min-width: 300px;
+        }
+
+        /* Right column for file preview */
+        .preview-panel {
+            flex: 1;
+            min-width: 300px;
+            background-color: #ffffff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 20px;
+            position: sticky;
+            top: 20px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        /* Preview panel header */
+        .preview-header {
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+
+        .preview-title {
+            font-weight: bold;
+            color: #2c3e50;
+            margin: 0;
+        }
+
+        .preview-filename {
+            color: #7f8c8d;
+            font-size: 0.9em;
+            margin: 5px 0 0 0;
+        }
+
+        /* Preview content area */
+        .preview-content {
+            min-height: 200px;
+        }
+
+        /* Image preview styling */
+        .preview-image {
+            max-width: 100%;
+            max-height: 400px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        /* Text preview styling */
+        .preview-text {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        /* Loading and error states */
+        .preview-loading {
+            text-align: center;
+            color: #7f8c8d;
+            padding: 40px;
+        }
+
+        .preview-error {
+            color: #e74c3c;
+            text-align: center;
+            padding: 40px;
+        }
+
+        /* File type indicators */
+        .file-type-icon {
+            margin-right: 8px;
+        }
+
+        /* File button styling */
+        .file-item {
+            margin: 8px 0;
+        }
+
+        .file-button {
+            width: 100%;
+            text-align: left;
+            background: #ffffff;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 12px 16px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            position: relative;
+        }
+
+        .file-button:hover {
+            background-color: #f8f9fa;
+            border-color: #3498db;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .file-button:active {
+            transform: translateY(1px);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+
+        .file-button.active {
+            background-color: #e3f2fd;
+            border-color: #2196f3;
+            box-shadow: 0 2px 8px rgba(33, 150, 243, 0.2);
+        }
+
+        .file-type-icon {
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .file-name {
+            flex: 1;
+            font-weight: 500;
+            color: #2c3e50;
+        }
+
+        .file-actions {
+            display: flex;
+            gap: 8px;
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+
+        .preview-hint, .download-hint {
+            opacity: 0.7;
+            transition: opacity 0.2s ease;
+        }
+
+        .file-button:hover .preview-hint {
+            opacity: 1;
+            color: #2196f3;
+        }
+
+        .file-button:hover .download-hint {
+            opacity: 1;
+            color: #4caf50;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .main-container {
+                flex-direction: column;
+            }
+            
+            .preview-panel {
+                position: static;
+                max-height: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -80,36 +253,274 @@
     <div class="nav-buttons">
         <a href="{{ url_for('heasarc_explorer_bp.explorer_home') }}">Explorer Home</a>
         <a href="{{ url_for('Airflow.index') }}">Airflow Home</a>
+        {% if foldername %}
+            <a href="{{ url_for('heasarc_explorer_bp.explorer_home') }}">← Back to Root</a>
+        {% endif %}
     </div>
 
-    <!-- Display folders if any exist in the current directory -->
-    {% if folders and folders|length > 0 %}
-        <h2>Folders:</h2>
-        <ul>
-        {% for folder in folders %}
-            <li>
-                <!-- Folder links navigate to subdirectories -->
-                <a class="file-link" href="{{ url_for('heasarc_explorer_bp.explorer_folder', foldername=folder) }}">
-                    📁 {{ folder }}
-                </a>
-            </li>
-        {% endfor %}
-        </ul>
+    <!-- Display error message if any -->
+    {% if error_message %}
+        <div style="background-color: #e74c3c; color: white; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
+            <strong>Error:</strong> {{ error_message }}
+        </div>
     {% endif %}
 
-    <!-- Display files if any exist in the current directory -->
-    {% if files and files|length > 0 %}
-        <h2>Files in {{ foldername }}:</h2>
-        <ul>
-        {% for file in files %}
-            <li>
-                <!-- File links trigger download functionality -->
-                <a class="file-link" href="{{ url_for('heasarc_explorer_bp.download_file', filepath=foldername ~ '/' ~ file) }}">
-                    📄 {{ file }}
-                </a>
-            </li>
-        {% endfor %}
-        </ul>
+    <!-- Breadcrumb navigation -->
+    {% if foldername %}
+        <div class="breadcrumb" style="background-color: #ecf0f1; padding: 10px; border-radius: 4px; margin-bottom: 20px; font-family: monospace;">
+            <a href="{{ url_for('heasarc_explorer_bp.explorer_home') }}">🏠 Root</a>
+            {% set path_parts = foldername.split('/') %}
+            {% for i in range(path_parts|length) %}
+                {% if i < path_parts|length - 1 %}
+                    <span> / </span>
+                    <a href="{{ url_for('heasarc_explorer_bp.explorer_folder', foldername=path_parts[:i+1]|join('/')) }}">{{ path_parts[i] }}</a>
+                {% else %}
+                    <span> / </span>
+                    <strong>{{ path_parts[i] }}</strong>
+                {% endif %}
+            {% endfor %}
+        </div>
     {% endif %}
+
+    <!-- Main content area with two columns -->
+    <div class="main-container">
+        <!-- Left column: File and folder listing -->
+        <div class="file-list">
+            <!-- Display folders if any exist in the current directory -->
+            {% if folders and folders|length > 0 %}
+                <h2>Folders:</h2>
+                <ul>
+                {% for folder in folders %}
+                    <li>
+                        <!-- Folder links navigate to subdirectories -->
+                        {% if folder == ".." %}
+                            <!-- Parent directory navigation -->
+                            {% set parent_path = foldername.split('/')[:-1]|join('/') %}
+                            {% if parent_path %}
+                                <a class="file-link" href="{{ url_for('heasarc_explorer_bp.explorer_folder', foldername=parent_path) }}">
+                                    📁 .. (Parent Directory)
+                                </a>
+                            {% else %}
+                                <a class="file-link" href="{{ url_for('heasarc_explorer_bp.explorer_home') }}">
+                                    📁 .. (Parent Directory)
+                                </a>
+                            {% endif %}
+                        {% elif foldername %}
+                            <a class="file-link" href="{{ url_for('heasarc_explorer_bp.explorer_folder', foldername=foldername ~ '/' ~ folder) }}">
+                                📁 {{ folder }}
+                            </a>
+                        {% else %}
+                            <a class="file-link" href="{{ url_for('heasarc_explorer_bp.explorer_folder', foldername=folder) }}">
+                                📁 {{ folder }}
+                            </a>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+                </ul>
+            {% endif %}
+
+            <!-- Display files if any exist in the current directory -->
+            {% if files and files|length > 0 %}
+                <h2>Files in {{ foldername }}:</h2>
+                <ul>
+                {% for file in files %}
+                    <li class="file-item">
+                        <!-- File button for preview and download -->
+                        <button class="file-button preview-file" 
+                                data-filepath="{{ foldername ~ '/' ~ file if foldername else file }}"
+                                data-filename="{{ file }}"
+                                data-download-url="{{ url_for('heasarc_explorer_bp.download_file', filepath=foldername ~ '/' ~ file) }}"
+                                title="Single-click to preview, double-click to download">
+                            <span class="file-type-icon">{{ get_file_icon(file) }}</span>
+                            <span class="file-name">{{ file }}</span>
+                        </button>
+                    </li>
+                {% endfor %}
+                </ul>
+            {% endif %}
+        </div>
+
+        <!-- Right column: File preview panel -->
+        <div class="preview-panel">
+            <div class="preview-header">
+                <h3 class="preview-title">File Preview</h3>
+                <p class="preview-filename">Click on a file to preview its contents</p>
+            </div>
+            <div class="preview-content">
+                <div class="preview-loading" id="preview-placeholder">
+                    <p>Select a file to preview its contents</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript for file preview functionality -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, setting up preview functionality');
+            // Add click handlers to all preview file buttons
+            const previewButtons = document.querySelectorAll('.preview-file');
+            console.log('Found preview buttons:', previewButtons.length);
+            
+            let currentPreviewButton = null;
+            
+            previewButtons.forEach(button => {
+                let clickTimeout;
+                
+                // Single click for preview toggle
+                button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const filepath = this.getAttribute('data-filepath');
+                    const filename = this.getAttribute('data-filename');
+                    console.log('Button clicked:', filepath, filename);
+                    
+                    // Clear any existing timeout
+                    clearTimeout(clickTimeout);
+                    
+                    // Set a timeout to detect if this is a single click
+                    clickTimeout = setTimeout(() => {
+                        toggleFilePreview(this, filepath, filename);
+                    }, 200); // 200ms delay to detect double-click
+                });
+                
+                // Double click for download
+                button.addEventListener('dblclick', function(e) {
+                    e.preventDefault();
+                    clearTimeout(clickTimeout); // Cancel single-click action
+                    
+                    const downloadUrl = this.getAttribute('data-download-url');
+                    console.log('Double-click download:', downloadUrl);
+                    window.location.href = downloadUrl;
+                });
+            });
+            
+            function toggleFilePreview(button, filepath, filename) {
+                // Remove active class from all buttons
+                previewButtons.forEach(btn => btn.classList.remove('active'));
+                
+                // If this is the same file that's currently previewed, close it
+                if (currentPreviewButton === button) {
+                    closePreview();
+                    currentPreviewButton = null;
+                    return;
+                }
+                
+                // Otherwise, show preview for this file
+                button.classList.add('active');
+                currentPreviewButton = button;
+                loadFilePreview(filepath, filename);
+            }
+            
+            function closePreview() {
+                const previewContent = document.querySelector('.preview-content');
+                const previewFilename = document.querySelector('.preview-filename');
+                
+                if (previewContent) {
+                    previewContent.innerHTML = `
+                        <div class="preview-loading" id="preview-placeholder">
+                            <p>Select a file to preview its contents</p>
+                            <p style="font-size: 0.9em; color: #7f8c8d; margin-top: 10px;">
+                                Click once on any file to see its preview here
+                            </p>
+                        </div>
+                    `;
+                }
+                
+                if (previewFilename) {
+                    previewFilename.textContent = 'Click on a file to preview its contents';
+                }
+            }
+        });
+
+        function loadFilePreview(filepath, filename) {
+            console.log('Loading preview for:', filepath, filename);
+            const previewContent = document.querySelector('.preview-content');
+            const previewFilename = document.querySelector('.preview-filename');
+            
+            if (!previewContent) {
+                console.error('Preview content element not found!');
+                return;
+            }
+            
+            // Update header
+            if (previewFilename) {
+                previewFilename.textContent = filename;
+            }
+            
+            // Show loading state
+            previewContent.innerHTML = '<div class="preview-loading">Loading preview...</div>';
+            
+            const previewUrl = `/heasarcbrowser/preview/${encodeURIComponent(filepath)}`;
+            console.log('Making request to:', previewUrl);
+            
+            // Make AJAX request to preview endpoint
+            fetch(previewUrl)
+                .then(response => {
+                    console.log('Response status:', response.status);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Preview data received:', data);
+                    displayPreview(data, filename);
+                })
+                .catch(error => {
+                    console.error('Error loading preview:', error);
+                    previewContent.innerHTML = `
+                        <div class="preview-error">
+                            <p>Error loading preview: ${error.message}</p>
+                        </div>
+                    `;
+                });
+        }
+
+        function displayPreview(data, filename) {
+            const previewContent = document.querySelector('.preview-content');
+            const fileExtension = filename.split('.').pop().toLowerCase();
+            
+            if (data.error) {
+                previewContent.innerHTML = `
+                    <div class="preview-error">
+                        <p>${data.error}</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Determine content type and display accordingly
+            if (data.content_type === 'image') {
+                previewContent.innerHTML = `
+                    <img src="data:${data.mime_type};base64,${data.content}" 
+                         class="preview-image" 
+                         alt="${filename}">
+                `;
+            } else if (data.content_type === 'text') {
+                previewContent.innerHTML = `
+                    <div class="preview-text">${escapeHtml(data.content)}</div>
+                `;
+            } else if (data.content_type === 'binary') {
+                previewContent.innerHTML = `
+                    <div class="preview-error">
+                        <p>Binary file preview not supported</p>
+                        <p>File size: ${data.size} bytes</p>
+                    </div>
+                `;
+            } else {
+                previewContent.innerHTML = `
+                    <div class="preview-error">
+                        <p>Preview not available for this file type</p>
+                    </div>
+                `;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
 </body>
 </html>
