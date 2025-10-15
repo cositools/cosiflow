@@ -1,137 +1,151 @@
-# cosiflow
+# Cosiflow
 
-The COSI SDOC pipeline based on Apache Airflow
+Cosiflow provides an Airflow-based orchestration environment for managing and monitoring scientific pipelines for COSI.
 
-## Build the cosiflow docker
+---
 
-We assume that the cosiflow repository is in your $HOME directory.
+### 1. REQUIREMENTS
+
+#### PREPARE THE ENVIRONMENT FILE
+
+1. Copy and rename the `.env.example` file as `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Open the `.env` file and set a secure password for Airflow:
+   ```bash
+   AIRFLOW_ADMIN_PASSWORD=<YOUR_AIRFLOW_PASSWORD>
+   ```
+
+3. Manually bootstrap user and group IDs for the container:
+
+   ```bash
+   id -u
+   # Copy the output as your USER_ID
+
+   id -g
+   # Copy the output as your GROUP_ID
+   ```
+
+4. Open `.env` and modify the following environment variables:
+
+   ```bash
+   UID=<YOUR_USER_ID>
+   GID=<YOUR_GROUP_ID>
+   ```
+
+5. Open the `Dockerfile.airflow` file and paste the same values:
+
+   ```dockerfile
+   ARG MY_UID=<YOUR_USER_ID>
+   ARG MY_GID=<YOUR_GROUP_ID>
+   ```
+
+---
+
+### 2. BUILD THE COMPOSE
+
+Build all containers defined in `docker-compose.yml`:
 
 ```bash
-cd $HOME/cosiflow/env
+docker compose build
 ```
 
-* **Mac**: change the following lines of `Dockerile.airflow`
+⏱ Estimated build time: **~490 seconds**
 
-  ```Dockerfile
-  # ARM processors (Mac)
-  # Definisci la variabile per il file Miniconda
-  ARG MINICONDA=Miniconda3-latest-Linux-aarch64.sh
-  # INTEL/AMD processors
-  ARG MINICONDA=Miniconda3-latest-Linux-x86_64.sh
-  ```
+---
 
-  in
+### 3. RUN THE CONTAINER
 
-  ```Dockerfile
-  # ARM processors (Mac)
-  # Definisci la variabile per il file Miniconda
-  ARG MINICONDA=Miniconda3-latest-Linux-aarch64.sh
-  # INTEL/AMD processors
-  # ARG MINICONDA=Miniconda3-latest-Linux-x86_64.sh
-  ```
+To run with logs visible:
 
-  Then run:
-
-  ```bash
-  docker compose build
-  ```
-
-* **Linux**:
-
-  ```bash
-  docker compose build
-  ```
-
-## Execute the docker compose to start containers
-
-Before running the following command to start the containers, make sure to create a `.env` file with the following structure in `cosiflow/env`:
-
-```env
-AIRFLOW_ADMIN_USERNAME=admin
-AIRFLOW_ADMIN_EMAIL=admin@localhost
-AIRFLOW_ADMIN_PASSWORD=<AIRFLOW_PASS>
+```bash
+docker compose up
 ```
 
-Replace `<AIRFLOW_PASS>` with your desired password.
-
-Now you can start the containers.
+To run in detached mode (no logs):
 
 ```bash
 docker compose up -d
 ```
 
-If you want to enter into the postgre docker container: `docker compose exec postgres bash`
+---
 
-If you want to enter into the postgre docker container: `docker compose exec airflow bash`
+### 4. ENTER THE CONTAINER
 
-## Connect to the web server using a browser
-
-Connect to http://localhost:8080, with your browser.
-
-Note: if you use a remote server you can change the `docker-compose.yaml` file to use another port.
-
-For example:
-  
-  ```yaml
-  ports:
-    - "28080:8080"
-  ```
-
-then from your local pc you can forward the port in this way:
+To open a terminal inside the running Airflow container:
 
 ```bash
-ssh -N -L 28080:localhost:28080 [user]@[remote machine]
+docker compose exec airflow bash
 ```
 
-and open the airflow webpace from your local pc at http://localhost:28080
+---
 
-Login with username: `admin`  password: `<password>`
+### 5. CONNECT TO THE AIRFLOW WEB UI
 
-## Shutdown the dockers
+1. Open your web browser and go to:
+
+   [http://localhost:8080/home](http://localhost:8080/home)
+
+2. Insert the user credentials:
+   ```text
+   user:     admin
+   password: <YOUR_AIRFLOW_PASSWORD>
+   ```
+
+---
+
+### 6. STOP THE CONTAINER
+
+To stop and remove all running containers, networks, and volumes:
 
 ```bash
 docker compose down -v
 ```
 
-## Test the cosipy DAG
+---
 
-* Manual pipeline initialization
+### 7. CONFIGURATIONS
 
-  1. Activate the DAG named `"cosipt_test_v0"` from the airflow website.
+Below is the list of environment variables defined in `.env` with their purpose:
 
-  2. Enter in the docker `airflow`
+| Variable | Description |
+|-----------|--------------|
+| **UID** | User ID for container bootstrap |
+| **GID** | Group ID for container bootstrap |
+| **DISPLAY** | Display variable for X11 forwarding (optional) |
+| **AIRFLOW_ADMIN_USERNAME** | Default Airflow Web UI username |
+| **AIRFLOW_ADMIN_EMAIL** | Email associated with Airflow admin user |
+| **AIRFLOW_ADMIN_PASSWORD** | Secure password for Airflow Web UI |
+| **ALERT_USERS_LIST_PATH** | Path to YAML file containing user alert configurations |
+| **ALERT_SMTP_SERVER** | SMTP server used for alert notifications |
+| **ALERT_SMTP_PORT** | Port of the SMTP server |
+| **ALERT_EMAIL_SENDER** | Email address used as sender for system alerts |
+| **ALERT_LOG_PATH** | Path to Airflow log file monitored by alert system |
+| **AIRFLOW__SMTP__SMTP_STARTTLS** | Enables/disables STARTTLS (default: False) |
+| **AIRFLOW__SMTP__SMTP_SSL** | Enables/disables SMTP over SSL (default: False) |
+| **MAILHOG_WEBUI_URL** | URL for MailHog web interface (for testing alerts) |
+| **COSI_DATA_DIR** | Root directory for COSI data |
+| **COSI_INPUT_DIR** | Directory for COSI input data |
+| **COSI_LOG_DIR** | Directory for COSI log files |
+| **COSI_OBS_DIR** | Directory for observation data |
+| **COSI_TRANSIENT_DIR** | Directory for transient event data |
+| **COSI_TRIGGER_DIR** | Directory for trigger event data |
+| **COSI_MAPS_DIR** | Directory for map data products |
+| **COSI_SOURCE_DIR** | Directory for source-level data products |
 
-      ```bash
-      docker compose exec airflow bash
-      ```
+---
 
-  3. Download the data file from wasabi, using  `cosipy` library.
+### NOTES
 
-      ```bash
-      cd /shared_dir/pipeline
-      source activate cosipy
-      python initialize_pipeline.py
-      ```
+- Make sure `.env` and `docker-compose.yml` are located in the same directory.
+- Do **not** commit your personal `.env` file to version control.
+- To inspect container logs, use:
+  ```bash
+  docker compose logs -f airflow
+  ```
 
-      This script downloads the input file from wasabi and move it in `/home/gamma/workspace/data`
+---
 
-  4. Then we have to copy the file in the input directory to trigger the DAG
-
-    ```bash
-    cd /home/gamma/workspace/data
-    cp GalacticScan.inc1.id1.crab2hr.extracted.tra.gz input
-    ```
-
-* Automatic pipeline initialization (download a file every 2 hours):
-
-  1. Activate the DAG `"cosipy_contactsimulator"`, which will download and move the files downloaded from wasabi via `cosipy`
-
-  2. Activate the DAG `"cosipt_test_v0"`
-
-Finally, we should see that the DAG `"cosipt_test_v0"` started to process the data.
-
-This directory `/home/gamma/workspace/heasarc/dl0` contains several folders with this format `2025-01-24_14-31-56`.
-
-Inside the folder we have the results of the analysis.
-
-We can visualize the results at the following link <http://localhost:28080/dl3browser> or redirecting to the page of dl3 explorer from the menu of airflow framework.
+**Cosiflow environment ready for use.**
