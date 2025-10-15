@@ -2,7 +2,10 @@ services:
   postgres:
     image: postgres:15
     container_name: cosi_postgres
+    user: "${UID}:${GID}"   # <-- usa i tuoi ID
     environment:
+      - UID=${UID}
+      - GID=${GID}
       - POSTGRES_USER=airflow_user
       - POSTGRES_PASSWORD=secure_password
       - POSTGRES_DB=airflow_db
@@ -11,8 +14,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    # volumes:
-     # - ${HOME}/postgres_data:/var/lib/postgresql/data
+    volumes:
+      - ${HOME}/postgres_data:/var/lib/postgresql/data
     #restart: always
 
   airflow:
@@ -21,15 +24,18 @@ services:
       context: .
       dockerfile: Dockerfile.airflow
     container_name: cosi_airflow
+    user: "${UID}:${GID}"   # <-- usa i tuoi ID
     environment:
+      - UID=${UID}
+      - GID=${GID}
       - AIRFLOW_HOME=/home/gamma/airflow
       - DISPLAY=${DISPLAY}
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - ALERT_SMTP_SERVER=mailhog
       - ALERT_SMTP_PORT=1025
       - ALERT_EMAIL_SENDER=donotreply@cosiflow.alert.errors.it
-    # env_file:
-    #  - .env
+    env_file:
+      - .env
     volumes:
       - ../dags:/home/gamma/airflow/dags
       - ../plugins:/home/gamma/airflow/plugins
@@ -54,6 +60,10 @@ services:
   mailhog:
     image: mailhog/mailhog
     container_name: cosi_mailhog
+    user: "${UID}:${GID}"   # <-- usa i tuoi ID
+    environment:
+      - UID=${UID}
+      - GID=${GID}
     ports:
       - "1025:1025"   # SMTP
       - "8025:8025"   # Web UI: http://localhost:8025
