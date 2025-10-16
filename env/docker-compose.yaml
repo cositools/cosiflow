@@ -15,7 +15,8 @@ services:
       timeout: 5s
       retries: 10
     volumes:
-      - ${HOME}/postgres_data:/var/lib/postgresql/data
+      # - ${HOME}/postgres_data:/var/lib/postgresql/data
+      - ../data/postgres_data:/var/lib/postgresql/data
     #restart: always
 
   airflow:
