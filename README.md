@@ -10,6 +10,7 @@ Cosiflow provides an Airflow-based orchestration environment for managing and mo
 
 1. Copy and rename the `.env.example` file as `.env`:
    ```bash
+   cd env
    cp .env.example .env
    ```
 
