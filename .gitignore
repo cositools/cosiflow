@@ -163,3 +163,5 @@ cython_debug/
 
 # Data Folder
 data/
+# Exclude postgres data folder
+!data/postgres_data
