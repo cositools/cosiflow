@@ -23,10 +23,10 @@ Cosiflow provides an Airflow-based orchestration environment for managing and mo
 
    ```bash
    id -u
-   # Copy the output as your USER_ID
+   # Copy the output as YOUR_USER_ID
 
    id -g
-   # Copy the output as your GROUP_ID
+   # Copy the output as YOUR_GROUP_ID
    ```
 
 4. Open `.env` and modify the following environment variables:
@@ -39,8 +39,8 @@ Cosiflow provides an Airflow-based orchestration environment for managing and mo
 5. Open the `Dockerfile.airflow` file and paste the same values:
 
    ```dockerfile
-   ARG MY_UID=<YOUR_USER_ID>
-   ARG MY_GID=<YOUR_GROUP_ID>
+   ARG UID=<YOUR_USER_ID>
+   ARG GID=<YOUR_GROUP_ID>
    ```
 
 ---
