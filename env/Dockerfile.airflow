@@ -12,8 +12,8 @@ RUN dnf config-manager --enable ol8_codeready_builder
 RUN dnf install -y hdf5 hdf5-devel
 
 # ---------------------------------- Create gamma ---------------------------------- 
-ARG UID=12050
-ARG GID=10000
+ARG UID=
+ARG GID=
 RUN groupadd -g ${GID} gamma || true && useradd -m -u ${UID} -g ${GID} gamma
 
 USER gamma
