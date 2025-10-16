@@ -162,7 +162,4 @@ cython_debug/
 #.idea/
 
 # Data Folder
-data/*
-# Exclude postgres data folder
-!data/postgres_data
-data/postgres_data/*
+data

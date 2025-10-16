@@ -36,12 +36,21 @@ Cosiflow provides an Airflow-based orchestration environment for managing and mo
    GID=<YOUR_GROUP_ID>
    ```
 
-5. Open the `Dockerfile.airflow` file and paste the same values:
+#### PREPARE THE DOCKERFILE
 
-   ```dockerfile
-   ARG UID=<YOUR_USER_ID>
-   ARG GID=<YOUR_GROUP_ID>
-   ```
+Open the `Dockerfile.airflow` file and paste the same values:
+
+```dockerfile
+ARG UID=<YOUR_USER_ID>
+ARG GID=<YOUR_GROUP_ID>
+```
+
+#### PREPARE THE FOLDER FOR STORING POSTGRESS DATA
+```bash
+cd ..
+cd data
+mkdir postgress_data
+```
 
 ---
 
