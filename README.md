@@ -49,7 +49,7 @@ ARG GID=<YOUR_GROUP_ID>
 ```bash
 cd ..
 cd data
-mkdir postgress_data
+mkdir postgres_data
 ```
 
 ---
