@@ -1,9 +1,9 @@
 #!/bin/bash
-set -euo pipefail
+#set -euo pipefail
 
 cd /home/gamma
 
-ENV_FILE="/shared_dir/env/.env"
+ENV_FILE="/home/gamma/env/.env"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "❌ Missing .env file at $ENV_FILE"

@@ -1,72 +1,120 @@
+version: "3.9"
+
 services:
+  # ---------------------------------------------------------------------------
+  # POSTGRES DATABASE SERVICE
+  # ---------------------------------------------------------------------------
   postgres:
     image: postgres:15
     container_name: cosi_postgres
-    user: "${UID}:${GID}"   # <-- usa i tuoi ID
+    # The default Postgres image runs as user "postgres".
+    # You usually should NOT override this with your local UID/GID.
+    # user: "${UID}:${GID}"
+
     environment:
+      # These values initialize the PostgreSQL database cluster.
+      # The first initialization only happens if the data volume is empty.
       - UID=${UID}
       - GID=${GID}
-      - POSTGRES_USER=airflow_user
-      - POSTGRES_PASSWORD=secure_password
-      - POSTGRES_DB=airflow_db
+      - POSTGRES_USER=airflow_user      # Username for Airflow DB
+      - POSTGRES_DB=airflow_db          # Database name for Airflow
+
+    # Health check to verify that PostgreSQL is accepting connections
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow_user"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s      # Run every 5 seconds
+      timeout: 5s       # Fail if command takes longer than 5 seconds
+      retries: 10       # Mark container as unhealthy after 10 failed checks
+
     volumes:
+      # Local directory that persists the database files
+      # Commented line for a user-level data directory:
       # - ${HOME}/postgres_data:/var/lib/postgresql/data
       - ../data/postgres_data:/var/lib/postgresql/data
-    #restart: always
 
+    # restart: always   # Uncomment for auto-restart on failure
+
+  # ---------------------------------------------------------------------------
+  # AIRFLOW SERVICE
+  # ---------------------------------------------------------------------------
   airflow:
-    image: airflow:1.1.0
+    image: cosiflow-airflow:native
     build:
-      context: .
+      context: .                    # Build context for Dockerfile
       dockerfile: Dockerfile.airflow
     container_name: cosi_airflow
-    user: "${UID}:${GID}"   # <-- usa i tuoi ID
+
+    # Run the container as the "gamma" user created inside the image.
+    # This matches the user configured in your Dockerfile.
+    user: "gamma"
+
     environment:
+      # User and group IDs passed to match host permissions (optional)
       - UID=${UID}
       - GID=${GID}
+
+      # Airflow configuration
       - AIRFLOW_HOME=/home/gamma/airflow
-      - DISPLAY=${DISPLAY}
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - DISPLAY=${DISPLAY}  # Needed if you run GUI apps (e.g., plots)
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False  # Disable default example DAGs
+
+      # Mail alert system (MailHog)
       - ALERT_SMTP_SERVER=mailhog
       - ALERT_SMTP_PORT=1025
       - ALERT_EMAIL_SENDER=donotreply@cosiflow.alert.errors.it
+
+    # Extra environment variables loaded from .env file in this directory
     env_file:
       - .env
+
     volumes:
+      # DAGs, plugins, and pipeline directories are mounted so you can edit
+      # them live without rebuilding the image.
       - ../dags:/home/gamma/airflow/dags
       - ../plugins:/home/gamma/airflow/plugins
       - ../pipeline:/home/gamma/airflow/pipeline
       - ../callbacks:/home/gamma/airflow/callbacks
+
+      # Mount the PostgreSQL-specific Airflow configuration
       - ./airflow.cfg.postgresql:/home/gamma/airflow/airflow.cfg
+
+      # X11 socket for graphical display forwarding (if needed)
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ${HOME}/cosiflow:/shared_dir
-      - ${HOME}/cosiflow/data:/home/gamma/workspace/data
+
+      # Shared directory between host and container
+      - ..:/shared_dir
+
+      # Data workspace directory for processing large files
+      - ../data:/home/gamma/workspace/data
+
     ports:
-      - "8080:8080"
-      - "28888:28888" #jupyter notebook
+      - "8080:8080"   # Airflow Web UI
+      - "28888:28888" # Jupyter Notebook (if enabled)
+
     depends_on:
       postgres:
-        condition: 
-          service_healthy
-      
-    #restart: always   
-    entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh"]
-    #entrypoint: ["tail", "-f", "/dev/null"]
+        # Wait until the Postgres healthcheck passes before starting Airflow
+        condition: service_healthy
 
+    # restart: always   # Uncomment if you want automatic restarts
+
+    # Custom entrypoint script that initializes Airflow DB and starts services
+    entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh"]
+    # Alternative entrypoint for debugging:
+    # entrypoint: ["tail", "-f", "/dev/null"]
+
+  # ---------------------------------------------------------------------------
+  # MAILHOG SERVICE (Fake SMTP server for local testing)
+  # ---------------------------------------------------------------------------
   mailhog:
     image: mailhog/mailhog
     container_name: cosi_mailhog
-    user: "${UID}:${GID}"   # <-- usa i tuoi ID
-    environment:
-      - UID=${UID}
-      - GID=${GID}
     ports:
-      - "1025:1025"   # SMTP
-      - "8025:8025"   # Web UI: http://localhost:8025
+      - "1025:1025"   # SMTP port for Airflow alerts
+      - "8025:8025"   # Web UI → http://localhost:8025
+
+# ---------------------------------------------------------------------------
+# NAMED VOLUMES (Optional - not used directly since host paths are mounted)
+# ---------------------------------------------------------------------------
 volumes:
   postgres_data:
