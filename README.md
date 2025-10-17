@@ -2,6 +2,8 @@
 
 Cosiflow provides an Airflow-based orchestration environment for managing and monitoring scientific pipelines for COSI.
 
+> **Note:** This branch is the version used for the **Cosiflow introduction talk at COSIFEST 2025**.
+
 ---
 
 ### 1. REQUIREMENTS
