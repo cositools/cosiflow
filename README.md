@@ -50,8 +50,7 @@ ARG GID=<YOUR_GROUP_ID>
 #### PREPARE THE FOLDER FOR STORING POSTGRESS DATA
 ```bash
 cd ..
-cd data
-mkdir postgres_data
+mkdir -p data/postgres_data
 ```
 
 ---
@@ -61,6 +60,7 @@ mkdir postgres_data
 Build all containers defined in `docker-compose.yml`:
 
 ```bash
+cd env
 docker compose build
 ```
 
