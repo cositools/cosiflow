@@ -17,31 +17,13 @@ default_args = {
 }
 
 # Create the DAG
-"""
-The TS map we fit above loops over all the pixels of the entire sky, which has already taken a long time. 
-If you want to increase the resolution/order of the TS map, the number of pixels will grow exponentially:
-
-$$
-npix=12\times4^{order}
-$$
-
-
-For a map of order 3, you will fit the entire sky with 768 pixels. For a map of order 4, you will end up 
-with 3072 pixels to fit! To speed up the fitting, we can fit a multi-resolution map (also called 
-multi-order coverage map, MOC map) instead of the single-resolution map we did before.
-
-The multi-resolution map fitting will reduce the number of pixels to fit by fitting the background region 
-with low resolution while keeping the source region with the details we want. We will use Crab as an example 
-to show you how to fit a multi-resolution map to save your time and computational resources.
-"""
 dag = DAG(
-    'cosipipe_tsmap_mulres',
+    'cosipipe_tsmap_DC3',
     default_args=default_args,
-    description='COSI Multi-Resolution TS Map computation pipeline - fits background region with low resolution ' 
-                'while keeping source region with high resolution to save computational resources',
+    description='COSI TS Map computation pipeline',
     schedule_interval=None,  # Manual trigger only
     catchup=False,
-    tags=['cosipy', 'tsmap', 'multi-resolution'],
+    tags=['cosifest', 'cosipy', 'tsmap', 'grb'],
 )
 
 # Define the directory where our scripts are located
@@ -138,12 +120,12 @@ data_aggregation = BashOperator(
 )
 
 # Task 5: TS Map Computation
-ts_map_mulres_computation = BashOperator(
-    task_id='5_ts_map_mulres_computation',
+ts_map_computation = BashOperator(
+    task_id='5_ts_map_computation',
     bash_command="""
     source activate cosipy
     cd {{ ti.xcom_pull(key='data_folder') }}
-    python {{ params.script_dir }}/5_tsmapmulres_computation.py {{ ti.xcom_pull(key='data_folder') }}
+    python {{ params.script_dir }}/5_tsmapcomputation.py {{ ti.xcom_pull(key='data_folder') }}
     """,
     params={'script_dir': SCRIPT_DIR},
     dag=dag,
@@ -164,5 +146,5 @@ cleanup = BashOperator(
 # Define task dependencies
 contact_simulator >> [bin_grb_data, bin_background]
 [bin_grb_data, bin_background] >> data_aggregation
-data_aggregation >> ts_map_mulres_computation
-ts_map_mulres_computation >> cleanup
+data_aggregation >> ts_map_computation
+ts_map_computation >> cleanup

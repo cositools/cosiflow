@@ -41,7 +41,7 @@ dag = DAG(
                 'while keeping source region with high resolution to save computational resources',
     schedule_interval=None,  # Manual trigger only
     catchup=False,
-    tags=['cosipy', 'tsmap', 'multi-resolution'],
+    tags=['cosipy', "cosifest", 'handson', 'tutorial','tsmap', 'multi-resolution'],
 )
 
 # Define the directory where our scripts are located
