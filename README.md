@@ -161,3 +161,12 @@ Below is the list of environment variables defined in `.env` with their purpose:
 ---
 
 **Cosiflow environment ready for use.**
+---
+
+### DAG Tutorial
+
+For a detailed guide and practical tutorials on using and customizing the available DAGs, see the [DAG Tutorial README](pipeline/README.md).
+
+You will find step-by-step instructions, requirements, and quick commands to launch the example pipelines (`cosipipe_lightcurve` and `cosipipe_tsmap`), as well as information on how to download the necessary data and configure your environment.
+
+---
