@@ -16,8 +16,9 @@ services:
       # The first initialization only happens if the data volume is empty.
       - UID=${UID}
       - GID=${GID}
-      - POSTGRES_USER=airflow_user      # Username for Airflow DB
-      - POSTGRES_DB=airflow_db          # Database name for Airflow
+      - POSTGRES_USER=airflow_user         # Username for Airflow DB
+      - POSTGRES_DB=airflow_db             # Database name for Airflow
+      - POSTGRES_PASSWORD=secure_password  # Password for Airflow DB
 
     # Health check to verify that PostgreSQL is accepting connections
     healthcheck:
