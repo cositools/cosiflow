@@ -118,8 +118,8 @@ def validate_inputs(run_dir: str) -> None:
     """
     # Use "must_have" to allow resolving an inner root directory
     must_have = [
-        "inputs_GRB__galactic.yaml",
-        "inputs_bkg__galactic.yaml",
+        #"inputs_GRB__galactic.yaml",
+        #"inputs_bkg__galactic.yaml",
         "GRB_bn081207680_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
         "Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
         "DC3_final_530km_3_month_with_slew_1sbins_GalacticEarth_SAA.ori",
@@ -136,9 +136,6 @@ def validate_inputs(run_dir: str) -> None:
         pass
 
     required = [
-        # YAMLs
-        ("inputs_GRB__galactic.yaml", ["inputs_GRB__*.yaml", "*inputs*GRB*galactic*.yaml"]),
-        ("inputs_bkg__galactic.yaml", ["inputs_bkg__*.yaml", "*inputs*bkg*galactic*.yaml"]),
         # Unbinned FITS
         ("GRB_bn081207680_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
          ["GRB*_unbinned*fits*", "*GRB*unbinned*fits*"]),
@@ -174,7 +171,6 @@ def bin_grb_source(run_dir: str) -> str:
     data_dir = _resolve_data_root(
         run_dir,
         must_have=[
-            "inputs_GRB__galactic.yaml",
             "GRB_bn081207680_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
         ],
     )
@@ -184,10 +180,8 @@ def bin_grb_source(run_dir: str) -> str:
         print(f"[bin_grb_source] already exists: {out_h5}")
         return str(out_h5)
 
-    yaml_path = _first_existing_or_glob(
-        data_dir, "inputs_GRB__galactic.yaml",
-        patterns=["inputs_GRB__*.yaml", "*inputs*GRB*galactic*.yaml"]
-    )
+    yaml_path = "/home/gamma/airflow/pipeline/binning_script/Bin_DC3_GRB_data_O3/inputs__galactic.yaml"
+
     fits_path = _first_existing_or_glob(
         data_dir, "GRB_bn081207680_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
         patterns=["GRB*_unbinned*fits*", "*GRB*unbinned*fits*"]
@@ -212,7 +206,6 @@ def bin_background(run_dir: str) -> str:
     data_dir = _resolve_data_root(
         run_dir,
         must_have=[
-            "inputs_bkg__galactic.yaml",
             "Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
         ],
     )
@@ -222,10 +215,8 @@ def bin_background(run_dir: str) -> str:
         print(f"[bin_background] already exists: {out_h5}")
         return str(out_h5)
 
-    yaml_path = _first_existing_or_glob(
-        data_dir, "inputs_bkg__galactic.yaml",
-        patterns=["inputs_bkg__*.yaml", "*inputs*bkg*galactic*.yaml"]
-    )
+    yaml_path = "/home/gamma/airflow/pipeline/binning_script/Bin_DC3_background_O3/inputs__galactic.yaml"
+
     fits_path = _first_existing_or_glob(
         data_dir, "Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
         patterns=["Total_BG*unbinned*fits*", "*BG*unbinned*fits*"]
