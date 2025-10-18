@@ -16,13 +16,19 @@ def write_hello():
     with open(RESULT_FILE, "a", encoding="utf-8") as f:
         f.write("Hello Wolrd!\n")  # intentionally keeping the requested typo
 
+# Default arguments for the DAG
+default_args = {
+    'owner': 'gamma',
+}
+
 with DAG(
     dag_id="hello_world_dag",
+    default_args=default_args,
     description="Minimal example: Bash touch + Python writes text",
     start_date=datetime(2025, 1, 1),
     schedule_interval=None,   # run on-demand
     catchup=False,
-    tags=["handson", "tutorials"],
+    tags=["cosifest", "handson", "tutorials"],
 ) as dag:
 
     make_file = BashOperator(
