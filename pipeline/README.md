@@ -34,10 +34,18 @@
 
     Then to start the pipeline, you will need to activate the DAG in the web UI, and then execute the corresponding script which will simulate the data arrival.
 
-### Light Curve plot pipeline
+### TSmap plot pipeline
 To start the pipeline you need to execute the following script:
 ```bash
 cd airflow/pipeline
 python start_lcurvepipe.py
 ```
+Then you can activate the DAG named `cosipipe_lightcurve`
 
+### Light Curve plot pipeline
+To start the pipeline you need to execute the following script:
+```bash
+cd airflow/pipeline
+python start_tsmappipe.py
+```
+Then you can activate the DAG named `cosipipe_tsmap`

@@ -164,7 +164,7 @@ with DAG(
     start_date=datetime(2025, 1, 1),
     schedule_interval=None,
     catchup=False,
-    tags=["cosipy", "handson", "lightcurve", "extpythonenv", "tutorial"],
+    tags=["cosipy", "cosifest", "handson", "lightcurve", "extpythonenv", "tutorial"],
 ) as dag:
     
     wait_for_archive = PythonSensor(

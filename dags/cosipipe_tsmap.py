@@ -1,150 +1,210 @@
-from datetime import datetime, timedelta
-import os
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.operators.bash import BashOperator
-from airflow.utils.dates import days_ago
+# cosipipe_tsmap.py — COSIfest refactor
+from __future__ import annotations
 
-# Default arguments for the DAG
+from pathlib import Path
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from airflow import DAG
+from airflow.sensors.python import PythonSensor
+from airflow.operators.python import ExternalPythonOperator
+from airflow.models import Variable
+
+# Config via Airflow Variables (fallback to env/defaults happens in ops module as well)
+def _v(key, default=None):
+    try:
+        return Variable.get(key)
+    except Exception:
+        import os
+        return os.environ.get(key, default)
+
+BASE_DIR = Path(_v("TSMAP_INCOMING_DIR", "/home/gamma/workspace/data/tsmap"))
+RUNS_DIR = Path(_v("TSMAP_RUNS_DIR", str(BASE_DIR)))
+RUNS_DIR.mkdir(parents=True, exist_ok=True)
+
+EXTERNAL_PYTHON = _v("EXTERNAL_PYTHON", "/home/gamma/.conda/envs/cosipy/bin/python")
+FILE_STABILITY_SECONDS = int(_v("TSMAP_FILE_STABILITY_S", "10"))
+
+LIB_DIR = _v("TSMAP_LIB_DIR", "/home/gamma/airflow/pipeline/ts_map")
+
+ARCHIVE_EXT = tuple(_v("TSMAP_ARCHIVE_EXT", ".zip,.tar.gz,.tgz,.tar").split(","))
+
 default_args = {
-    'owner': 'cosipy_team',
-    'depends_on_past': False,
-    'start_date': days_ago(1),
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 1,
-    'retry_delay': timedelta(minutes=5),
+    "owner": "cosipy_team",
+    "depends_on_past": False,
+    "email_on_failure": False,
+    "email_on_retry": False,
+    "retries": 0,
+    "retry_delay": timedelta(minutes=2),
 }
 
-# Create the DAG
 dag = DAG(
-    'cosipipe_tsmap_DC3',
-    default_args=default_args,
-    description='COSI TS Map computation pipeline',
-    schedule_interval=None,  # Manual trigger only
+    dag_id="cosipipe_tsmap",
+    start_date=datetime(2025, 1, 1, tzinfo=ZoneInfo("Europe/Rome")),
+    schedule_interval=None,
     catchup=False,
-    tags=['cosipy', 'tsmap', 'grb'],
+    default_args=default_args,
+    tags=["cosipy", "tsmap", "cosifest", "handson"],
+    description="TS Map pipeline that waits for a zipped archive and processes it with COSIpy.",
 )
 
-# Define the directory where our scripts are located
-SCRIPT_DIR = "/home/gamma/airflow/pipeline/ts_map"
-
-def contact_simulator_task(**context):
-    """
-    Task to simulate satellite contact and prepare data folder
-    """
-    import os
-    import shutil
+# =========[ TASK CALLABLES ]=========
+def _find_new_archive(**kwargs) -> bool:
+    import time
+    from pathlib import Path
     from datetime import datetime
-    
-    # Create timestamp for folder name
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    #source_folder = f"/home/gamma/workspace/data/tsmap/{timestamp}"
-    source_folder = f"/home/gamma/workspace/tsmap_test/data"
-    new_folder = f"/home/gamma/workspace/data/tsmap/{timestamp}"
-    
-    # Create the new folder
-    os.makedirs(new_folder, exist_ok=True)
-    print(f"Created new data folder: {new_folder}")
-    
-    # Source files to copy
-    source_files = {
-        "background_file": f"{source_folder}/Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
-        "grb_data_source": f"{source_folder}/GRB_bn081207680_3months_unbinned_data_filtered_with_SAAcut.fits.gz", 
-        "response_file": f"{source_folder}/ResponseContinuum.o3.e100_10000.b10log.s10396905069491.m2284.filtered.nonsparse.binnedimaging.imagingresponse_nside8.area.good_chunks.h5",
-        "orientation_file": f"{source_folder}/DC3_final_530km_3_month_with_slew_1sbins_GalacticEarth_SAA.ori",
-        "binned_background": f"{source_folder}/Total_BG_continuum_O3_binned.hdf5"
-    }
-    
-    # Copy files to new folder
-    for file_type, source_path in source_files.items():
-        if os.path.exists(source_path):
-            filename = os.path.basename(source_path)
-            dest_path = os.path.join(new_folder, filename)
-            shutil.copy2(source_path, dest_path)
-            print(f"Copied {file_type}: {filename}")
-        else:
-            print(f"Warning: Source file not found: {source_path}")
-    
-    # Store the data folder path in XCom for other tasks to use
-    context['task_instance'].xcom_push(key='data_folder', value=new_folder)
-    return new_folder
+    from zoneinfo import ZoneInfo
 
-def get_data_folder(**context):
-    """
-    Helper function to retrieve data folder from XCom
-    """
-    return context['task_instance'].xcom_pull(key='data_folder')
+    ti = kwargs.get("ti")
+    if ti is None:
+        raise RuntimeError("Task instance (ti) not found; cannot push XCom.")
 
-# Task 1: Contact Simulator
-contact_simulator = PythonOperator(
-    task_id='1_contact_simulator',
-    python_callable=contact_simulator_task,
-    dag=dag,
-)
+    now = datetime.now(tz=ZoneInfo("Europe/Rome"))
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-# Task 2: Bin GRB Data Source
-bin_grb_data = BashOperator(
-    task_id='2_bin_grb_data',
-    bash_command="""
-    source activate cosipy
-    cd {{ ti.xcom_pull(key='data_folder') }}
-    python {{ params.script_dir }}/2_binGRBdatasource.py {{ ti.xcom_pull(key='data_folder') }}
-    """,
-    params={'script_dir': SCRIPT_DIR},
-    dag=dag,
-)
+    candidates = []
+    for p in Path(BASE_DIR).glob("*"):
+        if p.is_file() and any(p.name.endswith(ext) for ext in ARCHIVE_EXT):
+            st = p.stat()
+            if (now.timestamp() - st.st_mtime) < FILE_STABILITY_SECONDS:
+                continue
+            if datetime.fromtimestamp(st.st_mtime, tz=ZoneInfo("Europe/Rome")) < today_start:
+                continue
+            candidates.append(p)
 
-# Task 3: Bin Background Data
-bin_background = BashOperator(
-    task_id='3_bin_background',
-    bash_command="""
-    source activate cosipy
-    cd {{ ti.xcom_pull(key='data_folder') }}
-    python {{ params.script_dir }}/3_binBackground.py {{ ti.xcom_pull(key='data_folder') }}
-    """,
-    params={'script_dir': SCRIPT_DIR},
-    dag=dag,
-)
+    if not candidates:
+        print("[find_new_archive] No stable archives from today yet.")
+        return False
 
-# Task 4: Data Aggregation
-data_aggregation = BashOperator(
-    task_id='4_data_aggregation',
-    bash_command="""
-    source activate cosipy
-    cd {{ ti.xcom_pull(key='data_folder') }}
-    python {{ params.script_dir }}/4_dataAggregation.py {{ ti.xcom_pull(key='data_folder') }}
-    """,
-    params={'script_dir': SCRIPT_DIR},
-    dag=dag,
-)
+    picked = max(candidates, key=lambda p: p.stat().st_mtime)
+    ti.xcom_push(key="archive_path", value=str(picked))
+    print(f"[find_new_archive] Selected: {picked}")
+    return True
 
-# Task 5: TS Map Computation
-ts_map_computation = BashOperator(
-    task_id='5_ts_map_computation',
-    bash_command="""
-    source activate cosipy
-    cd {{ ti.xcom_pull(key='data_folder') }}
-    python {{ params.script_dir }}/5_tsmapcomputation.py {{ ti.xcom_pull(key='data_folder') }}
-    """,
-    params={'script_dir': SCRIPT_DIR},
-    dag=dag,
-)
+def _decompress_archive(archive_path: str, runs_dir: str, lib_dir: str) -> str:
+    import sys
+    sys.path.insert(0, lib_dir)
+    from cosipipe_tsmap_ops import decompress_archive
+    return decompress_archive(archive_path, runs_dir)
 
-# Task 6: Cleanup (Optional)
-# TODO: Add cleanup task
-cleanup = BashOperator(
-    task_id='6_cleanup',
-    bash_command="""
-    echo "Pipeline completed successfully!"
-    echo "Data folder: {{ ti.xcom_pull(key='data_folder') }}"
-    echo "Check the plots directory for TS map visualizations"
-    """,
-    dag=dag,
-)
+def _validate_inputs(run_dir: str, lib_dir: str) -> None:
+    import sys
+    sys.path.insert(0, lib_dir)
+    from cosipipe_tsmap_ops import validate_inputs_tsmap
+    return validate_inputs_tsmap(run_dir)
 
-# Define task dependencies
-contact_simulator >> [bin_grb_data, bin_background]
-[bin_grb_data, bin_background] >> data_aggregation
-data_aggregation >> ts_map_computation
-ts_map_computation >> cleanup
+def _bin_grb(run_dir: str, lib_dir: str) -> str:
+    import sys
+    sys.path.insert(0, lib_dir)
+    from cosipipe_tsmap_ops import bin_grb_data
+    return bin_grb_data(run_dir)
+
+def _bin_bkg(run_dir: str, lib_dir: str) -> str:
+    import sys
+    sys.path.insert(0, lib_dir)
+    from cosipipe_tsmap_ops import bin_background_data
+    return bin_background_data(run_dir)
+
+def _aggregate(run_dir: str, lib_dir: str):
+    import sys
+    sys.path.insert(0, lib_dir)
+    from cosipipe_tsmap_ops import aggregate_data
+    return aggregate_data(run_dir)
+
+def _ts_map(run_dir: str, lib_dir: str) -> str:
+    import sys
+    sys.path.insert(0, lib_dir)
+    from cosipipe_tsmap_ops import compute_ts_map
+    return compute_ts_map(run_dir)
+
+def _ts_map_mulres(run_dir: str, lib_dir: str) -> str:
+    import sys
+    sys.path.insert(0, lib_dir)
+    from cosipipe_tsmap_ops import compute_ts_map_mulres
+    return compute_ts_map_mulres(run_dir)
+
+with dag:
+    wait_for_archive = PythonSensor(
+        task_id="wait_for_archive",
+        python_callable=_find_new_archive,
+        poke_interval=10,
+        timeout=60 * 60 * 24,
+        mode="poke",
+    )
+
+    decompress_archive = ExternalPythonOperator(
+        task_id="decompress_archive",
+        python=EXTERNAL_PYTHON,
+        python_callable=_decompress_archive,
+        op_kwargs={
+            "archive_path": "{{ ti.xcom_pull(task_ids='wait_for_archive', key='archive_path') }}",
+            "runs_dir": str(RUNS_DIR),
+            "lib_dir": LIB_DIR,
+        },
+    )
+
+    validate_inputs = ExternalPythonOperator(
+        task_id="validate_inputs",
+        python=EXTERNAL_PYTHON,
+        python_callable=_validate_inputs,
+        op_kwargs={
+            "run_dir": "{{ ti.xcom_pull(task_ids='decompress_archive', key='return_value') }}",
+            "lib_dir": LIB_DIR,
+        },
+    )
+
+    bin_grb = ExternalPythonOperator(
+        task_id="bin_grb_source",
+        python=EXTERNAL_PYTHON,
+        python_callable=_bin_grb,
+        op_kwargs={
+            "run_dir": "{{ ti.xcom_pull(task_ids='decompress_archive', key='return_value') }}",
+            "lib_dir": LIB_DIR,
+        },
+    )
+
+    bin_bkg = ExternalPythonOperator(
+        task_id="bin_background",
+        python=EXTERNAL_PYTHON,
+        python_callable=_bin_bkg,
+        op_kwargs={
+            "run_dir": "{{ ti.xcom_pull(task_ids='decompress_archive', key='return_value') }}",
+            "lib_dir": LIB_DIR,
+        },
+    )
+
+    aggregate = ExternalPythonOperator(
+        task_id="data_aggregation",
+        python=EXTERNAL_PYTHON,
+        python_callable=_aggregate,
+        op_kwargs={
+            "run_dir": "{{ ti.xcom_pull(task_ids='decompress_archive', key='return_value') }}",
+            "lib_dir": LIB_DIR,
+        },
+    )
+
+    ts_map = ExternalPythonOperator(
+        task_id="ts_map_computation",
+        python=EXTERNAL_PYTHON,
+        python_callable=_ts_map,
+        op_kwargs={
+            "run_dir": "{{ ti.xcom_pull(task_ids='decompress_archive', key='return_value') }}",
+            "lib_dir": LIB_DIR,
+        },
+    )
+
+    ts_map_mulres = ExternalPythonOperator(
+        task_id="ts_map_mulres_computation",
+        python=EXTERNAL_PYTHON,
+        python_callable=_ts_map_mulres,
+        op_kwargs={
+            "run_dir": "{{ ti.xcom_pull(task_ids='decompress_archive', key='return_value') }}",
+            "lib_dir": LIB_DIR,
+        },
+    )
+
+    # Orchestration
+    wait_for_archive >> decompress_archive
+    decompress_archive >> validate_inputs >> [bin_grb, bin_bkg]
+    [bin_grb, bin_bkg] >> aggregate
+    aggregate >> [ts_map, ts_map_mulres]
