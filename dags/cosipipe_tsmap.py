@@ -30,7 +30,7 @@ LIB_DIR = _v("TSMAP_LIB_DIR", "/home/gamma/airflow/pipeline/ts_map")
 ARCHIVE_EXT = tuple(_v("TSMAP_ARCHIVE_EXT", ".zip,.tar.gz,.tgz,.tar").split(","))
 
 default_args = {
-    "owner": "cosipy_team",
+    "owner": "gamma",
     "depends_on_past": False,
     "email_on_failure": False,
     "email_on_retry": False,
