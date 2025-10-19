@@ -1,0 +1,58 @@
+# bob_standalone.py
+# Airflow 2.x — Bob: wait for factors.pkl, reconstruct A@B, plot float and binary images
+
+# =========[ BOB: RECONSTRUCT AND PLOT ]=========
+# External Python interpreter (your cosipy conda env)
+EXTERNAL_PYTHON = "/home/gamma/.conda/envs/cosipy/bin/python"
+
+# Defaults for the demo
+BASE_DIR = "/home/gamma/workspace/data/tutorials/alice_bob_factor"
+PKL_PATH = f"{BASE_DIR}/factors.pkl"
+BIN_THR = 0.5  # threshold to binarize reconstruction
+
+# =========[ BOB: SENSOR ]=========
+def _file_exists(pkl_path: str) -> bool:
+    """Sensor callable: returns True when the pickle file exists."""
+    import os
+    return os.path.exists(pkl_path)
+
+# =========[ BOB: RECONSTRUCT AND PLOT ]=========
+def _bob_reconstruct_and_plot(base_dir: str, pkl_path: str, bin_thr: float):
+    """Run in external interpreter. Load A,B -> M=A@B; save float & binarized reconstructions."""
+    from pathlib import Path
+    import pickle
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    base = Path(base_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    img_rec_float = base / "reconstruction_float.png"
+    img_rec_bin = base / "reconstruction_binary.png"
+
+    with open(pkl_path, "rb") as f:
+        payload = pickle.load(f)
+
+    A = np.asarray(payload["A"], dtype=float)  # (32×k)
+    B = np.asarray(payload["B"], dtype=float)  # (k×32)
+
+    # 1) Reconstruct
+    M = A @ B
+
+    # 2) Save float heatmap
+    plt.figure(figsize=(4, 4), dpi=120)
+    plt.imshow(M, cmap="gray_r", interpolation="nearest")
+    plt.title("Reconstruction (float)")
+    plt.axis("off")
+    plt.tight_layout(pad=0.2)
+    plt.savefig(img_rec_float)
+    plt.close()
+
+    # 3) Save binarized heatmap (to match Alice's binary look)
+    M_bin = (M >= bin_thr).astype(int)
+    plt.figure(figsize=(4, 4), dpi=120)
+    plt.imshow(M_bin, cmap="gray_r", interpolation="nearest")
+    plt.title(f"Reconstruction (binary, thr={bin_thr})")
+    plt.axis("off")
+    plt.tight_layout(pad=0.2)
+    plt.savefig(img_rec_bin)
+    plt.close()
