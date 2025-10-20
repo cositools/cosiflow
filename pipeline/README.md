@@ -38,7 +38,7 @@
 To start the pipeline you need to execute the following script:
 ```bash
 cd airflow/pipeline
-python start_lcurvepipe.py
+./start_lcurvepipe.sh
 ```
 Then you can activate the DAG named `cosipipe_lightcurve`
 
@@ -46,6 +46,6 @@ Then you can activate the DAG named `cosipipe_lightcurve`
 To start the pipeline you need to execute the following script:
 ```bash
 cd airflow/pipeline
-python start_tsmappipe.py
+./start_tsmappipe.sh
 ```
 Then you can activate the DAG named `cosipipe_tsmap`
