@@ -1,10 +1,8 @@
-# alice_dag.py
-# Airflow 2.x — Alice: build 32x32 binary text matrix, factorize via SVD, save A,B and plots
-from datetime import datetime
+# a_standalone.py
+# Airflow 2.x — Alice: build 32x32 binary text matrix, factorize via SVD, save L,R and plots
 
-from airflow import DAG
-from airflow.operators.python import ExternalPythonOperator
-
+# =========[ ALICE: CONFIG ]=========
+# External Python interpreter (your cosipy conda env)
 EXTERNAL_PYTHON = "/home/gamma/.conda/envs/cosipy/bin/python"
 
 # Defaults for the demo
@@ -12,9 +10,10 @@ TEXT = "DAGs\n  ARE\nCOOL!"
 SIZE = [48, 48]      # pass lists in op_kwargs (safer JSON-serializable)
 FONT_SIZE = 6
 RANK = 12
-BASE_DIR = "/home/gamma/workspace/data/tutorials/alice_bob_factor"
+BASE_DIR = "/home/gamma/workspace/data/tutorials/a_b_factor"
 
-def _alice_make_factors(base_dir: str, text: str, size: list, font_size: int, rank: int):
+# =========[ ALICE: TASK CALLABLES ]=========
+def _a_make_factors(base_dir: str, text: str, size: list, font_size: int, rank: int):
     """Run entirely in the external 'cosipy' interpreter.
     Robustly measure multiline text size across Pillow versions (no draw.textsize).
     """
@@ -29,8 +28,8 @@ def _alice_make_factors(base_dir: str, text: str, size: list, font_size: int, ra
     base = Path(base_dir)
     base.mkdir(parents=True, exist_ok=True)
     pkl_path = base / "factors.pkl"
-    img_A = base / "factor_A.png"
-    img_B = base / "factor_B.png"
+    img_L = base / "factor_L.png"
+    img_R = base / "factor_R.png"
 
     W, H = int(size[0]), int(size[1])
 
@@ -112,21 +111,21 @@ def _alice_make_factors(base_dir: str, text: str, size: list, font_size: int, ra
     Sk = np.diag(s[:k])
     Vk = Vt[:k, :]
     Ssqrt = np.sqrt(Sk)
-    A = Uk @ Ssqrt
-    B = Ssqrt @ Vk
+    L = Uk @ Ssqrt
+    R = Ssqrt @ Vk
 
     # -- 3) Persist factors
     with open(pkl_path, "wb") as f:
         pickle.dump(
             {
-                "A": A.astype("float32"),
-                "B": B.astype("float32"),
+                "L": L.astype("float32"),
+                "R": R.astype("float32"),
                 "meta": {"rank": int(k), "size": [W, H], "text": text},
             },
             f,
         )
 
-    # -- 4) Visualize A and B (not binary)
+    # -- 4) Visualize L and R (not binary)
     def _plot_matrix(M, out_path, title):
         plt.figure(figsize=(4, 4), dpi=120)
         plt.imshow(M, cmap="gray_r", interpolation="nearest")
@@ -136,40 +135,5 @@ def _alice_make_factors(base_dir: str, text: str, size: list, font_size: int, ra
         plt.savefig(out_path)
         plt.close()
 
-    _plot_matrix(A, img_A, f"A factor ({W}×{k})")
-    _plot_matrix(B, img_B, f"B factor ({k}×{H})")
-
-
-
-
-default_args = {
-    "owner": "gamma",
-    "depends_on_past": False,
-    "email_on_failure": False,
-    "email_on_retry": False,
-    "retries": 0,
-}
-
-
-with DAG(
-    dag_id="alice_dag",
-    default_args=default_args,
-    description="Alice: make 32×32 text matrix, factorize via SVD into A,B and save them",
-    start_date=datetime(2025, 1, 1),
-    schedule_interval=None,
-    catchup=False,
-    tags=["cosifest", "handson", "tutorial", "cosipy", "producer", "linalg"],
-) as dag:
-
-    alice_factorize = ExternalPythonOperator(
-        task_id="alice_factorize_text_matrix",
-        python=EXTERNAL_PYTHON,               # interpreter in cosipy env
-        python_callable=_alice_make_factors,  # callable executed in external PY
-        op_kwargs={
-            "base_dir": BASE_DIR,
-            "text": TEXT,
-            "size": SIZE,
-            "font_size": FONT_SIZE,
-            "rank": RANK,
-        },
-    )
+    _plot_matrix(L, img_L, f"L factor ({W}×{k})")
+    _plot_matrix(R, img_R, f"R factor ({k}×{H})")

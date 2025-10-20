@@ -7,10 +7,10 @@ Riccardo Falco — Cosiflow / COSI-AIRFLOW
 - **Exercise 1 — Hello World DAG**
   - `BashOperator` → create folder & `result.txt`
   - `PythonOperator` → append `"Hello Wolrd!"` to the file
-- **Exercise 2 — Alice & Bob**
+- **Exercise 2 — A & B**
   - Two DAGs running “in parallel”, communicating via **filesystem**
-  - **Alice (ExternalPythonOperator in `cosipy`)**: render 48×48 text → factorize via SVD → save `A`, `B` and plots
-  - **Bob (ExternalPythonOperator + PythonSensor)**: wait for `factors.pkl` → reconstruct `A@B` → save plots
+  - **A (ExternalPythonOperator in `cosipy`)**: render 48×48 text → factorize via SVD → save `A`, `B` and plots
+  - **B (ExternalPythonOperator + PythonSensor)**: wait for `factors.pkl` → reconstruct `A@B` → save plots
 
 ---
 
@@ -83,22 +83,22 @@ cat /home/gamma/workspace/data/tutorials/result.txt
 ---
 
 ## 6) Exercise 2 — Architecture
-**Alice** (producer):
+**A** (producer):
 - Render multiline text into a tiny canvas → 0/1 matrix `X`
-- SVD factorization: `X ≈ A @ B`
-- Save: `factors.pkl` + plots `factor_A.png`, `factor_B.png`
+- SVD factorization: `X ≈ L @ R`
+- Save: `factors.pkl` + plots `factor_L.png`, `factor_R.png`
 
-**Bob** (consumer):
+**B** (consumer):
 - `PythonSensor` waits for `factors.pkl`
-- Load `A`, `B`; compute `M = A @ B`
+- Load `L`, `R`; compute `M = L @ R`
 - Save `reconstruction_float.png` and `reconstruction_binary.png`
 
 Communication: **filesystem** at
-`/home/gamma/workspace/data/tutorials/alice_bob_factor/`
+`/home/gamma/workspace/data/tutorials/a_b_factor/`
 
 ---
 
-## 7) Exercise 2 — Alice DAG (key pattern)
+## 7) Exercise 2 — A DAG (key pattern)
 Create a new DAG in `cosiflow/dags` path.
 
 ```python
@@ -106,12 +106,12 @@ from airflow.operators.python import ExternalPythonOperator
 
 EXTERNAL_PYTHON = "/home/gamma/.conda/envs/cosipy/bin/python"
 
-alice_factorize = ExternalPythonOperator(
-    task_id="alice_factorize_text_matrix",
+a_factorize = ExternalPythonOperator(
+    task_id="a_factorize_text_matrix",
     python=EXTERNAL_PYTHON,
-    python_callable=_alice_make_factors,   # defined in the DAG file
+    python_callable=_a_make_factors,   # defined in the DAG file
     op_kwargs={
-        "base_dir": "/home/gamma/workspace/data/tutorials/alice_bob_factor",
+        "base_dir": "/home/gamma/workspace/data/tutorials/a_b_factor",
         "text": "DAGs\n  ARE\nCOOL!",
         "size": [48, 48],
         "font_size": 6,
@@ -121,11 +121,11 @@ alice_factorize = ExternalPythonOperator(
 ```
 **Rule**: pass everything via **`op_kwargs`** to avoid global‑scope issues.
 
-Now copy paste the code contained in `cosiflow/tutorials/functions/alice_standalone.py`
+Now copy paste the code contained in `cosiflow/tutorials/functions/a_standalone.py`
 
 ---
 
-## 8) Exercise 2 — Bob DAG (sensor + external python)
+## 8) Exercise 2 — B DAG (sensor + external python)
 Create a new DAG in `cosiflow/dags` path.
 
 ```python
@@ -140,31 +140,31 @@ wait_for_factors = PythonSensor(
     poke_interval=10, timeout=3600,
 )
 
-bob_reconstruct = ExternalPythonOperator(
-    task_id="bob_reconstruct_and_plot",
+b_reconstruct = ExternalPythonOperator(
+    task_id="b_reconstruct_and_plot",
     python=EXTERNAL_PYTHON,
-    python_callable=_bob_reconstruct_and_plot,
+    python_callable=_b_reconstruct_and_plot,
     op_kwargs={
-        "base_dir": "/.../alice_bob_factor",
-        "pkl_path": "/.../alice_bob_factor/factors.pkl",
+        "base_dir": "/.../a_b_factor",
+        "pkl_path": "/.../a_b_factor/factors.pkl",
         "bin_thr": 0.5,
     },
 )
 
-wait_for_factors >> bob_reconstruct
+wait_for_factors >> b_reconstruct
 ```
 
-Now copy paste the code contained in `cosiflow/tutorials/functions/bob_standalone.py`
+Now copy paste the code contained in `cosiflow/tutorials/functions/b_standalone.py`
 
 ---
 
 ## 9) Demo flow
-1. Trigger **Bob** first → observe the Sensor waiting
-2. Trigger **Alice** → produces factors & plots
-3. Bob continues → produces reconstructions
+1. Trigger **B** first → observe the Sensor waiting
+2. Trigger **A** → produces factors & plots
+3. B continues → produces reconstructions
 4. Show files in the shared folder
 
 Cleanup (optional):
 ```
-rm -f /home/gamma/workspace/data/tutorials/alice_bob_factor/*
+rm -f /home/gamma/workspace/data/tutorials/a_b_factor/*
 ```

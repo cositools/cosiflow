@@ -1,5 +1,5 @@
-# bob_dag.py
-# Airflow 2.x — Bob: wait for factors.pkl, reconstruct A@B, plot float and binary images
+# b_dag.py
+# Airflow 2.x — Bob: wait for factors.pkl, reconstruct L@R, plot float and binary images
 from datetime import datetime
 
 from airflow import DAG
@@ -8,7 +8,7 @@ from airflow.operators.python import ExternalPythonOperator
 
 EXTERNAL_PYTHON = "/home/gamma/.conda/envs/cosipy/bin/python"
 
-BASE_DIR = "/home/gamma/workspace/data/tutorials/alice_bob_factor"
+BASE_DIR = "/home/gamma/workspace/data/tutorials/a_b_factor"
 PKL_PATH = f"{BASE_DIR}/factors.pkl"
 BIN_THR = 0.5  # threshold to binarize reconstruction
 
@@ -17,8 +17,8 @@ def _file_exists(pkl_path: str) -> bool:
     import os
     return os.path.exists(pkl_path)
 
-def _bob_reconstruct_and_plot(base_dir: str, pkl_path: str, bin_thr: float):
-    """Run in external interpreter. Load A,B -> M=A@B; save float & binarized reconstructions."""
+def _b_reconstruct_and_plot(base_dir: str, pkl_path: str, bin_thr: float):
+    """Run in external interpreter. Load L,R -> M=L@R; save float & binarized reconstructions."""
     from pathlib import Path
     import pickle
     import numpy as np
@@ -32,11 +32,11 @@ def _bob_reconstruct_and_plot(base_dir: str, pkl_path: str, bin_thr: float):
     with open(pkl_path, "rb") as f:
         payload = pickle.load(f)
 
-    A = np.asarray(payload["A"], dtype=float)  # (32×k)
-    B = np.asarray(payload["B"], dtype=float)  # (k×32)
+    L = np.asarray(payload["L"], dtype=float)  # (32×k)
+    R = np.asarray(payload["R"], dtype=float)  # (k×32)
 
     # 1) Reconstruct
-    M = A @ B
+    M = L @ R
 
     # 2) Save float heatmap
     plt.figure(figsize=(4, 4), dpi=120)
@@ -66,9 +66,9 @@ default_args = {
 }
 
 with DAG(
-    dag_id="bob_dag",
+    dag_id="b_dag",
     default_args=default_args,
-    description="Bob: wait for A,B factors, reconstruct A@B and re-plot the original matrix",
+    description="B: wait for L,R factors, reconstruct L@R and re-plot the original matrix",
     start_date=datetime(2025, 1, 1),
     schedule_interval=None,
     catchup=False,
@@ -84,10 +84,10 @@ with DAG(
         mode="poke",
     )
 
-    bob_reconstruct = ExternalPythonOperator(
-        task_id="bob_reconstruct_and_plot",
+    b_reconstruct = ExternalPythonOperator(
+        task_id="b_reconstruct_and_plot",
         python=EXTERNAL_PYTHON,
-        python_callable=_bob_reconstruct_and_plot,
+        python_callable=_b_reconstruct_and_plot,
         op_kwargs={
             "base_dir": BASE_DIR,
             "pkl_path": PKL_PATH,
@@ -95,4 +95,4 @@ with DAG(
         },
     )
 
-    wait_for_factors >> bob_reconstruct
+    wait_for_factors >> b_reconstruct
