@@ -1,5 +1,5 @@
 # COSIfest Mini‑Tutorial — Building Two DAGs in Airflow
-Riccardo Falco — Cosiflow / COSI-AIRFLOW
+Cosiflow / COSI-AIRFLOW
 
 ---
 
