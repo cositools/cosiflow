@@ -99,6 +99,8 @@ Communication: **filesystem** at
 ---
 
 ## 7) Exercise 2 — Alice DAG (key pattern)
+Create a new DAG in `cosiflow/dags` path.
+
 ```python
 from airflow.operators.python import ExternalPythonOperator
 
@@ -119,9 +121,13 @@ alice_factorize = ExternalPythonOperator(
 ```
 **Rule**: pass everything via **`op_kwargs`** to avoid global‑scope issues.
 
+Now copy paste the code contained in `cosiflow/tutorials/functions/alice_standalone.py`
+
 ---
 
 ## 8) Exercise 2 — Bob DAG (sensor + external python)
+Create a new DAG in `cosiflow/dags` path.
+
 ```python
 from airflow.sensors.python import PythonSensor
 from airflow.operators.python import ExternalPythonOperator
@@ -147,6 +153,8 @@ bob_reconstruct = ExternalPythonOperator(
 
 wait_for_factors >> bob_reconstruct
 ```
+
+Now copy paste the code contained in `cosiflow/tutorials/functions/bob_standalone.py`
 
 ---
 
