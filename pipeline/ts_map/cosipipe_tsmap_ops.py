@@ -534,9 +534,9 @@ def _orig_compute_ts_map(data_folder):
         # the GRB location by setting `containment` parameter to the percetage you 
         # want to plot. However, because the strength of the GRB signal is very 
         # very strong, the ts map looks the same under different containment levels.
-        ts.plot_ts(skycoord = coord, save_plot = True, save_dir = data_folder, save_name = "ts_map.png")
+        ts.plot_ts(save_plot = True, save_dir = data_folder, save_name = "ts_map.png")
 
-        ts.plot_ts(skycoord = coord, containment = 0.9, save_plot = True, save_dir = data_folder, save_name = "ts_map_90containment.png")
+        ts.plot_ts(containment = 0.9, save_plot = True, save_dir = data_folder, save_name = "ts_map_90containment.png")
         print(f"TS map data saved")
         
         print("TS map computation completed successfully!")
@@ -651,11 +651,11 @@ def _orig_compute_ts_map_mulres(data_folder):
                                     spectrum = spectrum)
 
         # plot the raw ts values
-        moc_fit.plot_ts(dpi = 300, skycoord=coord, save_plot = True, save_dir = data_folder, save_name = "ts_map_multires.png")
+        moc_fit.plot_ts(dpi = 300, save_plot = True, save_dir = data_folder, save_name = "ts_map_multires.png")
 
         # plot the 90% confidence region
         # You can see from the plot below, we recover the same 90% containment region as we did in Example 3
-        moc_fit.plot_ts(dpi = 300, skycoord=coord, containment = 0.9, save_plot = True, save_dir = data_folder, save_name = "ts_map_multires_90containment.png")
+        moc_fit.plot_ts(dpi = 300, containment = 0.9, save_plot = True, save_dir = data_folder, save_name = "ts_map_multires_90containment.png")
 
         print(f"TS map data saved")
         
