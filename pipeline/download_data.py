@@ -11,7 +11,11 @@ data_folder = Path("/home/gamma/workspace/data/raw")
 data_folder.mkdir(exist_ok=True)
 
 wasabi = {
-    "background":  "Backgrounds/Ge/Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
+    # NOTE: The original background file is extremely large, and the complete data directory can reach about 52 GB.
+    # To avoid heavy storage usage and slowdowns for experiments, we trimmed the background around the source window,
+    # producing a much smaller background file (~1MB) for use here.
+    #
+    # "background":  "Backgrounds/Ge/Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
     "response":    "Responses/ResponseContinuum.o3.e100_10000.b10log.s10396905069491.m2284.filtered.nonsparse.binnedimaging.imagingresponse_nside8.area.good_chunks.h5.zip",
     "orientation": "Orientation/DC3_final_530km_3_month_with_slew_1sbins_GalacticEarth_SAA.ori",
     "source":      "Sources/GRB_bn081207680_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
@@ -43,7 +47,7 @@ archive_path = data_folder / archive_name
 
 with tarfile.open(archive_path, "w:gz") as tar:
     for file_path in data_folder.iterdir():
-        if file_path.is_file():
+        if file_path.is_file() and not file_path.name.endswith(".zip") and not file_path.name.endswith(".gz"):
             tar.add(file_path, arcname=file_path.name)
             print(f"Added {file_path.name} to archive")
 

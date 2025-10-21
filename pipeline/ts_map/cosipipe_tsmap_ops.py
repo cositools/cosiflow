@@ -220,7 +220,7 @@ def bin_grb_data(data_folder):
     
     analysis.get_binned_data(
         unbinned_data=grb_file,
-        output_name=output_file,
+        output_name=os.path.splitext(output_file)[0],
         psichi_binning="local"
     )
     
@@ -313,7 +313,8 @@ def bin_background_data(data_folder):
     
     analysis.get_binned_data(
         unbinned_data=bg_file,
-        output_name=output_file,
+        # Use output_file without the extension
+        output_name=os.path.splitext(output_file)[0],
         psichi_binning="local"
     )
     

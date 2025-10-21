@@ -171,7 +171,7 @@ def bin_grb_source(run_dir: str) -> str:
     data_dir = _resolve_data_root(
         run_dir,
         must_have=[
-            "GRB_bn081207680_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
+            "GRB_bn081207680_3months_unbinned_data_filtered_with_SAAcut.fits",
         ],
     )
 
@@ -183,7 +183,7 @@ def bin_grb_source(run_dir: str) -> str:
     yaml_path = "/home/gamma/airflow/pipeline/binning_script/Bin_DC3_GRB_data_O3/inputs__galactic.yaml"
 
     fits_path = _first_existing_or_glob(
-        data_dir, "GRB_bn081207680_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
+        data_dir, "GRB_bn081207680_3months_unbinned_data_filtered_with_SAAcut.fits",
         patterns=["GRB*_unbinned*fits*", "*GRB*unbinned*fits*"]
     )
 
@@ -206,7 +206,7 @@ def bin_background(run_dir: str) -> str:
     data_dir = _resolve_data_root(
         run_dir,
         must_have=[
-            "Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
+            "Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits",
         ],
     )
 
@@ -218,7 +218,7 @@ def bin_background(run_dir: str) -> str:
     yaml_path = "/home/gamma/airflow/pipeline/binning_script/Bin_DC3_background_O3/inputs__galactic.yaml"
 
     fits_path = _first_existing_or_glob(
-        data_dir, "Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits.gz",
+        data_dir, "Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits",
         patterns=["Total_BG*unbinned*fits*", "*BG*unbinned*fits*"]
     )
 
