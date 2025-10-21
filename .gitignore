@@ -162,5 +162,4 @@ cython_debug/
 #.idea/
 
 # Data Folder
-!/data/raw/Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits
-data
+data/*
