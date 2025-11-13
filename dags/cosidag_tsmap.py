@@ -115,6 +115,10 @@ with COSIDAG(
     idle_seconds=5,
     min_files=1,
     # ready_marker="_SUCCESS",   # enable if you create a sentinel at end-of-write
+    # controlled parallelism:
+    max_active_runs=2,         # up to 2 DAG runs in parallel
+    max_active_tasks=8,        # up to 8 tasks in parallel in the DAG
+    concurrency=8,             # local alternative limit (Airflow <2.7)
     date=datetime.now().strftime("%Y%m%d"),
     file_patterns={
         "grb_file": "GRB*_unbinned_*.fits*",
