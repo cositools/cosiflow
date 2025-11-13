@@ -73,7 +73,47 @@ _BASE_DEFAULT_ARGS = {
     "on_failure_callback": notify_email,  # from callbacks/on_failure_callback.py
 }
 
-# ---- Helpers (MUST stay at module top-level) ------------------------------------
+# --- Public config helpers (Airflow Variable -> ENV -> default) -----------------
+try:
+    from airflow.models import Variable as _AFVariable
+except Exception:
+    _AFVariable = None
+
+def cfg(key: str, default=None):
+    """Read config from Airflow Variable, then ENV, else default (string)."""
+    val = None
+    if _AFVariable is not None:
+        try:
+            val = _AFVariable.get(key)
+        except Exception:
+            val = None
+    if val is None:
+        val = os.environ.get(key, default)
+    return val
+
+def cfg_int(key: str, default: int) -> int:
+    v = cfg(key, default)
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+def cfg_float(key: str, default: float) -> float:
+    v = cfg(key, default)
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+def cfg_bool(key: str, default: bool = False) -> bool:
+    v = cfg(key, None)
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return default
+    return str(v).strip().lower() in {"1","true","t","yes","y","on"}
+
+# ----- Helper functions (MUST stay at module top-level) --------------------------
 
 def _dir_stats(path: str):
     """Return (count, total_size_bytes, latest_mtime) across all files under path."""
