@@ -165,9 +165,4 @@ cython_debug/
 data/*
 # TODO: Remove when you need the cut background file anymore
 # Raw data folder excluding only the background cut file
-!data/raw/
-data/raw/*.ori
-data/raw/*.tar.gz
-data/raw/*.fits
-data/raw/*.h5
-!data/raw/Total_BG_with_SAAcomponent_3months_unbinned_data_filtered_with_SAAcut.fits
+data/raw/
