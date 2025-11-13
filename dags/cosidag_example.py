@@ -23,7 +23,7 @@ def build_custom(dag):
     )
 #
 with COSIDAG(
-    dag_id="extended_example",
+    dag_id="cosidag_example",
     start_date=datetime(2025, 1, 1),
     schedule_interval=None,
     catchup=False,
