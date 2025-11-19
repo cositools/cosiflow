@@ -22,7 +22,7 @@ Notes
 * State: a Variable named f"COSIDAG_PROCESSED::{dag_id}" is used to track processed
   folder paths across runs, to avoid reprocessing the same folder.
   * To clear the processed folder paths, delete the Variable, with the command:
-    `$ airflow variables delete COSIDAG_PROCESSED::{dag_id}`
+    airflow variables set COSIDAG_PROCESSED::{cosidag_id} []
 * Date: if date is provided, it only accepts subfolders with the given date.
 * Only basename: if only_basename is provided, it only accepts subfolders with the given basename.
 * Prefer deepest: if prefer_deepest is True, it prefers the deepest subfolder.
@@ -294,6 +294,7 @@ class COSIDAG(DAG):
         select_policy: str = "first",           # "first" | "latest_mtime"
         tags: Optional[list[str]] = None,
         default_args_extra: Optional[dict] = None,
+        auto_retrig: bool = True,
         *args,
         **kwargs,
     ) -> None:
@@ -305,7 +306,7 @@ class COSIDAG(DAG):
         - check_new_file: a PythonSensor scanning one or more monitoring folders for a new
         (previously unprocessed) subfolder up to a given depth level. When a new folder
         is found, its absolute path is pushed to XCom with key 'detected_folder'.
-        - automatic_retrig: triggers the current DAG again as soon as step (2) completes.
+        - automatic_retrig: triggers the current DAG again as soon as step `check_new_file` completes.
         - resolve_inputs: if file_patterns is provided, it searches for files matching the given patterns
         under the detected folder and pushes the selected file paths to XCom with the corresponding key.
         - [custom]: user-defined tasks; they can pull the detected folder or resolved files from XCom using
@@ -367,6 +368,12 @@ class COSIDAG(DAG):
                 "ready_marker": ready_marker,
                 "only_basename": only_basename,
                 "prefer_deepest": bool(prefer_deepest),
+                "file_patterns": file_patterns,
+                "select_policy": select_policy,
+                "max_active_runs": int(kwargs.get("max_active_runs", 2)),
+                "max_active_tasks": int(kwargs.get("max_active_tasks", 8)),
+                "concurrency": int(kwargs.get("concurrency", 8)),
+                "auto_retrig": bool(auto_retrig),
             }
         )
 
@@ -431,6 +438,7 @@ class COSIDAG(DAG):
             "task_id": "automatic_retrig",
             "trigger_dag_id": self.dag_id,
             "reset_dag_run": False,
+            "conf": "{{ dag_run.conf or {} }}",
             "wait_for_completion": False,
             "dag": self,
         }
@@ -440,8 +448,13 @@ class COSIDAG(DAG):
         elif "run_id" in params:
             trig_kwargs["run_id"] = _unique_run_id()
 
-        automatic_retrig = TriggerDagRunOperator(**trig_kwargs)
-        self.automatic_retrig = automatic_retrig
+        if auto_retrig:
+            # create automatic_retrig with conf="{{ dag_run.conf or {} }}"
+            automatic_retrig = TriggerDagRunOperator(**trig_kwargs)
+            self.automatic_retrig = automatic_retrig
+        else:
+            automatic_retrig = None
+            self.automatic_retrig = None
 
         # --- 2bis) resolve_inputs (opzionale) ----------------------------------
         # Se file_patterns è passato, crea un PythonOperator che:
@@ -570,7 +583,12 @@ class COSIDAG(DAG):
         )
 
         # Wire: 1 -> 2 -> [3] -> 4
-        check_new_file >> automatic_retrig >> last_custom >> show_results
+        if automatic_retrig is not None:
+            # with automatic retrigger
+            check_new_file >> automatic_retrig >> last_custom >> show_results
+        else:
+            # without automatic retrigger
+            check_new_file >> last_custom >> show_results
 
         # Expose handles
         self.check_new_file = check_new_file
