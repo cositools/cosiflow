@@ -55,10 +55,20 @@ def write_hello():
     with open(RESULT, "a", encoding="utf-8") as f:
         f.write("Hello Wolrd!\n")
 
-write_text = PythonOperator(
-    task_id="write_text",
-    python_callable=write_hello,
-)
+with DAG(
+    dag_id="hello_world_dag",
+    default_args=default_args,
+    description="Minimal example: Bash touch + Python writes text",
+    start_date=datetime(2025, 1, 1),
+    schedule_interval=None,   # run on-demand
+    catchup=False,
+    tags=["cosifest", "handson", "tutorials"],
+) as dag:
+
+    write_text = PythonOperator(
+        task_id="write_text",
+        python_callable=write_hello,
+    )
 ```
 **Flow**: `make_file >> write_text`
 
@@ -106,18 +116,28 @@ from airflow.operators.python import ExternalPythonOperator
 
 EXTERNAL_PYTHON = "/home/gamma/.conda/envs/cosipy/bin/python"
 
-a_factorize = ExternalPythonOperator(
-    task_id="a_factorize_text_matrix",
-    python=EXTERNAL_PYTHON,
-    python_callable=_a_make_factors,   # defined in the DAG file
-    op_kwargs={
-        "base_dir": "/home/gamma/workspace/data/tutorials/a_b_factor",
-        "text": "DAGs\n  ARE\nCOOL!",
-        "size": [48, 48],
-        "font_size": 6,
-        "rank": 12,
-    },
-)
+with DAG(
+    dag_id="a_dag",
+    default_args=default_args,
+    description="A: make 32×32 text matrix, factorize via SVD into A,B and save them",
+    start_date=datetime(2025, 1, 1),
+    schedule_interval=None,
+    catchup=False,
+    tags=["cosifest", "handson", "tutorial", "cosipy", "producer", "linalg"],
+) as dag:
+
+    a_factorize = ExternalPythonOperator(
+        task_id="a_factorize_text_matrix",
+        python=EXTERNAL_PYTHON,
+        python_callable=_a_make_factors,   # defined in the DAG file
+        op_kwargs={
+            "base_dir": "/home/gamma/workspace/data/tutorials/a_b_factor",
+            "text": "DAGs\n  ARE\nCOOL!",
+            "size": [48, 48],
+            "font_size": 6,
+            "rank": 12,
+        },
+    )
 ```
 **Rule**: pass everything via **`op_kwargs`** to avoid global‑scope issues.
 
@@ -132,26 +152,35 @@ Create a new DAG in `cosiflow/dags` path.
 from airflow.sensors.python import PythonSensor
 from airflow.operators.python import ExternalPythonOperator
 
+with DAG(
+    dag_id="b_dag",
+    default_args=default_args,
+    description="B: wait for L,R factors, reconstruct L@R and re-plot the original matrix",
+    start_date=datetime(2025, 1, 1),
+    schedule_interval=None,
+    catchup=False,
+    tags=["cosifest", "handson", "tutorial", "consumer", "linalg"],
+) as dag:
 
-wait_for_factors = PythonSensor(
-    task_id="wait_for_factors_pickle",
-    python_callable=_file_exists,
-    op_kwargs={"pkl_path": "/.../factors.pkl"},
-    poke_interval=10, timeout=3600,
-)
+    wait_for_factors = PythonSensor(
+        task_id="wait_for_factors_pickle",
+        python_callable=_file_exists,
+        op_kwargs={"pkl_path": "/.../factors.pkl"},
+        poke_interval=10, timeout=3600,
+    )
 
-b_reconstruct = ExternalPythonOperator(
-    task_id="b_reconstruct_and_plot",
-    python=EXTERNAL_PYTHON,
-    python_callable=_b_reconstruct_and_plot,
-    op_kwargs={
-        "base_dir": "/.../a_b_factor",
-        "pkl_path": "/.../a_b_factor/factors.pkl",
-        "bin_thr": 0.5,
-    },
-)
+    b_reconstruct = ExternalPythonOperator(
+        task_id="b_reconstruct_and_plot",
+        python=EXTERNAL_PYTHON,
+        python_callable=_b_reconstruct_and_plot,
+        op_kwargs={
+            "base_dir": "/.../a_b_factor",
+            "pkl_path": "/.../a_b_factor/factors.pkl",
+            "bin_thr": 0.5,
+        },
+    )
 
-wait_for_factors >> b_reconstruct
+    wait_for_factors >> b_reconstruct
 ```
 
 Now copy paste the code contained in `cosiflow/tutorials/functions/b_standalone.py`
