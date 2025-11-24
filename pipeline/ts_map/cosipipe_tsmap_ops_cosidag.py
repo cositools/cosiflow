@@ -1,13 +1,12 @@
-# /home/gamma/airflow/dags/_lib/cosipipe_tsmap_ops.py
-# Integrated ops for TSMap pipeline (COSIfest version).
-# - Includes logic inlined from the original step scripts:
-#   1_contactsimulator.py, 2_binGRBdatasource.py, 3_binBackground.py,
-#   4_dataAggregation.py, 5_tsmapcomputation.py, 5_tsmapmulres_computation.py
-#
-# Added:
-# - decompress_archive() and validate_inputs_tsmap()
-# - Data Explorer URL logging (like light-curve) via plugin_base_url / plugin_root_dir
-# - Config via Airflow Variables OR environment variables (fallback)
+"""
+Utility functions used by the cosipipe_tsmap DAG with ExternalPythonOperator.
+All functions are self-contained and do not rely on DAG-level globals.
+
+- bin_grb_data: bin the GRB data source based on the bin_grb.py script
+- bin_background_data: bin the background data based on the bin_bg.py script
+- compute_ts_map: compute the TS map based on the ts_map.py script
+- compute_ts_map_mulres: compute the TS map based on the ts_map_mulres.py script
+"""
 from __future__ import annotations
 
 import os
