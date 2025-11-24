@@ -65,7 +65,10 @@ import sys
 import os
 airflow_home = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
 sys.path.append(os.path.join(airflow_home, "callbacks"))
+sys.path.append(os.path.join(airflow_home, "modules"))
 from on_failure_callback import notify_email
+
+from date_helper import _looks_like_date_folder, _parse_date_string, _apply_date_queries
 
 _BASE_DEFAULT_ARGS = {
     "owner": "cosiflow",
@@ -167,42 +170,39 @@ def _iter_subfolders(root: str, max_depth: int) -> Iterable[str]:
         if current_depth >= 1:
             yield current_root
 
-
-def _looks_like_date_folder(name: str) -> bool:
-    return bool(
-        re.match(r"^\d{8}(?:_|$)", name) or re.match(r"^\d{4}-\d{2}-\d{2}(?:_|$)", name)
-    )
-
-
-def _date_filter_ok(path: str, date_str: Optional[str]) -> bool:
-    """Accept path if it matches the given date (folder name or mtime)."""
-    print(f"[COSIDAG] _date_filter_ok: path={path}, date_str={date_str}")   # DEBUG
-    if not date_str:
+def _date_filter_ok(path: str, date_queries) -> bool:
+    """
+    Accept path if its 'reference date' (folder name or mtime) satisfies ALL queries.
+    - date_queries can be:
+        * None  → sempre True
+        * string like '>=2025-11-01'
+        * list of strings ['>=2025-11-01', '<=2025-11-05']
+    """
+    print(f"[COSIDAG] _date_filter_ok: path={path}, date_queries={date_queries}")
+    if not date_queries:
         return True
+
     last = os.path.basename(os.path.normpath(path))
-    print(f"[COSIDAG] _date_filter_ok: last={last}")
-    try:
-        if re.match(r"^\d{8}$", date_str):
-            target = datetime.strptime(date_str, "%Y%m%d").date()
-        else:
-            target = datetime.strptime(date_str, "%Y-%m-%d").date()
-        print(f"[COSIDAG] _date_filter_ok: target={target}")   # DEBUG
-    except Exception:
-        return True
+
+    # 1) Prova a estrarre la data dal nome cartella (20251101[_...] o 2025-11-01[_...])
+    ref_date = None
     if _looks_like_date_folder(last):
         ds = last.split("_")[0]
         try:
-            d = datetime.strptime(ds, "%Y%m%d").date() if len(ds) == 8 else datetime.strptime(ds, "%Y-%m-%d").date()
-            return d == target
-        except Exception:
-            pass
-        print(f"[COSIDAG] _date_filter_ok: d={d} != target={target}")   # DEBUG
-    try:
-        mtime = datetime.fromtimestamp(os.stat(path).st_mtime).date()
-        print(f"[COSIDAG] _date_filter_ok: mtime={mtime} == target={target}")   # DEBUG
-        return mtime == target
-    except Exception:
-        return True
+            ref_date = _parse_date_string(ds)
+        except Exception as e:
+            print(f"[COSIDAG] _date_filter_ok: failed to parse folder date {ds!r}: {e}")
+
+    # 2) Se non ricavabile dal nome, usa la mtime
+    if ref_date is None:
+        try:
+            ref_date = datetime.fromtimestamp(os.stat(path).st_mtime).date()
+        except Exception as e:
+            print(f"[COSIDAG] _date_filter_ok: failed to get mtime for {path}: {e}")
+            # se proprio non riusciamo, per sicurezza non filtriamo
+            return True
+
+    return _apply_date_queries(ref_date, date_queries)
 
 
 def _load_processed_set(dag_id: str) -> set:
@@ -223,13 +223,13 @@ def _save_processed_set(dag_id: str, processed: set) -> None:
 def _find_new_folder(
     monitoring_folders: Iterable[str],
     level: int,
-    date: Optional[str],
     dag_id: str,
+    date_queries: Optional[str|list[str]] = None,
     only_basename: Optional[str] = None,
     prefer_deepest: bool = True,
 ) -> Optional[str]:
     """Return the first new folder across roots (filtered & depth-limited)."""
-    print(f"[COSIDAG] _find_new_folder: searching for new folders (dag_id={dag_id}, level={level}, date={date}, only_basename={only_basename})")
+    print(f"[COSIDAG] _find_new_folder: searching for new folders (dag_id={dag_id}, level={level}, date_queries={date_queries}, only_basename={only_basename})")
     roots = _normalize_folders(monitoring_folders)
     if not roots:
         print(f"[COSIDAG] _find_new_folder: no valid monitoring folders found")
@@ -246,7 +246,7 @@ def _find_new_folder(
         for sub in subfolders:
             if only_basename and os.path.basename(sub) != only_basename:
                continue
-            if _date_filter_ok(sub, date):
+            if _date_filter_ok(sub, date_queries):
                 candidates.append(sub)
 
     if not candidates:
@@ -281,6 +281,7 @@ class COSIDAG(DAG):
         monitoring_folders,
         level: int = 1,
         date: Optional[str] = None,
+        date_queries: Optional[str|list[str]] = None,
         build_custom: Optional[Callable[[DAG], None]] = None,
         sensor_poke_seconds: int = 30,
         sensor_timeout_seconds: int = 60 * 60 * 6,
@@ -320,6 +321,7 @@ class COSIDAG(DAG):
             monitoring_folders: list of directories to monitor for new subfolders.
             level: maximum depth of subfolders to consider.
             date: only accept subfolders with the given date.
+            date_queries: only accept subfolders with the given date queries.
             build_custom: function to build the custom tasks.
             sensor_poke_seconds: interval in seconds to check for new subfolders.
             sensor_timeout_seconds: timeout in seconds to check for new subfolders.
@@ -330,6 +332,7 @@ class COSIDAG(DAG):
             only_basename: only accept subfolders with the given basename.
             prefer_deepest: prefer the deepest subfolder.
             file_patterns: dictionary of file patterns to search for.
+            auto_retrig: enable automatic retrigger.
             select_policy: policy to select the file to use.
             tags: list of tags to add to the DAG.
             default_args_extra: dictionary of default arguments to add to the DAG.
@@ -362,6 +365,7 @@ class COSIDAG(DAG):
                 "monitoring_folders": monitoring_folders,
                 "level": int(level),
                 "date": date,
+                "date_queries": date_queries,
                 "home_env_var": home_env_var,
                 "idle_seconds": int(idle_seconds),
                 "min_files": int(min_files),
@@ -376,14 +380,24 @@ class COSIDAG(DAG):
                 "auto_retrig": bool(auto_retrig),
             }
         )
+        self.auto_retrig = auto_retrig
 
         # 1) check_new_file — PythonSensor
         def _sensor_poke(ti, **context):
-            # Merge dag_run.conf over self.params
             conf = (context.get("dag_run").conf or {}) if context.get("dag_run") else {}
             monitoring = conf.get("monitoring_folders", self.params["monitoring_folders"])
             level_val = int(conf.get("level", self.params["level"]))
-            date_val = conf.get("date", self.params.get("date"))
+
+            # NEW: retrieve date queries
+            conf_date_queries = conf.get("date_queries", None)
+            if conf_date_queries is None:
+                # fallback: use the optional "date" as '==date'
+                conf_date = conf.get("date", self.params.get("date"))
+                if conf_date:
+                    conf_date_queries = f"=={conf_date}"
+                else:
+                    conf_date_queries = self.params.get("date_queries")
+
             idle_s = int(conf.get("idle_seconds", self.params.get("idle_seconds", 20)))
             min_f = int(conf.get("min_files", self.params.get("min_files", 1)))
             marker = conf.get("ready_marker", self.params.get("ready_marker"))
@@ -393,11 +407,12 @@ class COSIDAG(DAG):
             new_path = _find_new_folder(
                 monitoring_folders=monitoring,
                 level=level_val,
-                date=date_val,
+                date_queries=conf_date_queries,
                 dag_id=self.dag_id,
                 only_basename=only_bn,
                 prefer_deepest=prefer_deep,
             )
+            
             print(f"[COSIDAG] _sensor_poke: new_path={new_path}")
             if not new_path:
                 return False
@@ -433,28 +448,33 @@ class COSIDAG(DAG):
             ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ")
             return f"auto::{self.dag_id}::{ts}"
 
-        import inspect
-        trig_kwargs = {
-            "task_id": "automatic_retrig",
-            "trigger_dag_id": self.dag_id,
-            "reset_dag_run": False,
-            "conf": "{{ dag_run.conf or {} }}",
-            "wait_for_completion": False,
-            "dag": self,
-        }
-        params = inspect.signature(TriggerDagRunOperator.__init__).parameters
-        if "trigger_run_id" in params:
-            trig_kwargs["trigger_run_id"] = _unique_run_id()
-        elif "run_id" in params:
-            trig_kwargs["run_id"] = _unique_run_id()
+        if self.auto_retrig:
+            import inspect
 
-        if auto_retrig:
-            # create automatic_retrig with conf="{{ dag_run.conf or {} }}"
+            trig_kwargs = {
+                "task_id": "automatic_retrig",
+                "trigger_dag_id": self.dag_id,
+                "reset_dag_run": False,
+                "wait_for_completion": False,
+                "dag": self,
+            }
+
+            # Important: propagate conf from previous run — must be valid JSON!
+            trig_kwargs["conf"] = "{{ dag_run.conf | tojson if dag_run and dag_run.conf else '{}' }}"
+
+            # Airflow version differences
+            params = inspect.signature(TriggerDagRunOperator.__init__).parameters
+            if "trigger_run_id" in params:
+                trig_kwargs["trigger_run_id"] = _unique_run_id()
+            elif "run_id" in params:
+                trig_kwargs["run_id"] = _unique_run_id()
+
             automatic_retrig = TriggerDagRunOperator(**trig_kwargs)
             self.automatic_retrig = automatic_retrig
         else:
-            automatic_retrig = None
-            self.automatic_retrig = None
+            # Create a dummy no-op operator so the DAG graph stays consistent
+            automatic_retrig = EmptyOperator(task_id="automatic_retrig", dag=self)
+            self.automatic_retrig = automatic_retrig
 
         # --- 2bis) resolve_inputs (opzionale) ----------------------------------
         # Se file_patterns è passato, crea un PythonOperator che:
