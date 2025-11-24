@@ -11,35 +11,29 @@ from airflow.models import Variable
 def build_custom(dag):
 
     EXTERNAL_PYTHON = cfg("EXTERNAL_PYTHON", "/home/gamma/.conda/envs/cosipy/bin/python")
-    LIB_DIR = cfg("TSMAP_LIB_DIR", "/home/gamma/airflow/pipeline/ts_map")
+    LIB_DIR = cfg("TSMAP_LIB_DIR", "/home/gamma/airflow/pipeline/lcurve")
 
     # ----- Python callables executed in the external interpreter -----
 
     def _bin_grb(run_dir: str, lib_dir: str, grb_file: str) -> str:
         import sys
         sys.path.insert(0, lib_dir)
-        from cosipipe_tsmap_ops_cosidag import bin_grb_data
-        return bin_grb_data(grb_file, run_dir)
+        from cosipipe_lc_ops_cosidag import bin_grb_source
+        return bin_grb_source(grb_file, run_dir)
 
     def _bin_bkg(run_dir: str, lib_dir: str, background_file: str) -> str:
         import sys
         sys.path.insert(0, lib_dir)
-        from cosipipe_tsmap_ops_cosidag import bin_background_data
+        from cosipipe_lc_ops_cosidag import bin_background_data
         return bin_background_data(background_file, run_dir)
 
-    def _ts_map(run_dir: str, lib_dir: str, grb_file: str, background_file: str, 
-                orientation_file: str, response_file: str) -> str:
+    def _plot_lightcurve(run_dir: str, lib_dir: str, 
+                         grb_binned_file: str, background_binned_file: str, 
+                         orientation_file: str, response_file: str) -> str:
         import sys
         sys.path.insert(0, lib_dir)
-        from cosipipe_tsmap_ops_cosidag import compute_ts_map
-        return compute_ts_map(grb_file, background_file, orientation_file, response_file, run_dir)
-
-    def _ts_map_mulres(run_dir: str, lib_dir: str, grb_file: str, background_file: str, 
-                       orientation_file: str, response_file: str) -> str:
-        import sys
-        sys.path.insert(0, lib_dir)
-        from cosipipe_tsmap_ops_cosidag import compute_ts_map_mulres
-        return compute_ts_map_mulres(grb_file, background_file, orientation_file, response_file, run_dir)
+        from cosipipe_lc_ops_cosidag import plot_lightcurve_from_cells
+        return plot_lightcurve_from_cells(grb_binned_file, background_binned_file, orientation_file, response_file, run_dir)
 
     # ----- Operators (IMPORTANT: pass dag=dag) -----
 
@@ -71,43 +65,28 @@ def build_custom(dag):
     GRB_BINNED_FILE = "{{ ti.xcom_pull(task_ids='bin_grb_source', key='return_value') }}"
     BKG_BINNED_FILE = "{{ ti.xcom_pull(task_ids='bin_background', key='return_value') }}"
 
-    ts_map = ExternalPythonOperator(
-        task_id="ts_map_computation",
+    plot_lightcurve = ExternalPythonOperator(
+        task_id="plot_lightcurve",
         python=EXTERNAL_PYTHON,
-        python_callable=_ts_map,
+        python_callable=_plot_lightcurve,
         op_kwargs={"run_dir": RUN_DIR, 
                    "lib_dir": LIB_DIR, 
-                   "grb_file": GRB_BINNED_FILE, 
-                   "background_file": BKG_BINNED_FILE, 
+                   "grb_binned_file": GRB_BINNED_FILE, 
+                   "background_binned_file": BKG_BINNED_FILE, 
                    "orientation_file": ORI_FILE, 
                    "response_file": RSP_FILE},
         dag=dag,  # <<< IMPORTANT
     )
 
-    ts_map_mulres = ExternalPythonOperator(
-        task_id="ts_map_mulres_computation",
-        python=EXTERNAL_PYTHON,
-        python_callable=_ts_map_mulres,
-        op_kwargs={"run_dir": RUN_DIR, 
-                   "lib_dir": LIB_DIR, 
-                   "grb_file": GRB_BINNED_FILE, 
-                   "background_file": BKG_BINNED_FILE, 
-                   "orientation_file": ORI_FILE, 
-                   "response_file": RSP_FILE},
-        dag=dag,  # <<< IMPORTANT
-    )
-
-    # [bin_grb, bin_bkg] >> aggregate >> [ts_map, ts_map_mulres]
-    bin_grb >> [ts_map, ts_map_mulres]
-    bin_bkg >> [ts_map, ts_map_mulres]
-
+    # [bin_grb, bin_bkg] >> aggregate >> [plot_lightcurve]
+    [bin_grb, bin_bkg] >> plot_lightcurve
 
 with COSIDAG(
-    dag_id="cosidag_tsmap",
+    dag_id="cosidag_lcurve",
     start_date=datetime(2025, 1, 1),
     schedule_interval=None,
     catchup=False,
-    monitoring_folders=["/home/gamma/workspace/data/tsmap"],
+    monitoring_folders=["/home/gamma/workspace/data/lcurve"],
     level=3,
     # Let the sensor accept only the deepest-level leaf (products)
     only_basename="products",
@@ -120,14 +99,15 @@ with COSIDAG(
     max_active_tasks=8,        # up to 8 tasks in parallel in the DAG
     concurrency=8,             # local alternative limit (Airflow <2.7)
     date_queries=f"=={datetime.now().strftime("%Y%m%d")}",
+    select_policy="latest_mtime",   # or "first"
     file_patterns={
         "grb_file": "GRB*_unbinned_*.fits*",
         "background_file": "Total_BG*_unbinned_*.fits*",
         "orientation_file": "*.ori",
         "response_file": "Response*.h5",
     },
-    select_policy="latest_mtime",   # oppure "first"
+    auto_retrig=True,   # enable automatic retrigger
     build_custom=build_custom,
-    tags=["cosidag", "tsmap"]
+    tags=["cosidag", "lcurve"],
 ) as dag:
     pass
