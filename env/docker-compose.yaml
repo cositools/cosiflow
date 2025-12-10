@@ -75,6 +75,7 @@ services:
       - ../plugins:/home/gamma/airflow/plugins
       - ../pipeline:/home/gamma/airflow/pipeline
       - ../callbacks:/home/gamma/airflow/callbacks
+      - ../modules:/home/gamma/airflow/modules
 
       # Mount the PostgreSQL-specific Airflow configuration
       - ./airflow.cfg.postgresql:/home/gamma/airflow/airflow.cfg
