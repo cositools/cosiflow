@@ -97,6 +97,10 @@ RUN export PATH=$PATH:/opt/conda/bin && source activate gamma && export AIRFLOW_
 # Dedicated environment for COSIPY tools and dependencies.
 RUN export PATH=$PATH:/opt/conda/bin && conda create -n cosipy python=3.10 pip jupyter notebook && source activate cosipy && pip install py7zr && git clone https://github.com/cositools/cosipy.git && cd cosipy && git checkout v0.3.x && pip install -e .
 
+# ------------------------------ Create "cosipy_develop" environment ------------------------------
+# Development environment for COSIPY tools and dependencies (develop branch).
+RUN export PATH=$PATH:/opt/conda/bin && conda create -n cosipy_develop python=3.10 pip jupyter notebook -y && source activate cosipy_develop && pip install py7zr && git clone https://github.com/cositools/cosipy.git cosipy_develop && cd cosipy_develop && git checkout develop && pip install -e .
+
 # ------------------------------ Prepare Airflow home directory ------------------------------
 RUN mkdir -p ${HOME}/airflow
 
