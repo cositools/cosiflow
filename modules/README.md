@@ -142,11 +142,6 @@ This allows pipelines to be fully dynamic and independent of hard-coded paths.
 
 ---
 
-Ecco una **sezione aggiuntiva** da integrare nel README.md, in inglese, perfettamente coerente con il resto della documentazione.
-Include tutti i punti richiesti: configurazione tramite UI, gestione della Airflow Variable, comandi utili, e la possibilità di disattivare il retrigger automatico.
-
----
-
 ## Configuring and Running a CosiDAG from the Airflow UI
 
 Once a CosiDAG script is defined, **you do not need to modify the Python file** to run the pipeline on different datasets.

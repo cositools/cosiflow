@@ -380,6 +380,7 @@ class COSIDAG(DAG):
                 "auto_retrig": bool(auto_retrig),
             }
         )
+        print(f"[COSIDAG] auto_retrig={auto_retrig}")
         self.auto_retrig = auto_retrig
 
         # 1) check_new_file — PythonSensor
@@ -473,8 +474,9 @@ class COSIDAG(DAG):
             self.automatic_retrig = automatic_retrig
         else:
             # Create a dummy no-op operator so the DAG graph stays consistent
-            automatic_retrig = EmptyOperator(task_id="automatic_retrig", dag=self)
-            self.automatic_retrig = automatic_retrig
+            # automatic_retrig = EmptyOperator(task_id="automatic_retrig", dag=self)
+            # self.automatic_retrig = automatic_retrig
+            self.automatic_retrig = None
 
         # --- 2bis) resolve_inputs (opzionale) ----------------------------------
         # Se file_patterns è passato, crea un PythonOperator che:
