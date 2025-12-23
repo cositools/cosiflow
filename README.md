@@ -2,8 +2,6 @@
 
 Cosiflow provides an Airflow-based orchestration environment for managing and monitoring scientific pipelines for COSI.
 
-> **Note:** This branch is the version used for the **Cosiflow introduction talk at COSIFEST 2025**.
-
 ---
 
 ### 1. REQUIREMENTS
@@ -161,12 +159,59 @@ Below is the list of environment variables defined in `.env` with their purpose:
 ---
 
 **Cosiflow environment ready for use.**
----
-
-### DAG Tutorial
-
-For a detailed guide and practical tutorials on using and customizing the available DAGs, see the [DAG Tutorial README](pipeline/README.md).
-
-You will find step-by-step instructions, requirements, and quick commands to launch the example pipelines (`cosipipe_lightcurve` and `cosipipe_tsmap`), as well as information on how to download the necessary data and configure your environment.
 
 ---
+
+## What is COSIDAG
+
+A **COSIDAG** (COSI DAG) is a structured abstraction built on top of Apache Airflow DAGs.
+
+It provides a **standardized workflow layout** for scientific pipelines, reducing boilerplate and enforcing consistent patterns across different analyses.
+
+In particular, a COSIDAG:
+
+* defines a common execution skeleton (input resolution, optional monitoring, result handling)
+* encapsulates best practices for:
+
+  * file discovery
+  * parameter propagation
+  * XCom-based communication
+* allows developers to focus only on **scientific tasks**, while orchestration logic is handled automatically
+
+COSIDAGs are used for all production scientific pipelines (e.g. Light Curve, TS Map), while standard DAGs are reserved for orchestration, testing, or utilities.
+
+**How to write and customize a COSIDAG** is explained in detail in the [tutorial section](modules/README.md).
+
+---
+
+## Tutorials and developer guide
+
+A complete, step-by-step guide on how to:
+
+* understand the COSIDAG execution model
+* write new COSIDAGs
+* add custom tasks
+* use XCom correctly
+* integrate external Python environments
+
+is available in:
+
+[tutorial section](tutorials/README.md).
+
+This is the **recommended starting point for developers**.
+
+---
+
+## Available DAGs and COSIDAGs
+
+A complete and up-to-date list of all DAGs and COSIDAGs implemented in this repository — including:
+
+* workflow purpose
+* inputs and outputs
+* task structure
+* operators used
+* XCom usage
+
+is documented in: [DAG and COSIDAG LIST README](dags/README.md)
+
+This document serves as the **catalog and reference** for all workflows available in Cosiflow.
