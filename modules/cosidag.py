@@ -3,17 +3,12 @@ COSIDAG — a convenience DAG subclass that wires a standard layout:
 
   1) check_new_file  ->  2) automatic_retrig  ->  3) resolve_inputs  ->  4) [custom tasks]  ->  5) show_results
 
-- check_new_file: a PythonSensor scanning one or more monitoring folders for a new
-  (previously unprocessed) subfolder up to a given depth level. When a new folder
-  is found, its absolute path is pushed to XCom with key 'detected_folder'.
-- automatic_retrig: triggers the current DAG again as soon as step (2) completes.
-- resolve_inputs: if file_patterns is provided, it searches for files matching the given patterns
-  under the detected folder and pushes the selected file paths to XCom with the corresponding key.
-- [custom]: user-defined tasks; they can pull the detected folder or resolved files from XCom using
-  "{{ ti.xcom_pull(task_ids='check_new_file', key='detected_folder') }}" or 
-  "{{ ti.xcom_pull(task_ids='resolve_inputs', key='xcom_key') }}" for each key in file_patterns.
-- show_results: writes to logs the homepage URL read from env (e.g. COSIFLOW_HOME_URL)
-  and, if possible, composes a deeper link using the new path module.
+This implementation supports disabling optional steps:
+
+- check_new_file is NOT created if monitoring_folders is empty / None.
+- automatic_retrig is NOT created if auto_retrig is False.
+
+The chaining logic adapts automatically depending on which tasks exist.
 
 Notes
 ------
@@ -23,15 +18,11 @@ Notes
   folder paths across runs, to avoid reprocessing the same folder.
   * To clear the processed folder paths, delete the Variable, with the command:
     airflow variables set COSIDAG_PROCESSED::{cosidag_id} []
-* Date: if date is provided, it only accepts subfolders with the given date.
+* Date queries: use date_queries (e.g. '>=2025-11-01' or ['>=2025-11-01','<=2025-11-05']).
 * Only basename: if only_basename is provided, it only accepts subfolders with the given basename.
 * Prefer deepest: if prefer_deepest is True, it prefers the deepest subfolder.
 * File patterns: if file_patterns is provided, it searches for files matching the given patterns
-  using regular expressions.
-* Select policy: if select_policy is "latest_mtime", it selects the file with the latest modification time.
-  If select_policy is "first", it selects the first file found.
-* Tags: if tags is provided, it adds the tags to the DAG.
-* Default args extra: if default_args_extra is provided, it adds the default args to the DAG.
+  using glob recursion and selects according to select_policy.
 * Path helper: if available, the module cosiflow.modules.path is used to parse/build
   URL fragments from detected folders. The code degrades gracefully if not found.
 """
@@ -43,7 +34,6 @@ import re
 import time
 from datetime import datetime
 from typing import Callable, Iterable, Optional, Sequence
-from pathlib import Path
 
 from airflow import DAG
 from airflow.models import Variable
@@ -60,15 +50,15 @@ except Exception:
     PathInfo = None  # type: ignore
     build_url_fragment = None  # type: ignore
 
-# ----- Import onfailure callback -------------------------------------------------
+# ---- Import on-failure callback -------------------------------------------------
 import sys
-import os
+
 airflow_home = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
 sys.path.append(os.path.join(airflow_home, "callbacks"))
 sys.path.append(os.path.join(airflow_home, "modules"))
-from on_failure_callback import notify_email
+from on_failure_callback import notify_email  # type: ignore
 
-from date_helper import _looks_like_date_folder, _parse_date_string, _apply_date_queries
+from date_helper import _looks_like_date_folder, _parse_date_string, _apply_date_queries  # type: ignore
 
 _BASE_DEFAULT_ARGS = {
     "owner": "cosiflow",
@@ -82,8 +72,9 @@ try:
 except Exception:
     _AFVariable = None
 
+
 def cfg(key: str, default=None):
-    """Read config from Airflow Variable, then ENV, else default (string)."""
+    """Read config from Airflow Variable, then ENV, else default."""
     val = None
     if _AFVariable is not None:
         try:
@@ -94,12 +85,14 @@ def cfg(key: str, default=None):
         val = os.environ.get(key, default)
     return val
 
+
 def cfg_int(key: str, default: int) -> int:
     v = cfg(key, default)
     try:
         return int(v)
     except Exception:
         return default
+
 
 def cfg_float(key: str, default: float) -> float:
     v = cfg(key, default)
@@ -108,15 +101,18 @@ def cfg_float(key: str, default: float) -> float:
     except Exception:
         return default
 
+
 def cfg_bool(key: str, default: bool = False) -> bool:
     v = cfg(key, None)
     if isinstance(v, bool):
         return v
     if v is None:
         return default
-    return str(v).strip().lower() in {"1","true","t","yes","y","on"}
+    return str(v).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
 
 # ----- Helper functions (MUST stay at module top-level) --------------------------
+
 
 def _dir_stats(path: str):
     """Return (count, total_size_bytes, latest_mtime) across all files under path."""
@@ -160,7 +156,7 @@ def _normalize_folders(monitoring_folders: Iterable[str]) -> Sequence[str]:
 
 
 def _iter_subfolders(root: str, max_depth: int) -> Iterable[str]:
-    """Yield subfolders under *root* up to *max_depth* (depth 1 = direct children)."""
+    """Yield subfolders under root up to max_depth (depth 1 = direct children)."""
     root_depth = root.rstrip(os.sep).count(os.sep)
     for current_root, dirs, _ in os.walk(root):
         current_depth = current_root.rstrip(os.sep).count(os.sep) - root_depth
@@ -170,13 +166,15 @@ def _iter_subfolders(root: str, max_depth: int) -> Iterable[str]:
         if current_depth >= 1:
             yield current_root
 
+
 def _date_filter_ok(path: str, date_queries) -> bool:
     """
     Accept path if its 'reference date' (folder name or mtime) satisfies ALL queries.
-    - date_queries can be:
-        * None  → sempre True
-        * string like '>=2025-11-01'
-        * list of strings ['>=2025-11-01', '<=2025-11-05']
+
+    date_queries can be:
+      - None  -> always True
+      - string like '>=2025-11-01'
+      - list of strings ['>=2025-11-01', '<=2025-11-05']
     """
     print(f"[COSIDAG] _date_filter_ok: path={path}, date_queries={date_queries}")
     if not date_queries:
@@ -184,7 +182,7 @@ def _date_filter_ok(path: str, date_queries) -> bool:
 
     last = os.path.basename(os.path.normpath(path))
 
-    # 1) Prova a estrarre la data dal nome cartella (20251101[_...] o 2025-11-01[_...])
+    # 1) Try parsing date from folder name (YYYYMMDD[_...] or YYYY-MM-DD[_...])
     ref_date = None
     if _looks_like_date_folder(last):
         ds = last.split("_")[0]
@@ -193,13 +191,13 @@ def _date_filter_ok(path: str, date_queries) -> bool:
         except Exception as e:
             print(f"[COSIDAG] _date_filter_ok: failed to parse folder date {ds!r}: {e}")
 
-    # 2) Se non ricavabile dal nome, usa la mtime
+    # 2) Fallback to mtime date
     if ref_date is None:
         try:
             ref_date = datetime.fromtimestamp(os.stat(path).st_mtime).date()
         except Exception as e:
             print(f"[COSIDAG] _date_filter_ok: failed to get mtime for {path}: {e}")
-            # se proprio non riusciamo, per sicurezza non filtriamo
+            # If we cannot determine a reference date, do not filter out for safety.
             return True
 
     return _apply_date_queries(ref_date, date_queries)
@@ -216,6 +214,7 @@ def _load_processed_set(dag_id: str) -> set:
 
 
 def _save_processed_set(dag_id: str, processed: set) -> None:
+    """Save processed paths set to Airflow Variable."""
     key = f"COSIDAG_PROCESSED::{dag_id}"
     Variable.set(key, json.dumps(sorted(processed)))
 
@@ -224,64 +223,76 @@ def _find_new_folder(
     monitoring_folders: Iterable[str],
     level: int,
     dag_id: str,
-    date_queries: Optional[str|list[str]] = None,
+    date_queries: Optional[str | list[str]] = None,
     only_basename: Optional[str] = None,
     prefer_deepest: bool = True,
 ) -> Optional[str]:
     """Return the first new folder across roots (filtered & depth-limited)."""
-    print(f"[COSIDAG] _find_new_folder: searching for new folders (dag_id={dag_id}, level={level}, date_queries={date_queries}, only_basename={only_basename})")
+    print(
+        "[COSIDAG] _find_new_folder: searching for new folders "
+        f"(dag_id={dag_id}, level={level}, date_queries={date_queries}, only_basename={only_basename})"
+    )
     roots = _normalize_folders(monitoring_folders)
     if not roots:
-        print(f"[COSIDAG] _find_new_folder: no valid monitoring folders found")
+        print("[COSIDAG] _find_new_folder: no valid monitoring folders found")
         return None
 
     print(f"[COSIDAG] _find_new_folder: monitoring {len(roots)} root folder(s): {', '.join(roots)}")
     processed = _load_processed_set(dag_id)
     print(f"[COSIDAG] _find_new_folder: loaded {len(processed)} already processed folder(s)")
 
-    candidates = []
+    candidates: list[str] = []
     for root in sorted(roots):
         subfolders = list(_iter_subfolders(root, max_depth=level))  # materialize once
         print(f"[COSIDAG] _find_new_folder: found {len(subfolders)} subfolder(s) in {root} (max_depth={level})")
         for sub in subfolders:
             if only_basename and os.path.basename(sub) != only_basename:
-               continue
+                continue
             if _date_filter_ok(sub, date_queries):
                 candidates.append(sub)
 
     if not candidates:
-        print(f"[COSIDAG] _find_new_folder: no candidates found after filtering")
+        print("[COSIDAG] _find_new_folder: no candidates found after filtering")
         return None
 
     print(f"[COSIDAG] _find_new_folder: {len(candidates)} candidate folder(s) after filtering")
 
-    # Prefer deeper paths (e.g., .../products) first
+    # Prefer deeper paths first
     if prefer_deepest:
         candidates.sort(key=lambda p: (p.count(os.sep), p), reverse=True)
-        print(f"[COSIDAG] _find_new_folder: sorted candidates by depth (deepest first)")
+        print("[COSIDAG] _find_new_folder: sorted candidates by depth (deepest first)")
     else:
         candidates.sort()
-        print(f"[COSIDAG] _find_new_folder: sorted candidates alphabetically")
+        print("[COSIDAG] _find_new_folder: sorted candidates alphabetically")
 
     for path in candidates:
         if path not in processed:
             print(f"[COSIDAG] _find_new_folder: found new folder: {path}")
             return path
-    
+
     print(f"[COSIDAG] _find_new_folder: all {len(candidates)} candidate(s) already processed")
     return None
 
+
 # ---- COSIDAG --------------------------------------------------------------------
 
+
 class COSIDAG(DAG):
-    """DAG subclass that wires: check_new_file -> automatic_retrig -> resolve_inputs -> [custom] -> show_results"""
+    """
+    DAG subclass that wires:
+      check_new_file -> automatic_retrig -> resolve_inputs -> [custom] -> show_results
+
+    Optional steps can be disabled:
+      - check_new_file is not created if monitoring_folders is empty.
+      - automatic_retrig is not created if auto_retrig is False.
+    """
 
     def __init__(
         self,
         monitoring_folders,
         level: int = 1,
         date: Optional[str] = None,
-        date_queries: Optional[str|list[str]] = None,
+        date_queries: Optional[str | list[str]] = None,
         build_custom: Optional[Callable[[DAG], None]] = None,
         sensor_poke_seconds: int = 30,
         sensor_timeout_seconds: int = 60 * 60 * 6,
@@ -291,62 +302,21 @@ class COSIDAG(DAG):
         ready_marker: Optional[str] = None,
         only_basename: Optional[str] = None,
         prefer_deepest: bool = True,
-        file_patterns: Optional[dict] = None,   # {"xcom_key": "glob_pattern", ...}
-        select_policy: str = "first",           # "first" | "latest_mtime"
+        file_patterns: Optional[dict] = None,  # {"xcom_key": "glob_pattern", ...}
+        select_policy: str = "first",  # "first" | "latest_mtime"
         tags: Optional[list[str]] = None,
         default_args_extra: Optional[dict] = None,
         auto_retrig: bool = True,
         *args,
         **kwargs,
     ) -> None:
-        """
-        COSIDAG — a convenience DAG subclass that wires a standard layout:
-
-        1) check_new_file  ->  2) automatic_retrig  ->  3) resolve_inputs  ->  4) [custom tasks]  ->  5) show_results
-
-        - check_new_file: a PythonSensor scanning one or more monitoring folders for a new
-        (previously unprocessed) subfolder up to a given depth level. When a new folder
-        is found, its absolute path is pushed to XCom with key 'detected_folder'.
-        - automatic_retrig: triggers the current DAG again as soon as step `check_new_file` completes.
-        - resolve_inputs: if file_patterns is provided, it searches for files matching the given patterns
-        under the detected folder and pushes the selected file paths to XCom with the corresponding key.
-        - [custom]: user-defined tasks; they can pull the detected folder or resolved files from XCom using
-        "{{ ti.xcom_pull(task_ids='check_new_file', key='detected_folder') }}" or 
-        "{{ ti.xcom_pull(task_ids='resolve_inputs', key='xcom_key') }}" for each key in file_patterns.
-        - show_results: writes to logs the homepage URL read from env (e.g. COSIFLOW_HOME_URL)
-        and, if possible, composes a deeper link using the new path module.
-
-        
-        Args:
-            monitoring_folders: list of directories to monitor for new subfolders.
-            level: maximum depth of subfolders to consider.
-            date: only accept subfolders with the given date.
-            date_queries: only accept subfolders with the given date queries.
-            build_custom: function to build the custom tasks.
-            sensor_poke_seconds: interval in seconds to check for new subfolders.
-            sensor_timeout_seconds: timeout in seconds to check for new subfolders.
-            home_env_var: environment variable to get the homepage URL.
-            idle_seconds: minimum time in seconds that a folder must be stable to be accepted.
-            min_files: minimum number of files in a folder to be accepted.
-            ready_marker: file name to check for successful completion.
-            only_basename: only accept subfolders with the given basename.
-            prefer_deepest: prefer the deepest subfolder.
-            file_patterns: dictionary of file patterns to search for.
-            auto_retrig: enable automatic retrigger.
-            select_policy: policy to select the file to use.
-            tags: list of tags to add to the DAG.
-            default_args_extra: dictionary of default arguments to add to the DAG.
-            *args: positional arguments to pass to the DAG constructor.
-            **kwargs: keyword arguments to pass to the DAG constructor.
-        """
-
         # --- merge default_args ---
         # priority: kwargs.default_args < _BASE_DEFAULT_ARGS < default_args_extra
         base = dict(_BASE_DEFAULT_ARGS)
         if "default_args" in kwargs and kwargs["default_args"]:
             base.update(kwargs["default_args"])  # allows override from caller
         if default_args_extra:
-            base.update(default_args_extra)      # extensions/override requested
+            base.update(default_args_extra)  # extensions/override requested
 
         # ensure that DAG receives the final default_args
         kwargs["default_args"] = base
@@ -358,6 +328,9 @@ class COSIDAG(DAG):
             kwargs["tags"] = merged_tags
 
         super().__init__(*args, **kwargs)
+
+        # Decide whether monitoring is enabled (task existence, not just runtime behavior).
+        self.has_monitoring = bool(monitoring_folders)
 
         # Base params (can be overridden by dag_run.conf at runtime)
         self.params.update(
@@ -380,16 +353,26 @@ class COSIDAG(DAG):
                 "auto_retrig": bool(auto_retrig),
             }
         )
-        print(f"[COSIDAG] auto_retrig={auto_retrig}")
-        self.auto_retrig = auto_retrig
 
-        # 1) check_new_file — PythonSensor
+        self.auto_retrig = bool(auto_retrig)
+
+        print(
+            "[COSIDAG] enabled: "
+            f"check_new_file={self.has_monitoring}, "
+            f"automatic_retrig={self.auto_retrig}, "
+            f"resolve_inputs={bool(file_patterns)}"
+        )
+
+        # ---------------------------------------------------------------------
+        # 1) check_new_file — PythonSensor (optional)
+        # ---------------------------------------------------------------------
+
         def _sensor_poke(ti, **context):
             conf = (context.get("dag_run").conf or {}) if context.get("dag_run") else {}
             monitoring = conf.get("monitoring_folders", self.params["monitoring_folders"])
             level_val = int(conf.get("level", self.params["level"]))
 
-            # NEW: retrieve date queries
+            # Date queries: runtime conf has precedence.
             conf_date_queries = conf.get("date_queries", None)
             if conf_date_queries is None:
                 # fallback: use the optional "date" as '==date'
@@ -413,7 +396,7 @@ class COSIDAG(DAG):
                 only_basename=only_bn,
                 prefer_deepest=prefer_deep,
             )
-            
+
             print(f"[COSIDAG] _sensor_poke: new_path={new_path}")
             if not new_path:
                 return False
@@ -428,27 +411,37 @@ class COSIDAG(DAG):
             if not _is_dir_stable(new_path, idle_seconds=idle_s, min_files=min_f):
                 return False
 
-            print(f"[COSIDAG] _sensor_poke: pushing detected_folder to XCom")
+            print("[COSIDAG] _sensor_poke: pushing detected_folder to XCom")
             ti.xcom_push(key="detected_folder", value=new_path)
             processed = _load_processed_set(self.dag_id)
             processed.add(new_path)
             _save_processed_set(self.dag_id, processed)
             return True
 
-        check_new_file = PythonSensor(
-            task_id="check_new_file",
-            poke_interval=sensor_poke_seconds,
-            timeout=sensor_timeout_seconds,
-            mode="poke",
-            python_callable=_sensor_poke,
-            dag=self,
-        )
+        check_new_file = None
+        if self.has_monitoring:
+            check_new_file = PythonSensor(
+                task_id="check_new_file",
+                poke_interval=sensor_poke_seconds,
+                timeout=sensor_timeout_seconds,
+                mode="poke",
+                python_callable=_sensor_poke,
+                dag=self,
+            )
+            self.check_new_file = check_new_file
+        else:
+            print("[COSIDAG] monitoring_folders empty → check_new_file disabled")
+            self.check_new_file = None
 
-        # 2) automatic_retrig — trigger this same DAG again
+        # ---------------------------------------------------------------------
+        # 2) automatic_retrig — Trigger this same DAG again (optional)
+        # ---------------------------------------------------------------------
+
         def _unique_run_id() -> str:
             ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ")
             return f"auto::{self.dag_id}::{ts}"
 
+        automatic_retrig = None
         if self.auto_retrig:
             import inspect
 
@@ -460,7 +453,7 @@ class COSIDAG(DAG):
                 "dag": self,
             }
 
-            # Important: propagate conf from previous run — must be valid JSON!
+            # Propagate conf from previous run — must be valid JSON.
             trig_kwargs["conf"] = "{{ dag_run.conf | tojson if dag_run and dag_run.conf else '{}' }}"
 
             # Airflow version differences
@@ -473,52 +466,51 @@ class COSIDAG(DAG):
             automatic_retrig = TriggerDagRunOperator(**trig_kwargs)
             self.automatic_retrig = automatic_retrig
         else:
-            # Create a dummy no-op operator so the DAG graph stays consistent
-            # automatic_retrig = EmptyOperator(task_id="automatic_retrig", dag=self)
-            # self.automatic_retrig = automatic_retrig
             self.automatic_retrig = None
 
-        # --- 2bis) resolve_inputs (opzionale) ----------------------------------
-        # Se file_patterns è passato, crea un PythonOperator che:
-        # - legge run_dir da XCom (check_new_file/detected_folder)
-        # - fa una ricerca glob(**, pattern) ricorsiva
-        # - seleziona un file per chiave (first | latest_mtime)
-        # - pusha su XCom: {key: path}
+        # ---------------------------------------------------------------------
+        # 3) resolve_inputs (optional)
+        # ---------------------------------------------------------------------
         resolve_inputs = None
         if file_patterns:
-            import glob, os
+            import glob
             from airflow.exceptions import AirflowFailException
 
-            def _resolve_inputs(ti):
-                run_dir = ti.xcom_pull(task_ids="check_new_file", key="detected_folder")
-                if not run_dir or not os.path.isdir(run_dir):
-                    raise AirflowFailException(f"[resolve_inputs] run_dir non valido: {run_dir}")
+            def _resolve_inputs(**context):
+                ti = context["ti"]
+                dag_run = context.get("dag_run")
+                conf = (dag_run.conf or {}) if dag_run else {}
 
-                def pick_one(paths):
+                # Prefer XCom from check_new_file, but allow manual runs by passing detected_folder in conf.
+                run_dir = None
+                if check_new_file is not None:
+                    run_dir = ti.xcom_pull(task_ids="check_new_file", key="detected_folder")
+                if not run_dir:
+                    run_dir = conf.get("detected_folder")
+
+                if not run_dir or not os.path.isdir(run_dir):
+                    raise AirflowFailException(f"[resolve_inputs] invalid run_dir: {run_dir}")
+
+                def pick_one(paths: list[str]) -> Optional[str]:
                     if not paths:
                         return None
                     if select_policy == "first":
                         return sorted(paths)[0]
-                    elif select_policy == "latest_mtime":
+                    if select_policy == "latest_mtime":
                         return max(paths, key=lambda p: os.stat(p).st_mtime)
-                    else:
-                        return sorted(paths)[0]
+                    return sorted(paths)[0]
 
-                found = {}
                 for key, pattern in file_patterns.items():
-                    matches = sorted(
-                        glob.glob(os.path.join(run_dir, "**", pattern), recursive=True)
-                    )
+                    matches = sorted(glob.glob(os.path.join(run_dir, "**", pattern), recursive=True))
                     chosen = pick_one(matches)
                     if not chosen:
                         raise AirflowFailException(
-                            f"[resolve_inputs] Nessun file per {key} con pattern '{pattern}' sotto {run_dir}"
+                            f"[resolve_inputs] no file for key={key!r} pattern={pattern!r} under {run_dir}"
                         )
                     ti.xcom_push(key=key, value=chosen)
-                    found[key] = chosen
                     print(f"[resolve_inputs] {key} = {chosen}")
 
-                # utile anche ripubblicare run_dir
+                # Also republish run_dir for convenience.
                 ti.xcom_push(key="run_dir", value=run_dir)
                 print(f"[resolve_inputs] run_dir = {run_dir}")
 
@@ -528,74 +520,130 @@ class COSIDAG(DAG):
                 dag=self,
             )
 
-        # 3) [custom] — let users append their tasks (optional)
+        # ---------------------------------------------------------------------
+        # 4) [custom] — Let users append their tasks (optional)
+        # ---------------------------------------------------------------------
+
         before_tasks = set(self.task_dict.keys())
         if callable(build_custom):
             build_custom(self)
-            after_tasks = set(self.task_dict.keys())
-            new_ids = sorted(after_tasks - before_tasks)
-            if new_ids:
-                new_set = set(new_ids)
-                new_tasks = [self.task_dict[t] for t in new_ids]
+        after_tasks = set(self.task_dict.keys())
+        new_ids = sorted(after_tasks - before_tasks)
 
-                roots, leaves = [], []
-                for t in new_tasks:
-                    ups = {u.task_id for u in t.upstream_list}
-                    if ups.isdisjoint(new_set):
-                        roots.append(t)
-                for t in new_tasks:
-                    downs = {d.task_id for d in t.downstream_list}
-                    if downs.isdisjoint(new_set):
-                        leaves.append(t)
+        if new_ids:
+            new_set = set(new_ids)
+            new_tasks = [self.task_dict[t] for t in new_ids]
 
-                # Se c'è resolve_inputs: automatic_retrig >> resolve_inputs >> roots
-                # altrimenti: automatic_retrig >> roots
-                anchor_after_retrig = resolve_inputs if resolve_inputs else automatic_retrig
-                if resolve_inputs:
-                    automatic_retrig >> resolve_inputs
-                for t in roots:
-                    anchor_after_retrig >> t
+            roots, leaves = [], []
+            for t in new_tasks:
+                ups = {u.task_id for u in t.upstream_list}
+                if ups.isdisjoint(new_set):
+                    roots.append(t)
+            for t in new_tasks:
+                downs = {d.task_id for d in t.downstream_list}
+                if downs.isdisjoint(new_set):
+                    leaves.append(t)
 
-                last_custom = EmptyOperator(task_id="custom_anchor", dag=self)
-                for t in leaves:
-                    t >> last_custom
-            else:
-                last_custom = EmptyOperator(task_id="custom_placeholder", dag=self)
+            last_custom = EmptyOperator(task_id="custom_anchor", dag=self)
+            for t in leaves:
+                t >> last_custom
         else:
+            # No custom tasks created
+            roots = []
             last_custom = EmptyOperator(task_id="custom_placeholder", dag=self)
 
-        # 4) show_results — log homepage and optional deep link
+        # ---------------------------------------------------------------------
+        # 5) show_results — Log homepage and optional deep link
+        # ---------------------------------------------------------------------
+
         def _show_results(**context):
             ti = context["ti"]
-            detected = ti.xcom_pull(task_ids="check_new_file", key="detected_folder")
-            homepage = os.environ.get(self.params.get("home_env_var", "COSIFLOW_HOME_URL")) \
-                       or os.environ.get("COSIFLOW_HOME_URL")
-            if homepage:
-                # make the union between homepage and detected folder
-                # homepage is the base url, e.g. http://agilehost3.iasfbo.inaf.it:8080/heasarcbrowser
-                # detected folder is the path to the folder, e.g. /home/gamma/workspace/data/tsmap/20251111
-                # the union is the base url + the detected folder, e.g. http://agilehost3.iasfbo.inaf.it:8080/heasarcbrowser/folder/tsmap/2025_11/251111001/products
-                deep = f"{homepage.rstrip('/')}/folder/{detected.replace("/home/gamma/workspace/data", "").lstrip('/')}" if homepage else detected
-                print(f"[COSIDAG] Result page: {deep}")
-                return deep
+            dag_run = context.get("dag_run")
+            conf = (dag_run.conf or {}) if dag_run else {}
+
+            # -------------------------------------------------
+            # 1) Retrieve detected folder
+            # -------------------------------------------------
+            detected = None
+
+            if check_new_file is not None:
+                detected = ti.xcom_pull(
+                    task_ids="check_new_file",
+                    key="detected_folder"
+                )
             else:
-                print("[COSIDAG] Homepage URL not set. Define COSIFLOW_HOME_URL in your .env.")
-            if detected and PathInfo is not None:
+                detected = ti.xcom_pull(
+                    key="detected_folder"
+                )
+
+            # Allow manual runs
+            if not detected:
+                detected = conf.get("detected_folder")
+
+            if not detected:
+                print(
+                    "[COSIDAG] No detected folder available "
+                    "(monitoring disabled and no dag_run.conf['detected_folder'])"
+                )
+                return None
+
+            # -------------------------------------------------
+            # 2) Build deep-link URL (if possible)
+            # -------------------------------------------------
+            homepage = os.environ.get(
+                self.params.get("home_env_var", "COSIFLOW_HOME_URL")
+            ) or os.environ.get("COSIFLOW_HOME_URL")
+
+            url = None
+            if homepage:
+                # ⚠️ Adapt this base path to your filesystem layout
+                DATA_ROOT = "/home/gamma/workspace/data"
+                rel = detected.replace(DATA_ROOT, "").lstrip("/")
+                url = f"{homepage.rstrip('/')}/folder/{rel}"
+
+            # -------------------------------------------------
+            # 3) Push structured result to XCom (canonical output)
+            # -------------------------------------------------
+            result = {
+                "folder": detected,
+                "url": url,
+            }
+
+            ti.xcom_push(
+                key="cosidag_result",
+                value=result,
+            )
+
+            # -------------------------------------------------
+            # 4) Human-friendly logs
+            # -------------------------------------------------
+            print("=" * 80)
+            print("📂 COSIDAG RESULT")
+            print(f"Folder: {detected}")
+            if url:
+                print(f"URL:    {url}")
+            else:
+                print("URL:    <not available>")
+            print("=" * 80)
+
+            # -------------------------------------------------
+            # 5) Optional deep-link via PathInfo (fallback / enrichment)
+            # -------------------------------------------------
+            if not url and PathInfo is not None:
                 try:
                     info = PathInfo.from_path(detected)  # type: ignore[attr-defined]
-                    if callable(build_url_fragment):
+                    if callable(build_url_fragment) and homepage:
                         frag = build_url_fragment(info)  # type: ignore
-                        deep = f"{homepage.rstrip('/')}/{frag.lstrip('/')}" if homepage else frag
-                    else:
-                        parts = [getattr(info, k, None) for k in ("domain", "year", "month", "identifier")]
-                        parts = [str(p) for p in parts if p]
-                        deep = f"{homepage.rstrip('/')}/" + "/".join(parts) if (homepage and parts) else None
-                    if deep:
-                        print(f"[COSIDAG] Result page: {deep}")
+                        deep = f"{homepage.rstrip('/')}/{frag.lstrip('/')}"
+                        print(f"[COSIDAG] Result page (PathInfo): {deep}")
                 except Exception as e:
-                    print(f"[COSIDAG] Deep-linking failed: {e}")
-            elif detected:
-                print(f"[COSIDAG] Detected folder: {detected}")
+                    print(f"[COSIDAG] Deep-linking via PathInfo failed: {e}")
+
+            # -------------------------------------------------
+            # 6) Return value (kept for backward compatibility)
+            # -------------------------------------------------
+            return result
+
 
         show_results = PythonOperator(
             task_id="show_results",
@@ -604,29 +652,53 @@ class COSIDAG(DAG):
             dag=self,
         )
 
-        # Wire: 1 -> 2 -> [3] -> 4
-        if automatic_retrig is not None:
-            # with automatic retrigger
-            check_new_file >> automatic_retrig >> last_custom >> show_results
+        # ---------------------------------------------------------------------
+        # Wiring — Build a robust chain depending on what exists.
+        # ---------------------------------------------------------------------
+
+        # Start anchor: the last "pre-custom" task that exists.
+        anchor = None
+
+        if check_new_file is not None and automatic_retrig is not None:
+            check_new_file >> automatic_retrig
+            anchor = automatic_retrig
+        elif check_new_file is not None:
+            anchor = check_new_file
+        elif automatic_retrig is not None:
+            # Note: without check_new_file, retrigger is still allowed (manual DAG that loops),
+            # but it is usually not recommended unless you pass detected_folder in conf.
+            anchor = automatic_retrig
+
+        # Optional resolve_inputs comes after anchor if anchor exists; otherwise it can run standalone.
+        if resolve_inputs is not None:
+            if anchor is not None:
+                anchor >> resolve_inputs
+            anchor = resolve_inputs
+
+        # Attach custom roots after anchor if possible.
+        if roots and anchor is not None:
+            for t in roots:
+                anchor >> t
+
+        # Close chain into show_results
+        if anchor is not None:
+            anchor >> last_custom >> show_results
         else:
-            # without automatic retrigger
-            check_new_file >> last_custom >> show_results
+            # No monitoring, no retrigger, no resolve_inputs: run custom (or placeholder) then show results.
+            last_custom >> show_results
 
         # Expose handles
-        self.check_new_file = check_new_file
         self.show_results = show_results
 
     def find_file_by_pattern(self, pattern: str, detected_folder: str) -> Optional[str]:
-        """Find the first file matching the given pattern under the detected folder."""
+        """Find the first file matching the given regex pattern under detected_folder."""
         print(f"[COSIDAG] find_file_by_pattern: pattern={pattern}, detected_folder={detected_folder}")
-        # search for the file by pattern
         rx = re.compile(pattern)
         for root, _, files in os.walk(detected_folder):
             for fname in files:
                 if rx.search(fname):
                     return os.path.join(root, fname)
         return None
-
 
 
 # ------------------------------ Example usage ------------------------------------
@@ -637,9 +709,7 @@ class COSIDAG(DAG):
 # from airflow.operators.python import PythonOperator
 #
 # def build_custom(dag):
-#     # Example custom task consuming the detected folder via XCom
 #     def _process_folder(folder_path: str):
-#         # Do your science here
 #         print(f"Processing folder: {folder_path}")
 #
 #     PythonOperator(
@@ -661,6 +731,11 @@ class COSIDAG(DAG):
 #     idle_seconds=30,
 #     min_files=1,
 #     date=None,
+#     auto_retrig=False,   # disable retrigger
 #     build_custom=build_custom,
 # ) as dag:
 #     pass
+#
+# Manual run without monitoring:
+#   monitoring_folders=[]
+#   and trigger with dag_run.conf = {"detected_folder": "/path/to/process"}
