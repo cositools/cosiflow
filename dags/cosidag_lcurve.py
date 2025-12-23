@@ -14,7 +14,6 @@ def build_custom(dag):
     LIB_DIR = cfg("TSMAP_LIB_DIR", "/home/gamma/airflow/pipeline/lcurve")
 
     # ----- Python callables executed in the external interpreter -----
-
     def _bin_grb(run_dir: str, lib_dir: str, grb_file: str) -> str:
         import sys
         sys.path.insert(0, lib_dir)
@@ -102,7 +101,7 @@ with COSIDAG(
     select_policy="latest_mtime",   # or "first"
     file_patterns={
         "grb_file": "GRB*_unbinned_*.fits*",
-        "background_file": "Total_BG*_unbinned_*.fits*",
+        "background_file": "Total_BG*_unbinned_*_window.fits*",
         "orientation_file": "*.ori",
         "response_file": "Response*.h5",
     },

@@ -122,7 +122,7 @@ with COSIDAG(
     date_queries=f"=={datetime.now().strftime("%Y%m%d")}",
     file_patterns={
         "grb_file": "GRB*_unbinned_*.fits*",
-        "background_file": "Total_BG*_unbinned_*.fits*",
+        "background_file": "Total_BG*_unbinned_*_window.fits*",
         "orientation_file": "*.ori",
         "response_file": "Response*.h5",
     },
