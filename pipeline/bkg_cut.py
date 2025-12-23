@@ -51,7 +51,9 @@ def extract_bkg_window(background_path, source_path, eps_time = 0.000000001):
 def save_bkg_window(background_path, source_path, eps_time):
     """Save the background window to a file"""
     # Reuse the same name of the background file but with the word "cut" added
-    output_path = background_path.replace(".fits.gz", "_cut.fits")
+    # output_path = background_path.replace(".fits.gz", "_cut.fits")
+    base, ext = os.path.splitext(background_path)
+    output_path = base + "_window.fits"
     bkg_cut = extract_bkg_window(background_path, source_path, eps_time)
     # Save the background window to a file
     print(f"Saving background window to: {output_path}")
