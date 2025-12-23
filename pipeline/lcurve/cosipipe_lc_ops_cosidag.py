@@ -18,8 +18,8 @@ def bin_grb_source(unbinned_file_path: str, data_folder: str) -> str:
     print(f"[bin_grb_source] Found GRB unbinned fits file: {unbinned_file_path}")
 
     # Define output file path
-    extension = unbinned_file_path.split(".")[-1][:-1]
-    binned_file_name = unbinned_file_path.replace("_unbinned_", "_binned_").replace(extension, "")
+    extension = unbinned_file_path.split(".")[-1]
+    binned_file_name = unbinned_file_path.replace("_unbinned_", "_binned_").replace("."+extension, "")
     binned_file_path = os.path.join(data_folder, f"{binned_file_name}.hdf5")
     
     print(f"[bin_grb_source] Expected output file: {binned_file_path}")
@@ -99,9 +99,9 @@ def bin_background_data(unbinned_file_path: str, data_folder: str) -> str:
     print(f"[bin_background_data] Found background unbinned fits file: {unbinned_file_path}")
 
     # Define output file path
-    extension = unbinned_file_path.split(".")[-1][:-1]
+    extension = unbinned_file_path.split(".")[-1]
     print(f"[bin_background_data] Extension: {extension}")
-    binned_file_name = unbinned_file_path.replace("_unbinned_", "_binned_").replace(extension, "")
+    binned_file_name = unbinned_file_path.replace("_unbinned_", "_binned_").replace("."+extension, "")
     print(f"[bin_background_data] Binned file name: {binned_file_name}")
     binned_file_path = os.path.join(data_folder, f"{binned_file_name}.hdf5")
     
