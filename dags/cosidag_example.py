@@ -29,7 +29,7 @@ with COSIDAG(
     catchup=False,
     monitoring_folders=["/home/gamma/workspace/data/tsmap"],
     level=3,
-    date_queries=f"=={datetime.now().strftime("%Y%m%d")}",
+    date_queries=f"=={datetime.now().strftime('%Y%m%d')}",
     build_custom=build_custom,
     idle_seconds=5,
     min_files=1,

@@ -56,6 +56,9 @@ services:
 
       # Airflow configuration
       - AIRFLOW_HOME=/home/gamma/airflow
+      # [Docker Proxy] Configure Airflow to use the sidecar proxy instead of local socket
+      - DOCKER_HOST=tcp://docker-proxy:2375
+      
       - DISPLAY=${DISPLAY}  # Needed if you run GUI apps (e.g., plots)
       - AIRFLOW__CORE__LOAD_EXAMPLES=False  # Disable default example DAGs
 
@@ -72,6 +75,13 @@ services:
       # DAGs, plugins, and pipeline directories are mounted so you can edit
       # them live without rebuilding the image.
       - ../dags:/home/gamma/airflow/dags
+      
+      # [Shared Storage] Pool of all COSI modules (mounted from workspace root)
+      # This allows hot-plugging new modules via symlinks without restarting.
+      - ../../:/home/gamma/airflow/modules_pool
+      
+      # [Docker] Socket mount removed -> We use TCP proxy now.
+
       - ../plugins:/home/gamma/airflow/plugins
       - ../pipeline:/home/gamma/airflow/pipeline
       - ../callbacks:/home/gamma/airflow/callbacks
@@ -106,10 +116,30 @@ services:
     # entrypoint: ["tail", "-f", "/dev/null"]
 
   # ---------------------------------------------------------------------------
+  # DOCKER SOCKET PROXY (Sidecar for secure Docker access)
+  # ---------------------------------------------------------------------------
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: cosi_docker_proxy
+    # platform: linux/amd64 # Uncomment if needed on ARM, but usually multi-arch
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Read-only mount for security!
+    environment:
+      - CONTAINERS=1 # Allow listing/starting containers
+      - IMAGES=1     # Allow image pulling
+      - POST=1       # Allow POST requests (create/start/stop)
+      - NETWORKS=1   # Allow network operations
+      - VOLUMES=1    # Allow volume operations
+    ports:
+      - "127.0.0.1:2375:2375" # Expose only to localhost just in case, but internal net is key
+    # No 'user' set, it runs as root internally to access the socket, but acts as a proxy.
+
+  # ---------------------------------------------------------------------------
   # MAILHOG SERVICE (Fake SMTP server for local testing)
   # ---------------------------------------------------------------------------
   mailhog:
     image: mailhog/mailhog
+    platform: linux/amd64  # Explicitly use AMD64 emulation on ARM Macs to silence warning
     container_name: cosi_mailhog
     ports:
       - "1025:1025"   # SMTP port for Airflow alerts

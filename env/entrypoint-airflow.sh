@@ -82,10 +82,14 @@ fi
 # Create COSI directory structure if not present
 mkdir -p $COSI_DATA_DIR/{obs,transient,trigger,maps,source}
 
-# Activate conda environment
-source activate gamma
-export PATH="$PATH:~/.local/bin"
-echo "✅ Environment activated."
+# Activate Python venv
+if [ -f "/home/gamma/venv/bin/activate" ]; then
+    source /home/gamma/venv/bin/activate
+    echo "✅ Virtual environment activated."
+else
+    echo "⚠️ venv activate script not found, assuming PATH is correct."
+fi
+# export PATH="$PATH:~/.local/bin" # Not needed with venv in PATH
 
 # Initialize Airflow DB
 airflow db init

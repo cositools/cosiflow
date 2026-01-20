@@ -1,14 +1,16 @@
 # =============================================================================
-#  Dockerfile.airflow — Miniconda (multi-arch), silent ToS, robust UID/GID
-#  Base: OracleLinux 8 | Works on amd64 and arm64 (Apple Silicon)
+#  Dockerfile.airflow — Native Python (venv), OracleLinux 8 base
+#  Base: OracleLinux 8 | Works on amd64 and arm64
 # =============================================================================
 
 FROM oraclelinux:8 AS oracle8
 
-# ------------------------------ Base dependencies (installed as root) ------------------------------
-# Install core system packages and scientific libraries required by Airflow and COSIPY.
+# ------------------------------ Base dependencies ------------------------------
+# Install core system packages, Python 3.9, and dev libraries
 RUN set -eux; \
+    dnf module enable -y python39; \
     dnf install -y \
+      python39 python39-devel python39-pip \
       wget curl ca-certificates gnupg2 tar bzip2 xz unzip which rsync \
       git cmake3 gcc-c++ gcc make binutils \
       compat-openssl10 openssl-devel \
@@ -18,14 +20,16 @@ RUN set -eux; \
       nmap-ncat chrony; \
     dnf install -y oracle-epel-release-el8; \
     dnf config-manager --enable ol8_codeready_builder; \
-    dnf install -y hdf5 hdf5-devel; \
+    dnf install -y hdf5 hdf5-devel libpq-devel; \
     dnf clean all; rm -rf /var/cache/dnf/*
 
-# ------------------------------ Non-root user (robust with existing UID/GID) ------------------------------
-# Create a user called "gamma" that matches the host UID/GID to avoid permission issues when mounting volumes.
-ARG UID=
-ARG GID=
-# On macOS, use: --build-arg UID=501 --build-arg GID=20
+# Set python3.9 as default python
+RUN alternatives --set python3 /usr/bin/python3.9 && \
+    ln -sf /usr/bin/python3.9 /usr/bin/python
+
+# ------------------------------ Non-root user ------------------------------
+ARG UID=501
+ARG GID=20
 RUN set -eux; \
     if getent group "${GID}" >/dev/null; then \
       GN="$(getent group "${GID}" | cut -d: -f1)"; \
@@ -38,90 +42,51 @@ RUN set -eux; \
       useradd -m -u "${UID}" -g "${GID}" -s /bin/bash gamma; \
     fi; \
     mkdir -p /home/gamma && chown -R "${UID}:${GID}" /home/gamma
+
 ENV HOME=/home/gamma
 WORKDIR /home/gamma
 
-# ------------------------------ Copy environment/config files (if available) ------------------------------
-# These are optional configuration or dependency files mounted or baked into the image.
+# ------------------------------ Copy Configuration ------------------------------
 RUN mkdir -p /home/gamma/env
 COPY environment.yml /home/gamma/env/
 COPY requirements.txt /home/gamma/env/
 COPY alert_users.yaml /home/gamma/env/
 COPY .env /home/gamma/env/
-
-# ------------------------------ Install Miniconda (multi-architecture support) ------------------------------
-# Automatically download the right Miniconda installer for amd64 or arm64 architectures.
-ARG TARGETARCH
-RUN set -eux; \
-    case "${TARGETARCH}" in \
-      amd64)  MINICONDA=Miniconda3-latest-Linux-x86_64.sh ;; \
-      arm64)  MINICONDA=Miniconda3-latest-Linux-aarch64.sh ;; \
-      *) echo "Unsupported TARGETARCH: ${TARGETARCH}"; exit 1 ;; \
-    esac; \
-    wget https://repo.anaconda.com/miniconda/$MINICONDA \
-    && chmod +x $MINICONDA \
-    && ./$MINICONDA -b -p /opt/conda \
-    && rm $MINICONDA
-
-# Fix ownership of the gamma home directory after installation
-RUN chown -R ${UID}:${GID} /home/gamma
-
-# Switch to non-root user for all subsequent steps
-USER gamma
-
-# ------------------------------ Copy entrypoint script ------------------------------
-# This script initializes Airflow (creates admin user, DB, starts webserver, etc.)
 COPY entrypoint-airflow.sh /home/gamma/entrypoint-airflow.sh
 
-# ------------------------------ Conda configuration ------------------------------
-# Add conda-forge channel and set strict channel priority for reproducible builds.
-RUN export PATH=$PATH:/opt/conda/bin && conda config --append channels conda-forge && conda config --set channel_priority strict
+# Fix ownership
+RUN chown -R "${UID}:${GID}" /home/gamma
 
-# ------------------------------ Accept Conda Terms of Service ------------------------------
-# Required to use the official Anaconda repositories. Done non-interactively.
-RUN export PATH=$PATH:/opt/conda/bin && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
-RUN export PATH=$PATH:/opt/conda/bin && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
-
-# ------------------------------ Create main "gamma" environment ------------------------------
-# Main Python environment for Airflow and related tools.
-RUN export PATH=$PATH:/opt/conda/bin && conda create -n gamma python=3.12 pip psycopg2 jupyter numpy scipy matplotlib pandas plotly scikit-learn tensorboard tensorflow inotify_simple -y 
-
-# ------------------------------ Install Apache Airflow ------------------------------
-# Install Airflow using official constraint files to ensure version compatibility.
-RUN export PATH=$PATH:/opt/conda/bin && source activate gamma && export AIRFLOW_VERSION=2.10.3 && \
-           export PYTHON_VERSION="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" && \
-           export CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt" && \
-           pip install "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINT_URL}" 
-          
-# ------------------------------ Create secondary "cosipy" environment ------------------------------
-# Dedicated environment for COSIPY tools and dependencies.
-RUN export PATH=$PATH:/opt/conda/bin && conda create -n cosipy python=3.10 pip jupyter notebook && source activate cosipy && pip install py7zr && git clone https://github.com/cositools/cosipy.git && cd cosipy && git checkout v0.3.x && pip install -e .
-
-# ------------------------------ Create "cosipy_develop" environment ------------------------------
-# Development environment for COSIPY tools and dependencies (develop branch).
-RUN export PATH=$PATH:/opt/conda/bin && conda create -n cosipy_develop python=3.10 pip jupyter notebook -y && source activate cosipy_develop && pip install py7zr && git clone https://github.com/cositools/cosipy.git cosipy_develop && cd cosipy_develop && git checkout develop && pip install -e .
-
-# ------------------------------ Prepare Airflow home directory ------------------------------
-RUN mkdir -p ${HOME}/airflow
-
-# ------------------------------ Create shared directories and fix permissions ------------------------------
-USER root
-RUN  mkdir /shared_dir
-RUN chown -R ${UID}:${GID} /shared_dir
-RUN  mkdir /data01
-RUN chown -R ${UID}:${GID} /data01
-RUN  mkdir /data02
-RUN chown -R ${UID}:${GID} /data02
-RUN chown -R ${UID}:${GID} /home/gamma/entrypoint-airflow.sh
-RUN chmod +x /home/gamma/entrypoint-airflow.sh
-
-# ------------------------------ Switch back to non-root user ------------------------------
+# ------------------------------ Install Airflow (venv) ------------------------------
 USER gamma
-RUN mkdir /home/gamma/workspace
 
-# ------------------------------ Environment variables and PATH ------------------------------
-ENV PATH="/opt/conda/bin:$PATH"
+# Create virtual environment
+RUN python3.9 -m venv /home/gamma/venv
 
-# ------------------------------ Default entrypoint (disabled) ------------------------------
-# Uncomment to automatically start Airflow when the container runs
+# Activate venv for subsequent commands (simulated by updating PATH)
+ENV VIRTUAL_ENV=/home/gamma/venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Install Airflow
+ENV AIRFLOW_VERSION=2.10.3
+ENV PYTHON_VERSION=3.9
+ENV CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt"
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINT_URL}" && \
+    pip install --no-cache-dir apache-airflow-providers-docker apache-airflow-providers-postgres psycopg2-binary \
+    jupyter pandas plotly scikit-learn tensorboard tensorflow inotify_simple
+
+# ------------------------------ Final Setup ------------------------------
+RUN mkdir -p ${HOME}/airflow
+ENV AIRFLOW_HOME=${HOME}/airflow
+
+# Make entrypoint executable (switch to root briefly)
+USER root
+RUN chmod +x /home/gamma/entrypoint-airflow.sh
+USER gamma
+
+WORKDIR /home/gamma/workspace
+
+# Default entrypoint
 # ENTRYPOINT ["/home/gamma/entrypoint-airflow.sh"]
