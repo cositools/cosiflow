@@ -31,7 +31,7 @@
                 {% endif %}
                 <div class="form-group">
                     <label for="dag_id">Select COSIDAG ID:</label>
-                    <select class="form-control" id="dag_id" name="dag_id" required>
+                    <select class="form-control" id="dag_id" name="dag_id" required onchange="loadProcessedFolders(this.value)">
                         <option value="" disabled selected>Select a DAG...</option>
                         {% for dag_id in dag_ids %}
                         <option value="{{ dag_id }}">{{ dag_id }}</option>
@@ -44,5 +44,92 @@
             </form>
         </div>
     </div>
+
+    <div class="panel panel-default" id="folders-panel" style="display: none;">
+        <div class="panel-heading">Processed Folders <span id="folder-count" class="badge"></span></div>
+        <div class="panel-body">
+            <div id="folders-loading" style="display: none; text-align: center; color: #777;">
+                <span class="glyphicon glyphicon-refresh" aria-hidden="true"></span> Loading...
+            </div>
+            <div id="folders-error" class="alert alert-danger" style="display: none;"></div>
+            <table class="table table-striped table-hover" id="folders-table">
+                <thead>
+                    <tr>
+                        <th>Path</th>
+                    </tr>
+                </thead>
+                <tbody id="folders-tbody">
+                </tbody>
+            </table>
+            <div id="folders-empty" style="display: none; text-align: center; font-style: italic; color: #777; padding: 10px;">
+                No processed folders found for this DAG.
+            </div>
+        </div>
+    </div>
 </div>
+
+<script>
+    function loadProcessedFolders(dagId) {
+        if (!dagId) return;
+
+        const panel = document.getElementById('folders-panel');
+        const loading = document.getElementById('folders-loading');
+        const errorDiv = document.getElementById('folders-error');
+        const tbody = document.getElementById('folders-tbody');
+        const table = document.getElementById('folders-table');
+        const emptyMsg = document.getElementById('folders-empty');
+        const badge = document.getElementById('folder-count');
+
+        // Reset UI
+        panel.style.display = 'block';
+        loading.style.display = 'block';
+        errorDiv.style.display = 'none';
+        tbody.innerHTML = '';
+        table.style.display = 'none';
+        emptyMsg.style.display = 'none';
+        badge.innerText = '';
+
+        const url = `/reset_cosidag/get_processed_folders/${dagId}`;
+
+        fetch(url)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                loading.style.display = 'none';
+                
+                if (data.error) {
+                    errorDiv.innerText = 'Error: ' + data.error;
+                    errorDiv.style.display = 'block';
+                    return;
+                }
+
+                const folders = data.folders;
+                badge.innerText = folders.length;
+
+                if (folders.length === 0) {
+                    emptyMsg.style.display = 'block';
+                } else {
+                    table.style.display = 'table';
+                    folders.forEach(folder => {
+                        const row = document.createElement('tr');
+                        const cell = document.createElement('td');
+                        cell.innerText = folder;
+                        // Optional: make it monospace for paths
+                        cell.style.fontFamily = 'monospace'; 
+                        row.appendChild(cell);
+                        tbody.appendChild(row);
+                    });
+                }
+            })
+            .catch(error => {
+                loading.style.display = 'none';
+                errorDiv.innerText = 'Error fetching data: ' + error.message;
+                errorDiv.style.display = 'block';
+            });
+    }
+</script>
 {% endblock %}
