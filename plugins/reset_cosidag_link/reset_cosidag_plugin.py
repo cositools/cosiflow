@@ -44,7 +44,7 @@ class ResetCosidagView(BaseView):
                         flash(f"Error resetting variable: {str(e)}", "error")
                 else:
                     flash("No DAG ID selected.", "error")
-                return redirect(self.get_url_for('reset_cosidag'))
+                return redirect(url_for('ResetCosidagView.reset_cosidag'))
             
             dag_ids = get_dag_ids()
             
