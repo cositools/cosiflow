@@ -1,0 +1,48 @@
+{% extends "airflow/main.html" %}
+
+{% block title %}Reset COSIDAG - Airflow{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2>Reset COSIDAG Processed State</h2>
+    <p>
+        This tool resets the <code>COSIDAG_PROCESSED::{dag_id}</code> variable for a specific COSIDAG.<br>
+        This variable tracks processed folder paths across runs to avoid reprocessing. Resetting it will clear the history of processed folders, allowing the DAG to reprocess data if triggered.
+    </p>
+    
+    <hr>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category if category != 'error' else 'danger' }}">
+            {{ message }}
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <div class="panel panel-default">
+        <div class="panel-heading">Reset Variable</div>
+        <div class="panel-body">
+            <form method="post" action="{{ url_for('ResetCosidagView.reset_cosidag') }}">
+                {% if csrf_token %}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                {% endif %}
+                <div class="form-group">
+                    <label for="dag_id">Select COSIDAG ID:</label>
+                    <select class="form-control" id="dag_id" name="dag_id" required>
+                        <option value="" disabled selected>Select a DAG...</option>
+                        {% for dag_id in dag_ids %}
+                        <option value="{{ dag_id }}">{{ dag_id }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to reset the processed state for this DAG? This action cannot be undone.');">
+                    <span class="glyphicon glyphicon-refresh" aria-hidden="true"></span> Reset Variable
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
