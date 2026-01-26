@@ -274,6 +274,30 @@ def _find_new_folder(
     return None
 
 
+
+class ConditionalTriggerDagRunOperator(TriggerDagRunOperator):
+    """
+    Wraps TriggerDagRunOperator to skip execution if 'auto_retrig' is False in dag_run.conf.
+    """
+
+    def execute(self, context):
+        dag_run = context.get("dag_run")
+        conf = (dag_run.conf or {}) if dag_run else {}
+
+        # Check runtime override
+        val = conf.get("auto_retrig")
+        if val is not None:
+            is_on = val
+            if isinstance(val, str):
+                is_on = val.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+            if not is_on:
+                print(f"[COSIDAG] Skipping automatic_retrig (dag_run.conf['auto_retrig']={val})")
+                return None
+
+        return super().execute(context)
+
+
 # ---- COSIDAG --------------------------------------------------------------------
 
 
@@ -463,7 +487,7 @@ class COSIDAG(DAG):
             elif "run_id" in params:
                 trig_kwargs["run_id"] = _unique_run_id()
 
-            automatic_retrig = TriggerDagRunOperator(**trig_kwargs)
+            automatic_retrig = ConditionalTriggerDagRunOperator(**trig_kwargs)
             self.automatic_retrig = automatic_retrig
         else:
             self.automatic_retrig = None
