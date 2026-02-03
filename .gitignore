@@ -166,3 +166,6 @@ data/*
 # TODO: Remove when you need the cut background file anymore
 # Raw data folder excluding only the background cut file
 data/raw/
+
+# Modules Pool
+.cfmodule
