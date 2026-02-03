@@ -169,3 +169,6 @@ data/*
 
 # Modules Pool
 *.cfmodule
+
+# OS
+.DS_Store
