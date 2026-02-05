@@ -278,7 +278,12 @@ def _find_new_folder(
 class ConditionalTriggerDagRunOperator(TriggerDagRunOperator):
     """
     Wraps TriggerDagRunOperator to skip execution if 'auto_retrig' is False in dag_run.conf.
+    Also supports max_retrig_runs to limit the number of automatic retriggers.
     """
+
+    def __init__(self, max_retrig_runs=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.max_retrig_runs = max_retrig_runs
 
     def execute(self, context):
         dag_run = context.get("dag_run")
@@ -293,6 +298,15 @@ class ConditionalTriggerDagRunOperator(TriggerDagRunOperator):
 
             if not is_on:
                 print(f"[COSIDAG] Skipping automatic_retrig (dag_run.conf['auto_retrig']={val})")
+                return None
+
+        # Check run counter limit (before increment, which happens in the template)
+        if self.max_retrig_runs is not None:
+            run_count = conf.get("retrig_run_count", 0)
+            run_count = int(run_count) if isinstance(run_count, (int, str)) else 0
+            
+            if run_count >= self.max_retrig_runs:
+                print(f"[COSIDAG] Skipping automatic_retrig (reached max_retrig_runs={self.max_retrig_runs}, current_count={run_count})")
                 return None
 
         return super().execute(context)
@@ -331,6 +345,7 @@ class COSIDAG(DAG):
         tags: Optional[list[str]] = None,
         default_args_extra: Optional[dict] = None,
         auto_retrig: bool = True,
+        max_retrig_runs: Optional[int] = None,
         *args,
         **kwargs,
     ) -> None:
@@ -375,10 +390,12 @@ class COSIDAG(DAG):
                 "max_active_tasks": int(kwargs.get("max_active_tasks", 8)),
                 "concurrency": int(kwargs.get("concurrency", 8)),
                 "auto_retrig": bool(auto_retrig),
+                "max_retrig_runs": max_retrig_runs,
             }
         )
 
         self.auto_retrig = bool(auto_retrig)
+        self.max_retrig_runs = max_retrig_runs
 
         print(
             "[COSIDAG] enabled: "
@@ -478,7 +495,15 @@ class COSIDAG(DAG):
             }
 
             # Propagate conf from previous run — must be valid JSON.
-            trig_kwargs["conf"] = "{{ dag_run.conf | tojson if dag_run and dag_run.conf else '{}' }}"
+            # Include logic to increment retrig_run_count if max_retrig_runs is set
+            if self.max_retrig_runs is not None:
+                trig_kwargs["conf"] = """{% set current_conf = dag_run.conf if dag_run and dag_run.conf else {} %}
+{% set run_count = current_conf.get('retrig_run_count', 0) | int %}
+{% set new_conf = current_conf.copy() %}
+{% set _ = new_conf.update({'retrig_run_count': run_count + 1}) %}
+{{ new_conf | tojson }}"""
+            else:
+                trig_kwargs["conf"] = "{{ dag_run.conf | tojson if dag_run and dag_run.conf else '{}' }}"
 
             # Airflow version differences
             params = inspect.signature(TriggerDagRunOperator.__init__).parameters
@@ -487,6 +512,7 @@ class COSIDAG(DAG):
             elif "run_id" in params:
                 trig_kwargs["run_id"] = _unique_run_id()
 
+            trig_kwargs["max_retrig_runs"] = self.max_retrig_runs
             automatic_retrig = ConditionalTriggerDagRunOperator(**trig_kwargs)
             self.automatic_retrig = automatic_retrig
         else:
