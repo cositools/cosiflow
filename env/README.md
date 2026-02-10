@@ -17,6 +17,27 @@ This guide explains how to create, install, and manage modules for Cosiflow, usi
 
 ---
 
+## Prerequisites
+
+Before installing or managing modules with `hot_load_module.sh`, make sure that:
+
+1. **Cosiflow is already configured and built**:
+   - You have followed the instructions in `../README.md` to:
+     - edit `env/docker-compose.yaml` (UID, GID, passwords, ports, etc.),
+     - create the `data/postgres_data` directory,
+     - run `docker compose build` from `cosiflow/env`.
+
+2. **(Recommended) The Cosiflow stack is running**:
+   - Start the services with `docker compose up -d` from `cosiflow/env`.
+   - This ensures that any new DAGs and pipeline scripts you install can be discovered by Airflow.
+
+3. **You are running commands from the host in the `cosiflow/env` directory**:
+   - All examples such as `./hot_load_module.sh <module_name> install` assume:
+     - your current working directory is `cosiflow/env`,
+     - Cosiflow services (and their volumes) are correctly defined in `docker-compose.yaml`.
+
+---
+
 ## Module Structure
 
 A Cosiflow module follows a standard directory structure:
@@ -81,7 +102,7 @@ To create a new module for Cosiflow:
 
 ## Installing a Module
 
-Use the `hot_load_module.sh` script to install a module into Cosiflow:
+Once the core Cosiflow environment has been configured and built (see `../README.md`), you can install a module into the running instance using the `hot_load_module.sh` script:
 
 ```bash
 cd cosiflow/env

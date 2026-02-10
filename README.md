@@ -4,6 +4,25 @@ Cosiflow provides an Airflow-based orchestration environment for managing and mo
 
 ---
 
+## Quick Start Overview
+
+There are two main steps to using Cosiflow:
+
+1. **Set up and run the core Cosiflow environment** (this README):
+   - Configure `env/docker-compose.yaml` (UID/GID, Airflow admin password, ports, etc.).
+   - Build and start the Docker Compose stack.
+   - Access the Airflow Web UI.
+
+2. **(Optional) Install one or more pipeline modules** (e.g. analysis pipelines):
+   - Each module lives alongside `cosiflow/` (for example `fast-transient-analysis-pipeline/`).
+   - Modules provide DAGs and pipeline scripts that are plugged into the running Cosiflow instance.
+   - To install a module into Cosiflow, follow the guide in `env/README.md`.
+
+If you only want to bring up a plain Cosiflow environment to explore Airflow and the COSIDAG framework, step 1 is sufficient.  
+If you want to run a specific scientific pipeline (e.g. the Fast Transient Analysis Pipeline), you must also complete step 2.
+
+---
+
 ### 1. REQUIREMENTS
 
 #### CONFIGURE ENVIRONMENT VARIABLES (NO `.env` FILE)
@@ -156,6 +175,8 @@ inside the `x-common-env` block (and related sections), with their purpose:
   ```bash
   docker compose logs -f airflow
   ```
+
+- For details on how to install and manage modules (pipelines) within Cosiflow, see `env/README.md`.
 
 ---
 
