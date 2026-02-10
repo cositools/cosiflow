@@ -5,10 +5,11 @@ import os
 
 class MailhogView(BaseView):
     default_view = "redirect_to_mailhog"
+    route_base = "/mailhog"
 
     @expose("/")
     def redirect_to_mailhog(self):
-        mail_server = os.environ.get('MAILHOG_WEBUI_URL', '"http://localhost:8025"')
+        mail_server = os.environ.get('MAILHOG_WEBUI_URL', 'http://localhost:8025')
         return redirect(mail_server)
 
 class MailhogViewPlugin(AirflowPlugin):

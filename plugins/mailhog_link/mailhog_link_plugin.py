@@ -5,7 +5,7 @@ import os
 mailhog_bp = Blueprint(
     "mailhog_bp",
     __name__,
-    url_prefix="/mailhog"
+    url_prefix=""
 )
 
 @mailhog_bp.route('/')
