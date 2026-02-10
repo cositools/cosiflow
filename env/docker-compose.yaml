@@ -142,7 +142,7 @@ services:
       - ../modules:/home/gamma/airflow/modules
 
       # Mount the PostgreSQL-specific Airflow configuration
-      - ./airflow.cfg.postgresql:/home/gamma/airflow/airflow.cfg
+      - ./airflow.cfg:/home/gamma/airflow/airflow.cfg
 
       # X11 socket for graphical display forwarding (if needed)
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
