@@ -1,4 +1,75 @@
-version: "3.9"
+# Docker Compose file version (obsolete in newer versions, but kept for compatibility)
+# version: "3.9"
+
+x-common-env: &common-env
+  #-------- BOOTSTRAP ID user for container (can be overridden via .env)
+  UID: ${UID:-501}                                                # TOEDIT: set the UID of the user in the container (default: 501)
+  GID: ${GID:-20}                                                 # TOEDIT: set the GID of the user in the container (default: 20)
+  DISPLAY: ${DISPLAY:-}
+  #-------- AIRFLOW Environment Variables
+  AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
+  AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@localhost}
+  # Write here the secure password for airflow Web UI
+  AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-cosipass}    # TOEDIT: set the password for the Airflow Web UI (default: cosipass)
+  #-------- Airflow home directory
+  AIRFLOW_HOME: /home/gamma/airflow
+  #-------- SMTP Settings for MailHog
+  # HOST_IP: Define once here, use everywhere. Can be overridden via .env file
+  # URLs are constructed dynamically in entrypoint-airflow.sh from HOST_IP and ports below
+  HOST_IP: ${HOST_IP:-localhost}                                 # TOEDIT: set the IP address of the host (default: localhost)
+  # Ports for services (can be overridden via .env)
+  MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}                # TOEDIT: set the port for the MailHog Web UI (default: 8025)
+  AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}                # TOEDIT: set the port for the Airflow Web UI (default: 8080)
+  # URLs will be constructed in entrypoint-airflow.sh as:
+  # MAILHOG_WEBUI_URL=http://${HOST_IP}:${MAILHOG_WEBUI_PORT}
+  # COSIFLOW_HOME_URL=http://${HOST_IP}:${AIRFLOW_WEBUI_PORT}/heasarcbrowser
+###################################
+###### POSTGRES CONFIGURATION ######
+###################################
+#-------- Username for Airflow DB
+  POSTGRES_USER: ${POSTGRES_USER:-airflow_user}         
+#-------- Database name for Airflow
+  POSTGRES_DB: ${POSTGRES_DB:-airflow_db}            
+#-------- Password for Airflow DB
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}  # Password for Airflow DB
+###################################
+###### MAILHOG CONFIGURATION ######
+###################################
+  #-------- AIRFLOW Alert Settings
+  ALERT_USERS_LIST_PATH: ${ALERT_USERS_LIST_PATH:-/home/gamma/env/alert_users.yaml}
+  #-------- SMTP Settings
+  ALERT_SMTP_SERVER: ${ALERT_SMTP_SERVER:-mailhog}
+  ALERT_EMAIL_SENDER: ${ALERT_EMAIL_SENDER:-donotreply@cosiflow.alert.errors.it}
+  ALERT_LOG_PATH: ${ALERT_LOG_PATH:-/home/gamma/workspace/log/data_pipeline.log}
+  #-------- SMTP Settings for Airflow
+  AIRFLOW__SMTP__SMTP_STARTTLS: ${AIRFLOW__SMTP__SMTP_STARTTLS:-False}
+  AIRFLOW__SMTP__SMTP_SSL: ${AIRFLOW__SMTP__SMTP_SSL:-False}
+########################################
+###### DOCKER PROXY CONFIGURATION ######
+########################################
+  #-------- Docker Socket Proxy
+  # Note: These are used in docker-proxy service. Defaults are applied inline.
+  DOCKER_PROXY_PORT: ${DOCKER_PROXY_PORT:-2375}
+  DOCKER_HOST: tcp://docker-proxy:${DOCKER_PROXY_PORT:-2375}
+  DOCKER_CONTAINERS: ${DOCKER_CONTAINERS:-1}  # Allow listing/starting containers
+  DOCKER_IMAGES: ${DOCKER_IMAGES:-1}      # Allow image pulling
+  DOCKER_POST: ${DOCKER_POST:-1}        # Allow POST requests (create/start/stop)
+  DOCKER_NETWORKS: ${DOCKER_NETWORKS:-1}    # Allow network operations
+  DOCKER_VOLUMES: ${DOCKER_VOLUMES:-1}    # Allow volume operations
+######################################
+###### COSI Directory Structure ######
+######################################
+  #-------- Base directories
+  COSI_DATA_DIR: ${COSI_DATA_DIR:-/home/gamma/workspace/data}
+  COSI_INPUT_DIR: ${COSI_INPUT_DIR:-/home/gamma/workspace/data/input}
+  COSI_LOG_DIR: ${COSI_LOG_DIR:-/home/gamma/workspace/log}
+  #-------- Main data type directories
+  COSI_OBS_DIR: ${COSI_OBS_DIR:-/home/gamma/workspace/data/obs}
+  COSI_TRANSIENT_DIR: ${COSI_TRANSIENT_DIR:-/home/gamma/workspace/data/transient}
+  COSI_TRIGGER_DIR: ${COSI_TRIGGER_DIR:-/home/gamma/workspace/data/trigger}
+  COSI_MAPS_DIR: ${COSI_MAPS_DIR:-/home/gamma/workspace/data/maps}
+  COSI_SOURCE_DIR: ${COSI_SOURCE_DIR:-/home/gamma/workspace/data/source}
+
 
 services:
   # ---------------------------------------------------------------------------
@@ -14,11 +85,12 @@ services:
     environment:
       # These values initialize the PostgreSQL database cluster.
       # The first initialization only happens if the data volume is empty.
-      - UID=${UID}
-      - GID=${GID}
-      - POSTGRES_USER=airflow_user         # Username for Airflow DB
-      - POSTGRES_DB=airflow_db             # Database name for Airflow
-      - POSTGRES_PASSWORD=secure_password  # Password for Airflow DB
+      # Values come from x-common-env anchor (with defaults if .env not present)
+      - UID=${UID:-501}
+      - GID=${GID:-20}
+      - POSTGRES_USER=${POSTGRES_USER:-airflow_user}
+      - POSTGRES_DB=${POSTGRES_DB:-airflow_db}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secure_password}
 
     # Health check to verify that PostgreSQL is accepting connections
     healthcheck:
@@ -50,26 +122,9 @@ services:
     user: "gamma"
 
     environment:
-      # User and group IDs passed to match host permissions (optional)
-      - UID=${UID}
-      - GID=${GID}
-
-      # Airflow configuration
-      - AIRFLOW_HOME=/home/gamma/airflow
-      # [Docker Proxy] Configure Airflow to use the sidecar proxy instead of local socket
-      - DOCKER_HOST=tcp://docker-proxy:2375
-      
-      - DISPLAY=${DISPLAY}  # Needed if you run GUI apps (e.g., plots)
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False  # Disable default example DAGs
-
-      # Mail alert system (MailHog)
-      - ALERT_SMTP_SERVER=mailhog
-      - ALERT_SMTP_PORT=1025
-      - ALERT_EMAIL_SENDER=donotreply@cosiflow.alert.errors.it
-
-    # Extra environment variables loaded from .env file in this directory
-    env_file:
-      - .env
+      <<: *common-env
+      # DISPLAY is included in common-env, but explicitly listed here for clarity
+      # All variables from x-common-env are inherited via the anchor
 
     volumes:
       # DAGs, plugins, and pipeline directories are mounted so you can edit
@@ -81,7 +136,6 @@ services:
       - ../../:/home/gamma/airflow/modules_pool
       
       # [Docker] Socket mount removed -> We use TCP proxy now.
-
       - ../plugins:/home/gamma/airflow/plugins
       - ../pipeline:/home/gamma/airflow/pipeline
       - ../callbacks:/home/gamma/airflow/callbacks
@@ -125,13 +179,18 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro # Read-only mount for security!
     environment:
-      - CONTAINERS=1 # Allow listing/starting containers
-      - IMAGES=1     # Allow image pulling
-      - POST=1       # Allow POST requests (create/start/stop)
-      - NETWORKS=1   # Allow network operations
-      - VOLUMES=1    # Allow volume operations
+      # Use values from x-common-env anchor with defaults
+      - CONTAINERS=${DOCKER_CONTAINERS:-1} # Allow listing/starting containers
+      - IMAGES=${DOCKER_IMAGES:-1}     # Allow image pulling
+      - POST=${DOCKER_POST:-1}       # Allow POST requests (create/start/stop)
+      - NETWORKS=${DOCKER_NETWORKS:-1}   # Allow network operations
+      - VOLUMES=${DOCKER_VOLUMES:-1}    # Allow volume operations
     ports:
-      - "127.0.0.1:2375:2375" # Expose only to localhost just in case, but internal net is key
+      # Expose Docker proxy port (default: 2375)
+      # Note: Using hardcoded port 2375 for compatibility. 
+      # The proxy always listens on port 2375 inside the container.
+      # To change the host port, set DOCKER_PROXY_PORT env var and update this mapping.
+      - "127.0.0.1:2375:2375" # Expose only to localhost for security
     # No 'user' set, it runs as root internally to access the socket, but acts as a proxy.
 
   # ---------------------------------------------------------------------------
@@ -143,7 +202,7 @@ services:
     container_name: cosi_mailhog
     ports:
       - "1025:1025"   # SMTP port for Airflow alerts
-      - "8025:8025"   # Web UI → http://localhost:8025
+      - "8025:8025"   # Web UI → http://localhost:8025 (or use HOST_IP from .env)
 
 # ---------------------------------------------------------------------------
 # NAMED VOLUMES (Optional - not used directly since host paths are mounted)

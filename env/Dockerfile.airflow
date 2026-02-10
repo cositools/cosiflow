@@ -51,7 +51,6 @@ RUN mkdir -p /home/gamma/env
 COPY environment.yml /home/gamma/env/
 COPY requirements.txt /home/gamma/env/
 COPY alert_users.yaml /home/gamma/env/
-COPY .env /home/gamma/env/
 COPY entrypoint-airflow.sh /home/gamma/entrypoint-airflow.sh
 
 # Fix ownership

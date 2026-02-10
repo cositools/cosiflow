@@ -3,33 +3,6 @@
 
 cd /home/gamma
 
-ENV_FILE="/home/gamma/env/.env"
-
-if [ ! -f "$ENV_FILE" ]; then
-  echo "❌ Missing .env file at $ENV_FILE"
-  echo "👉 Please create the file with the following structure:"
-  echo ""
-  echo "AIRFLOW_ADMIN_USERNAME=admin"
-  echo "AIRFLOW_ADMIN_EMAIL=admin@localhost"
-  echo "AIRFLOW_ADMIN_PASSWORD=yourpassword"
-  echo ""
-  echo "ALERT_SMTP_SERVER=mailhog"
-  echo "ALERT_SMTP_PORT=1025"
-  echo "ALERT_EMAIL_SENDER=donotreply@cosiflow.alert.errors.it"
-  exit 1
-fi
-
-# Load environment variables
-set -o allexport
-source "$ENV_FILE"
-set +o allexport
-
-# Check required variables
-if [ -z "${AIRFLOW_ADMIN_USERNAME:-}" ] || [ -z "${AIRFLOW_ADMIN_EMAIL:-}" ] || [ -z "${AIRFLOW_ADMIN_PASSWORD:-}" ]; then
-  echo "❌ Missing one or more required environment variables in $ENV_FILE"
-  exit 1
-fi
-
 # Export SMTP settings for Airflow if present
 if [ -n "${ALERT_SMTP_SERVER:-}" ]; then
   export AIRFLOW__SMTP__SMTP_HOST="$ALERT_SMTP_SERVER"
@@ -45,6 +18,20 @@ fi
 
 # Always use this email backend
 export AIRFLOW__EMAIL__EMAIL_BACKEND=airflow.utils.email.send_email_smtp
+
+# Construct URLs from HOST_IP and ports (defined once in docker-compose.yaml)
+# This allows changing HOST_IP in one place and having all URLs update automatically
+HOST_IP="${HOST_IP:-localhost}"
+MAILHOG_WEBUI_PORT="${MAILHOG_WEBUI_PORT:-8025}"
+AIRFLOW_WEBUI_PORT="${AIRFLOW_WEBUI_PORT:-8080}"
+
+# Build URLs dynamically
+export MAILHOG_WEBUI_URL="http://${HOST_IP}:${MAILHOG_WEBUI_PORT}"
+export COSIFLOW_HOME_URL="http://${HOST_IP}:${AIRFLOW_WEBUI_PORT}/heasarcbrowser"
+
+echo "🌐 URLs configured:"
+echo "   MAILHOG_WEBUI_URL=${MAILHOG_WEBUI_URL}"
+echo "   COSIFLOW_HOME_URL=${COSIFLOW_HOME_URL}"
 
 # Export COSI directory structure environment variables if present
 if [ -n "${COSI_DATA_DIR:-}" ]; then

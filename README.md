@@ -6,44 +6,40 @@ Cosiflow provides an Airflow-based orchestration environment for managing and mo
 
 ### 1. REQUIREMENTS
 
-#### PREPARE THE ENVIRONMENT FILE
+#### CONFIGURE ENVIRONMENT VARIABLES (NO `.env` FILE)
 
-1. Copy and rename the `.env.example` file as `.env`:
+All configuration is now done directly in `env/docker-compose.yaml` (there is **no** `.env` file anymore).
+
+1. Move into the `env` folder:
    ```bash
    cd env
-   cp .env.example .env
    ```
 
-2. Open the `.env` file and set a secure password for Airflow:
-   ```bash
-   AIRFLOW_ADMIN_PASSWORD=<YOUR_AIRFLOW_PASSWORD>
-   ```
-
-3. Manually bootstrap user and group IDs for the container:
+2. Find your local user and group IDs:
 
    ```bash
-   id -u
-   # Copy the output as YOUR_USER_ID
-
-   id -g
-   # Copy the output as YOUR_GROUP_ID
+   id -u   # YOUR_USER_ID
+   id -g   # YOUR_GROUP_ID
    ```
 
-4. Open `.env` and modify the following environment variables:
+3. Open `docker-compose.yaml` and locate the `x-common-env` block at the top.  
+   Replace the default values with your IDs:
 
-   ```bash
-   UID=<YOUR_USER_ID>
-   GID=<YOUR_GROUP_ID>
+   ```yaml
+   UID: ${UID:-<YOUR_USER_ID>}  # TOEDIT
+   GID: ${GID:-<YOUR_GROUP_ID>} # TOEDIT
    ```
 
-#### PREPARE THE DOCKERFILE
+4. In the same `x-common-env` block, set a secure password for the Airflow Web UI:
 
-Open the `Dockerfile.airflow` file and paste the same values:
+   ```yaml
+   AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-<YOUR_AIRFLOW_PASSWORD>}  # TOEDIT
+   ```
 
-```dockerfile
-ARG UID=<YOUR_USER_ID>
-ARG GID=<YOUR_GROUP_ID>
-```
+5. (Optional, but recommended to review)  
+   Still in `x-common-env`, check the variables marked with `# TOEDIT` comments  
+   (e.g. `HOST_IP`, `MAILHOG_WEBUI_PORT`, `AIRFLOW_WEBUI_PORT`) and adjust them
+   if the defaults are not suitable for your setup.
 
 #### PREPARE THE FOLDER FOR STORING POSTGRESS DATA
 ```bash
@@ -118,24 +114,29 @@ docker compose down -v
 
 ### 7. CONFIGURATIONS
 
-Below is the list of environment variables defined in `.env` with their purpose:
+Below is the list of the main environment variables configured in `env/docker-compose.yaml`
+inside the `x-common-env` block (and related sections), with their purpose:
 
 | Variable | Description |
 |-----------|--------------|
-| **UID** | User ID for container bootstrap |
-| **GID** | Group ID for container bootstrap |
+| **UID** | User ID used inside containers (must match your local user) |
+| **GID** | Group ID used inside containers (must match your local group) |
 | **DISPLAY** | Display variable for X11 forwarding (optional) |
 | **AIRFLOW_ADMIN_USERNAME** | Default Airflow Web UI username |
 | **AIRFLOW_ADMIN_EMAIL** | Email associated with Airflow admin user |
-| **AIRFLOW_ADMIN_PASSWORD** | Secure password for Airflow Web UI |
+| **AIRFLOW_ADMIN_PASSWORD** | Secure password for Airflow Web UI (must be set by you) |
+| **HOST_IP** | Host IP used to construct service URLs (e.g. Web UIs) |
+| **MAILHOG_WEBUI_PORT** | Port for the MailHog Web UI |
+| **AIRFLOW_WEBUI_PORT** | Port for the Airflow Web UI |
+| **POSTGRES_USER** | Username for the Airflow PostgreSQL database |
+| **POSTGRES_DB** | Database name for the Airflow PostgreSQL database |
+| **POSTGRES_PASSWORD** | Password for the Airflow PostgreSQL database |
 | **ALERT_USERS_LIST_PATH** | Path to YAML file containing user alert configurations |
 | **ALERT_SMTP_SERVER** | SMTP server used for alert notifications |
-| **ALERT_SMTP_PORT** | Port of the SMTP server |
 | **ALERT_EMAIL_SENDER** | Email address used as sender for system alerts |
 | **ALERT_LOG_PATH** | Path to Airflow log file monitored by alert system |
 | **AIRFLOW__SMTP__SMTP_STARTTLS** | Enables/disables STARTTLS (default: False) |
 | **AIRFLOW__SMTP__SMTP_SSL** | Enables/disables SMTP over SSL (default: False) |
-| **MAILHOG_WEBUI_URL** | URL for MailHog web interface (for testing alerts) |
 | **COSI_DATA_DIR** | Root directory for COSI data |
 | **COSI_INPUT_DIR** | Directory for COSI input data |
 | **COSI_LOG_DIR** | Directory for COSI log files |
@@ -149,8 +150,8 @@ Below is the list of environment variables defined in `.env` with their purpose:
 
 ### NOTES
 
-- Make sure `.env` and `docker-compose.yml` are located in the same directory.
-- Do **not** commit your personal `.env` file to version control.
+- Configuration is done directly in `env/docker-compose.yaml`; there is no `.env` file.
+- Variables that are important to customize are explicitly marked with `# TOEDIT` comments in `docker-compose.yaml`.
 - To inspect container logs, use:
   ```bash
   docker compose logs -f airflow
