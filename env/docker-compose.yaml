@@ -3,13 +3,11 @@
 
 # Build arguments for Dockerfile (UID and GID)
 x-build-args: &build-args
-  UID: ${UID:-}
-  GID: ${GID:-}
+  UID: ${UID:-}                                                # TOEDIT: set the UID of the user in the container (default: 501)
+  GID: ${GID:-}                                                # TOEDIT: set the GID of the user in the container (default: 20)
 
 x-common-env: &common-env
   #-------- BOOTSTRAP ID user for container (can be overridden via .env)
-  #UID: ${UID:-12050}                                                # TOEDIT: set the UID of the user in the container (default: 501)
-  #GID: ${GID:-10000}                                                 # TOEDIT: set the GID of the user in the container (default: 20)
   DISPLAY: ${DISPLAY:-}
   #-------- AIRFLOW Environment Variables
   AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
