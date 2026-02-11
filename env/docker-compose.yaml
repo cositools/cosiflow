@@ -1,10 +1,15 @@
 # Docker Compose file version (obsolete in newer versions, but kept for compatibility)
 # version: "3.9"
 
+# Build arguments for Dockerfile (UID and GID)
+x-build-args: &build-args
+  UID: ${UID:-}
+  GID: ${GID:-}
+
 x-common-env: &common-env
   #-------- BOOTSTRAP ID user for container (can be overridden via .env)
-  UID: ${UID:-}                                                # TOEDIT: set the UID of the user in the container (default: 501)
-  GID: ${GID:-}                                                 # TOEDIT: set the GID of the user in the container (default: 20)
+  #UID: ${UID:-12050}                                                # TOEDIT: set the UID of the user in the container (default: 501)
+  #GID: ${GID:-10000}                                                 # TOEDIT: set the GID of the user in the container (default: 20)
   DISPLAY: ${DISPLAY:-}
   #-------- AIRFLOW Environment Variables
   AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
@@ -16,7 +21,7 @@ x-common-env: &common-env
   #-------- SMTP Settings for MailHog
   # HOST_IP: Define once here, use everywhere. Can be overridden via .env file
   # URLs are constructed dynamically in entrypoint-airflow.sh from HOST_IP and ports below
-  HOST_IP: ${HOST_IP:-localhost}                                 # TOEDIT: set the IP address of the host (default: localhost)
+  HOST_IP: ${HOST_IP:-merlin.iasfbo.inaf.it}                                 # TOEDIT: set the IP address of the host (default: localhost)
   # Ports for services (can be overridden via .env)
   MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}                # TOEDIT: set the port for the MailHog Web UI (default: 8025)
   AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}                # TOEDIT: set the port for the Airflow Web UI (default: 8080)
@@ -115,6 +120,8 @@ services:
     build:
       context: .                    # Build context for Dockerfile
       dockerfile: Dockerfile.airflow
+      args:
+        <<: *build-args             # Use UID and GID from x-build-args anchor
     container_name: cosi_airflow
 
     # Run the container as the "gamma" user created inside the image.
