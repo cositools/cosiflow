@@ -11,6 +11,7 @@
 #   -r  path to requirements.txt file (default: env/requirements.txt, legacy mode)
 #   -E  comma-separated list of environments to create from module_envs.yaml (e.g., env1,env2 or "all")
 #   -a  create Python environment AND build Docker image (equivalent to -e with Docker build)
+#   -c  path to config file (default: auto-detect in module)
 
 CONTAINER_USER="gamma"
 CONTAINER_NAME="cosi_airflow"
@@ -29,6 +30,7 @@ BUILD_DOCKER=false
 PATH_REQUIREMENTS="env/requirements.txt"
 VENV_PATH="/home/gamma/envs/cosipy"
 ENV_SELECTION=""  # Empty = use YAML enabled, "all" = all, or comma-separated list
+CONFIG_FILE=""    # Optional path to config file (overrides auto-detect when set)
 
 # Helper to run docker exec as airflow user
 dexec() {
@@ -166,17 +168,22 @@ find_yaml_config() {
 }
 
 # Function to load configuration from YAML file
+# Usage: load_yaml_config <module_path> [config_file_path]
+# If config_file_path is given, it is used; otherwise config is auto-detected in module.
 load_yaml_config() {
     local module_path="$1"
     local yaml_file
     
-    # Find YAML config file
-    local found_yaml=$(find_yaml_config "$module_path")
-    if [ $? -ne 0 ] || [ -z "$found_yaml" ]; then
-        return 1
+    if [ -n "$2" ] && [ -f "$2" ]; then
+        yaml_file="$2"
+    else
+        # Find YAML config file
+        local found_yaml=$(find_yaml_config "$module_path")
+        if [ $? -ne 0 ] || [ -z "$found_yaml" ]; then
+            return 1
+        fi
+        yaml_file="$found_yaml"
     fi
-    
-    local yaml_file="$found_yaml"
     
     # Load install_mode
     local install_mode=$(parse_yaml_config "$yaml_file" "install_mode")
@@ -237,9 +244,9 @@ if [ -d "$MODULE_PATH" ]; then
     load_yaml_config "$MODULE_PATH"
 fi
 
-# Parse options -d, -p, -f, -e, -r, -a, -E
+# Parse options -d, -p, -f, -e, -r, -a, -E, -c
 # CLI options override YAML configuration
-while getopts "d:p:f:er:aE:" opt; do
+while getopts "d:p:f:er:aE:c:" opt; do
     case $opt in
         d) PATH_DAGS="$OPTARG" ;;
         p) PATH_PIPELINE="$OPTARG" ;;
@@ -248,15 +255,16 @@ while getopts "d:p:f:er:aE:" opt; do
         r) PATH_REQUIREMENTS="$OPTARG" ;;
         a) CREATE_ENV=true; BUILD_DOCKER=true ;;
         E) CREATE_ENV=true; ENV_SELECTION="$OPTARG" ;;
+        c) CONFIG_FILE="$OPTARG" ;;
         :) echo "Option -$OPTARG requires an argument." >&2; exit 1 ;;
-        *) echo "Usage: $0 <module_name> [install|remove|update] -d [dags] -p [pipeline] -f [images] -e [-r requirements.txt] -E [env1,env2|all] -a" >&2; exit 1 ;;
+        *) echo "Usage: $0 <module_name> [install|remove|update] -d [dags] -p [pipeline] -f [images] -e [-r requirements.txt] -E [env1,env2|all] -a [-c config.yaml]" >&2; exit 1 ;;
     esac
 done
 
 if [ -z "$MODULE_NAME" ]; then
-    echo "Usage: $0 <module_name> [install|remove|update] -d [dags] -p [pipeline] -f [images] -e [-r requirements.txt] -E [env1,env2|all] -a"
+    echo "Usage: $0 <module_name> [install|remove|update] -d [dags] -p [pipeline] -f [images] -e [-r requirements.txt] -E [env1,env2|all] -a [-c config.yaml]"
     echo ""
-    echo "Options (paths relative to module root):"
+    echo "Options (paths relative to module root unless absolute):"
     echo "  -d  path to DAGs directory (default: src/dags)"
     echo "  -p  path to pipeline directory (default: src/pipeline)"
     echo "  -f  path to Docker context directory (default: env)"
@@ -265,6 +273,7 @@ if [ -z "$MODULE_NAME" ]; then
     echo "  -E  comma-separated list of environments from module_envs.yaml (e.g., env1,env2) or 'all'"
     echo "      If -E is used, module_envs.yaml will be read from module root"
     echo "  -a  create Python environment AND build Docker image (equivalent to -e with Docker build)"
+    echo "  -c  path to config file (default: auto-detect in module)"
     echo ""
     echo "Examples:"
     echo "  # Legacy mode: single environment"
@@ -278,7 +287,20 @@ if [ -z "$MODULE_NAME" ]; then
     echo ""
     echo "  # Multi-environment mode: install all environments"
     echo "  $0 mymodule install -E all"
+    echo ""
+    echo "  # Use a specific config file (e.g. tutorial config under docs/)"
+    echo "  $0 mymodule install -c docs/tutorials/bgo-loc/cosiflow/env/bgoloc.config.yaml"
     exit 1
+fi
+
+# If -c was used: resolve to absolute path and reload config from that file
+if [ -n "$CONFIG_FILE" ]; then
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "❌ Config file not found: $CONFIG_FILE" >&2
+        exit 1
+    fi
+    CONFIG_FILE="$(cd "$(dirname "$CONFIG_FILE")" && pwd)/$(basename "$CONFIG_FILE")"
+    load_yaml_config "$MODULE_PATH" "$CONFIG_FILE"
 fi
 
 # Helper to run docker exec as airflow user
@@ -291,7 +313,7 @@ dexec() {
 parse_yaml_envs() {
     local yaml_file="$1"
     local env_name="$2"
-    local field="$3"  # requirements, venv_path, enabled, description
+    local field="$3"  # requirements, venv_path, enabled, description, python_version
     
     if [ ! -f "$yaml_file" ]; then
         return 1
@@ -388,6 +410,28 @@ parse_yaml_envs() {
                             return 0
                         fi
                         ;;
+                    python_version)
+                        if [[ "$line" =~ ^[[:space:]]+python_version:[[:space:]]*[\"']?([0-9.]+)[\"']? ]]; then
+                            echo "${BASH_REMATCH[1]}"
+                            return 0
+                        elif [[ "$line" =~ ^[[:space:]]+python_version:[[:space:]]+(.+) ]]; then
+                            local val="${BASH_REMATCH[1]}"
+                            val=$(echo "$val" | sed "s/^[\"']//;s/[\"']$//")
+                            echo "$val"
+                            return 0
+                        fi
+                        ;;
+                    requirements_no_deps)
+                        if [[ "$line" =~ ^[[:space:]]+requirements_no_deps:[[:space:]]*[\"'](.+)[\"'] ]]; then
+                            echo "${BASH_REMATCH[1]}"
+                            return 0
+                        elif [[ "$line" =~ ^[[:space:]]+requirements_no_deps:[[:space:]]+(.+) ]]; then
+                            local val="${BASH_REMATCH[1]}"
+                            val=$(echo "$val" | sed "s/^[\"']//;s/[\"']$//")
+                            echo "$val"
+                            return 0
+                        fi
+                        ;;
                 esac
             fi
         fi
@@ -446,19 +490,35 @@ list_yaml_envs() {
 }
 
 # Function to create a single Python virtual environment
+# Optional 4th argument: python_version (e.g. 3.11) to use python3.11 -m venv; if empty, uses python3
+# Optional 5th argument: requirements_no_deps file path; if set, installed after main requirements with pip --no-deps
 create_single_env() {
     local env_name="$1"
     local requirements_file="$2"
     local venv_path="$3"
+    local python_version="${4:-}"
+    local requirements_no_deps_file="${5:-}"
+    
+    # Choose Python interpreter: python3.11, python3.10, etc., or default python3
+    local python_bin="python3"
+    if [ -n "$python_version" ]; then
+        # Normalize: "3.11" -> python3.11; already "python3.11" -> use as-is
+        if [[ "$python_version" =~ ^python ]]; then
+            python_bin="$python_version"
+        else
+            python_bin="python${python_version}"
+        fi
+        echo "   🐍 Using Python: $python_bin"
+    fi
     
     echo "   📦 Creating environment '$env_name' at $venv_path..."
     
     # Create venv
-    dexec python3 -m venv "$venv_path" 2>/dev/null || {
+    dexec $python_bin -m venv "$venv_path" 2>/dev/null || {
         # If venv already exists, remove it first
         echo "   ⚠️  Virtual environment already exists, removing old one..."
         dexec rm -rf "$venv_path"
-        dexec python3 -m venv "$venv_path"
+        dexec $python_bin -m venv "$venv_path"
     }
     
     if [ $? -ne 0 ]; then
@@ -484,12 +544,23 @@ create_single_env() {
     
     local install_status=$?
     
-    # Cleanup
+    # Cleanup main requirements
     dexec rm -f "$temp_req"
     
     if [ $install_status -ne 0 ]; then
         echo "   ❌ Failed to install packages for '$env_name'."
         return 1
+    fi
+    
+    # Optional: install extra requirements with --no-deps (e.g. to avoid dependency conflicts)
+    if [ -n "$requirements_no_deps_file" ] && [ -f "$requirements_no_deps_file" ]; then
+        local temp_nodeps="/tmp/requirements_${env_name}_nodeps.txt"
+        echo "   📋 Installing extra packages (--no-deps)..."
+        docker cp "$requirements_no_deps_file" "$CONTAINER_NAME:$temp_nodeps"
+        if [ $? -eq 0 ]; then
+            dexec bash -c ". $venv_path/bin/activate && pip install --no-cache-dir --no-deps -r $temp_nodeps"
+            dexec rm -f "$temp_nodeps"
+        fi
     fi
     
     # Create activation helper script for this environment
@@ -519,7 +590,11 @@ if [ "$ACTION" == "remove" ]; then
     echo "Removing module '$MODULE_NAME'..."
     
     MODULE_PATH="$WORKSPACE_ROOT/$MODULE_NAME"
-    YAML_CONFIG=$(find_yaml_config "$MODULE_PATH")
+    if [ -n "$CONFIG_FILE" ]; then
+        YAML_CONFIG="$CONFIG_FILE"
+    else
+        YAML_CONFIG=$(find_yaml_config "$MODULE_PATH")
+    fi
     
     # Load config to know what to remove
     remove_envs=false
@@ -621,8 +696,12 @@ fi
 # ==============================================================================
 if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
     
-    # Find YAML config file
-    YAML_CONFIG=$(find_yaml_config "$MODULE_PATH")
+    # Find YAML config file (or use -c path)
+    if [ -n "$CONFIG_FILE" ]; then
+        YAML_CONFIG="$CONFIG_FILE"
+    else
+        YAML_CONFIG=$(find_yaml_config "$MODULE_PATH")
+    fi
     
     if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ]; then
         echo "📄 Configuration loaded from: $(basename "$YAML_CONFIG")"
@@ -760,6 +839,8 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                     local venv_path_yaml=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "venv_path")
                     local enabled=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "enabled")
                     local description=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "description")
+                    local python_version=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "python_version")
+                    local req_no_deps=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements_no_deps")
                     
                     if [ -z "$req_path" ]; then
                         echo "   ⚠️  Environment '$env_name' not found in YAML or missing requirements."
@@ -772,6 +853,16 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                         REQUIREMENTS_FILE="$req_path"
                     else
                         REQUIREMENTS_FILE="$MODULE_PATH/$req_path"
+                    fi
+                    
+                    # Resolve requirements_no_deps path (optional)
+                    local REQUIREMENTS_NODEPS_FILE=""
+                    if [ -n "$req_no_deps" ]; then
+                        if [ "${req_no_deps:0:1}" = "/" ]; then
+                            REQUIREMENTS_NODEPS_FILE="$req_no_deps"
+                        else
+                            REQUIREMENTS_NODEPS_FILE="$MODULE_PATH/$req_no_deps"
+                        fi
                     fi
                     
                     # Use venv_path from YAML or default
@@ -791,7 +882,7 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                     fi
                     
                     # Create the environment
-                    if create_single_env "$env_name" "$REQUIREMENTS_FILE" "$final_venv_path"; then
+                    if create_single_env "$env_name" "$REQUIREMENTS_FILE" "$final_venv_path" "$python_version" "$REQUIREMENTS_NODEPS_FILE"; then
                         ((success_count++))
                     else
                         ((fail_count++))
@@ -842,11 +933,22 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                     req_path=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements")
                     venv_path_yaml=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "venv_path")
                     description=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "description")
+                    python_version=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "python_version")
+                    req_no_deps=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements_no_deps")
                     
                     if [ "${req_path:0:1}" = "/" ]; then
                         REQUIREMENTS_FILE="$req_path"
                     else
                         REQUIREMENTS_FILE="$MODULE_PATH/$req_path"
+                    fi
+                    
+                    REQUIREMENTS_NODEPS_FILE=""
+                    if [ -n "$req_no_deps" ]; then
+                        if [ "${req_no_deps:0:1}" = "/" ]; then
+                            REQUIREMENTS_NODEPS_FILE="$req_no_deps"
+                        else
+                            REQUIREMENTS_NODEPS_FILE="$MODULE_PATH/$req_no_deps"
+                        fi
                     fi
                     
                     final_venv_path="${venv_path_yaml:-/home/gamma/envs/$env_name}"
@@ -861,7 +963,7 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                         continue
                     fi
                     
-                    if create_single_env "$env_name" "$REQUIREMENTS_FILE" "$final_venv_path"; then
+                    if create_single_env "$env_name" "$REQUIREMENTS_FILE" "$final_venv_path" "$python_version" "$REQUIREMENTS_NODEPS_FILE"; then
                         ((success_count++))
                     else
                         ((fail_count++))
