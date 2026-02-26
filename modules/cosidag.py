@@ -550,6 +550,23 @@ class COSIDAG(DAG):
                         return max(paths, key=lambda p: os.stat(p).st_mtime)
                     return sorted(paths)[0]
 
+                def _can_open_file(file_path: str) -> bool:
+                    """Try to open the file in read mode. Returns True if successful, False otherwise."""
+                    if not os.path.exists(file_path):
+                        return False
+                    try:
+                        # Try to open the file in read mode
+                        # This will fail if the file is still being written or locked by another process
+                        with open(file_path, 'rb') as f:
+                            # Try to read at least one byte to ensure file is readable
+                            f.read(1)
+                        return True
+                    except (IOError, OSError, PermissionError, FileNotFoundError) as e:
+                        print(f"[resolve_inputs] Cannot open file {file_path}: {e}")
+                        return False
+
+                # First pass: find all required files
+                found_files = {}
                 for key, pattern in file_patterns.items():
                     matches = sorted(glob.glob(os.path.join(run_dir, "**", pattern), recursive=True))
                     chosen = pick_one(matches)
@@ -557,8 +574,61 @@ class COSIDAG(DAG):
                         raise AirflowFailException(
                             f"[resolve_inputs] no file for key={key!r} pattern={pattern!r} under {run_dir}"
                         )
-                    ti.xcom_push(key=key, value=chosen)
-                    print(f"[resolve_inputs] {key} = {chosen}")
+                    found_files[key] = chosen
+                    print(f"[resolve_inputs] Found {key} = {chosen}")
+
+                # Second pass: wait for all files to be completely written (can be opened)
+                print(f"[resolve_inputs] Waiting for all {len(found_files)} files to be completely written...")
+                retry_interval = 120  # Wait 2 minutes between retries
+                max_wait_seconds = 1800  # Maximum 30 minutes total wait
+                start_time = time.time()
+                attempt = 0
+                
+                while (time.time() - start_time) < max_wait_seconds:
+                    attempt += 1
+                    all_ready = True
+                    unready_files = []
+                    ready_files = []
+                    
+                    # Check each file individually
+                    for key, file_path in found_files.items():
+                        print(f"[resolve_inputs] Checking file {key}: {file_path}")
+                        if _can_open_file(file_path):
+                            ready_files.append(key)
+                            print(f"[resolve_inputs] ✓ File {key} is ready and can be opened")
+                        else:
+                            all_ready = False
+                            unready_files.append(key)
+                            print(f"[resolve_inputs] ✗ File {key} is still being written or locked")
+                    
+                    if all_ready:
+                        print(f"[resolve_inputs] All {len(found_files)} files are ready and can be opened (attempt {attempt})")
+                        break
+                    
+                    elapsed = time.time() - start_time
+                    print(f"[resolve_inputs] Attempt {attempt}: {len(ready_files)}/{len(found_files)} files ready. "
+                          f"Still waiting for: {unready_files}. "
+                          f"Elapsed: {elapsed:.1f}s. Retrying in {retry_interval}s...")
+                    time.sleep(retry_interval)
+                else:
+                    # Timeout reached - check each file one more time to report final status
+                    print(f"[resolve_inputs] Timeout reached. Checking final status of all files...")
+                    still_unready = []
+                    for key, file_path in found_files.items():
+                        if not _can_open_file(file_path):
+                            still_unready.append(key)
+                            print(f"[resolve_inputs] ✗ File {key} ({file_path}) still cannot be opened")
+                    
+                    if still_unready:
+                        raise AirflowFailException(
+                            f"[resolve_inputs] Timeout ({max_wait_seconds}s) waiting for files to be ready. "
+                            f"Files still cannot be opened: {still_unready}"
+                        )
+
+                # All files are ready, push to XCom
+                for key, file_path in found_files.items():
+                    ti.xcom_push(key=key, value=file_path)
+                    print(f"[resolve_inputs] {key} = {file_path} (ready)")
 
                 # Also republish run_dir for convenience.
                 ti.xcom_push(key="run_dir", value=run_dir)
