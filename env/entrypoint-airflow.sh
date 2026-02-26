@@ -3,15 +3,6 @@
 
 cd /home/gamma
 
-# Export SMTP settings for Airflow if present
-if [ -n "${ALERT_SMTP_SERVER:-}" ]; then
-  export AIRFLOW__SMTP__SMTP_HOST="$ALERT_SMTP_SERVER"
-fi
-
-if [ -n "${ALERT_SMTP_PORT:-}" ]; then
-  export AIRFLOW__SMTP__SMTP_PORT="$ALERT_SMTP_PORT"
-fi
-
 if [ -n "${ALERT_EMAIL_SENDER:-}" ]; then
   export AIRFLOW__SMTP__SMTP_MAIL_FROM="$ALERT_EMAIL_SENDER"
 fi
