@@ -6,26 +6,28 @@
 FROM oraclelinux:8 AS oracle8
 
 # ------------------------------ Base dependencies ------------------------------
-# Install core system packages, Python 3.9, and dev libraries
 RUN set -eux; \
-    dnf module enable -y python39; \
-    dnf install -y \
-      python39 python39-devel python39-pip \
-      wget curl ca-certificates gnupg2 tar bzip2 xz unzip which rsync \
-      git cmake3 gcc-c++ gcc make binutils \
-      compat-openssl10 openssl-devel \
-      libX11-devel libXpm-devel libXft-devel libXext-devel \
-      gsl-devel bzip2-devel libffi-devel xz-devel sqlite-devel \
-      ncurses ncurses-devel xz libzstd libzstd-devel \
-      nmap-ncat chrony; \
-    dnf install -y oracle-epel-release-el8; \
-    dnf config-manager --enable ol8_codeready_builder; \
-    dnf install -y hdf5 hdf5-devel libpq-devel; \
-    dnf clean all; rm -rf /var/cache/dnf/*
+  dnf install -y oracle-epel-release-el8; \
+  dnf config-manager --enable ol8_codeready_builder; \
+  # Abilitiamo il modulo 3.9 (standard per OL8)
+  dnf module enable -y python39; \
+  # Installiamo sia il 3.9 che il 3.11
+  dnf install -y \
+    python39 python39-devel python39-pip \
+    python3.11 python3.11-devel python3.11-pip \
+    wget curl ca-certificates gnupg2 tar bzip2 xz unzip which rsync \
+    git cmake3 gcc-c++ gcc make binutils \
+    compat-openssl10 openssl-devel \
+    libX11-devel libXpm-devel libXft-devel libXext-devel \
+    gsl-devel bzip2-devel libffi-devel xz-devel sqlite-devel \
+    ncurses ncurses-devel xz libzstd libzstd-devel \
+    nmap-ncat chrony \
+    hdf5 hdf5-devel libpq-devel; \
+  dnf clean all; rm -rf /var/cache/dnf/*
 
 # Set python3.9 as default python
-RUN alternatives --set python3 /usr/bin/python3.9 && \
-    ln -sf /usr/bin/python3.9 /usr/bin/python
+RUN alternatives --set python3 /usr/bin/python3.11 && \
+    ln -sf /usr/bin/python3.11 /usr/bin/python
 
 # ------------------------------ Non-root user ------------------------------
 # UID and GID are passed from docker-compose.yaml build args
