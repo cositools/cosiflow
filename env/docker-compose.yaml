@@ -16,13 +16,14 @@ x-common-env: &common-env
   AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-}    # TOEDIT: set the password for the Airflow Web UI (default: cosipass)
   #-------- Airflow home directory
   AIRFLOW_HOME: /home/gamma/airflow
+  # Base workspace path on the *Docker daemon host* (used by DockerOperator bind mounts).
+  # Auto default: run `docker compose` from `cosiflow/env` so ${PWD}/../.. resolves to workspace root.
+  HOST_WORKSPACE_PATH: ${HOST_WORKSPACE_PATH:-${PWD}/../..}
   #-------- SMTP Settings for MailHog
-  # HOST_IP: Define once here, use everywhere. Can be overridden via .env file
-  # URLs are constructed dynamically in entrypoint-airflow.sh from HOST_IP and ports below
-  HOST_IP: ${HOST_IP:-merlin.iasfbo.inaf.it}                                 # TOEDIT: set the IP address of the host (default: localhost)
-  # Ports for services (can be overridden via .env)
-  MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}                # TOEDIT: set the port for the MailHog Web UI (default: 8025)
-  AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}                # TOEDIT: set the port for the Airflow Web UI (default: 8080)
+  # HOST_IP: Define once here, use everywhere
+  HOST_IP: ${HOST_IP:-merlin.iasfbo.inaf.it}                      # TOEDIT: set the IP address of the host (default: localhost)
+  MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}                 # TOEDIT: set the port for the MailHog Web UI (default: 8025)
+  AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}                 # TOEDIT: set the port for the Airflow Web UI (default: 8080)
   # URLs will be constructed in entrypoint-airflow.sh as:
   # MAILHOG_WEBUI_URL=http://${HOST_IP}:${MAILHOG_WEBUI_PORT}
   # COSIFLOW_HOME_URL=http://${HOST_IP}:${AIRFLOW_WEBUI_PORT}/heasarcbrowser
@@ -39,14 +40,11 @@ x-common-env: &common-env
 ###### MAILHOG CONFIGURATION ######
 ###################################
   #-------- AIRFLOW Alert Settings
-  ALERT_USERS_LIST_PATH: ${ALERT_USERS_LIST_PATH:-/home/gamma/env/alert_users.yaml}
-  #-------- SMTP Settings
-  ALERT_SMTP_SERVER: ${ALERT_SMTP_SERVER:-mailhog}
-  ALERT_EMAIL_SENDER: ${ALERT_EMAIL_SENDER:-donotreply@cosiflow.alert.errors.it}
-  ALERT_LOG_PATH: ${ALERT_LOG_PATH:-/home/gamma/workspace/log/data_pipeline.log}
-  #-------- SMTP Settings for Airflow
-  AIRFLOW__SMTP__SMTP_STARTTLS: ${AIRFLOW__SMTP__SMTP_STARTTLS:-False}
-  AIRFLOW__SMTP__SMTP_SSL: ${AIRFLOW__SMTP__SMTP_SSL:-False}
+  AIRFLOW__SMTP__SMTP_HOST: mailhog
+  AIRFLOW__SMTP__SMTP_PORT: 1025
+  AIRFLOW__SMTP__SMTP_MAIL_FROM: donotreply@cosiflow.alert.errors.it
+  AIRFLOW__SMTP__SMTP_STARTTLS: "False"
+  AIRFLOW__SMTP__SMTP_SSL: "False"
 ########################################
 ###### DOCKER PROXY CONFIGURATION ######
 ########################################
@@ -89,8 +87,8 @@ services:
       # These values initialize the PostgreSQL database cluster.
       # The first initialization only happens if the data volume is empty.
       # Values come from x-common-env anchor (with defaults if .env not present)
-      - UID=${UID:-501}
-      - GID=${GID:-20}
+      #- UID=${UID:-501}
+      #- GID=${GID:-20}
       - POSTGRES_USER=${POSTGRES_USER:-airflow_user}
       - POSTGRES_DB=${POSTGRES_DB:-airflow_db}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secure_password}
@@ -132,6 +130,8 @@ services:
       # All variables from x-common-env are inherited via the anchor
 
     volumes:
+      # Environment variables directory
+      - ../../envs:/home/gamma/envs
       # DAGs, plugins, and pipeline directories are mounted so you can edit
       # them live without rebuilding the image.
       - ../dags:/home/gamma/airflow/dags
@@ -166,6 +166,9 @@ services:
       postgres:
         # Wait until the Postgres healthcheck passes before starting Airflow
         condition: service_healthy
+      mailhog:
+        # Wait until the Mailhog service is started before starting Airflow
+        condition: service_started
 
     # restart: always   # Uncomment if you want automatic restarts
 
