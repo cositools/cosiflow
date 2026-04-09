@@ -3,8 +3,8 @@
 
 # Build arguments for Dockerfile (UID and GID)
 x-build-args: &build-args
-  UID: ${UID:-501}                                                # TOEDIT: set the UID of the user in the container (default: 501)
-  GID: ${GID:-20}                                                # TOEDIT: set the GID of the user in the container (default: 20)
+  UID: ${UID:-}                                                # TOEDIT: set the UID of the user in the container (default: 501)
+  GID: ${GID:-}                                                # TOEDIT: set the GID of the user in the container (default: 20)
 
 x-common-env: &common-env
   #-------- BOOTSTRAP ID user for container (can be overridden via .env)
@@ -13,7 +13,7 @@ x-common-env: &common-env
   AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
   AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@localhost}
   # Write here the secure password for airflow Web UI
-  AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-cosipass}    # TOEDIT: set the password for the Airflow Web UI (default: cosipass)
+  AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-}      # TOEDIT: set the password for the Airflow Web UI (default: cosipass)
   #-------- Airflow home directory
   AIRFLOW_HOME: /home/gamma/airflow
   # Base workspace path on the *Docker daemon host* (used by DockerOperator bind mounts).
