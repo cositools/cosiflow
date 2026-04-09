@@ -32,8 +32,8 @@ RUN alternatives --set python3 /usr/bin/python3.11 && \
 # ------------------------------ Non-root user ------------------------------
 # UID and GID are passed from docker-compose.yaml build args
 # Defaults match docker-compose.yaml defaults for consistency
-ARG UID=
-ARG GID=
+ARG UID=501
+ARG GID=20
 RUN set -eux; \
     if getent group "${GID}" >/dev/null; then \
       GN="$(getent group "${GID}" | cut -d: -f1)"; \
