@@ -39,7 +39,7 @@ class ResetCosidagView(BaseView):
                     try:
                         # Reset variable to empty list
                         Variable.set(variable_key, [], serialize_json=True)
-                        flash(f"Successfully reset processed folders for {dag_id}. Variable {variable_key} set to [].", "success")
+                        flash(f"Successfully reset processed paths for {dag_id}. Variable {variable_key} set to [].", "success")
                     except Exception as e:
                         flash(f"Error resetting variable: {str(e)}", "error")
                 else:
@@ -67,7 +67,45 @@ class ResetCosidagView(BaseView):
             except json.JSONDecodeError:
                 val = []
             
-            return jsonify({"folders": val})
+            return jsonify({"folders": val, "paths": val})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @expose("/delete_processed_paths/<dag_id>", methods=['POST'])
+    @login_required
+    def delete_processed_paths(self, dag_id):
+        try:
+            payload = request.get_json(silent=True) or {}
+            selected_paths = payload.get("paths")
+            if selected_paths is None:
+                selected_paths = request.form.getlist("paths")
+
+            if not isinstance(selected_paths, list):
+                return jsonify({"error": "Invalid paths payload."}), 400
+
+            selected_set = {str(path) for path in selected_paths}
+            if not selected_set:
+                return jsonify({"error": "No processed paths selected."}), 400
+
+            variable_key = f"COSIDAG_PROCESSED::{dag_id}"
+            val_str = Variable.get(variable_key, default_var="[]")
+            try:
+                current_paths = json.loads(val_str)
+                if not isinstance(current_paths, list):
+                    current_paths = []
+            except json.JSONDecodeError:
+                current_paths = []
+
+            remaining_paths = [path for path in current_paths if str(path) not in selected_set]
+            removed_count = len(current_paths) - len(remaining_paths)
+            Variable.set(variable_key, remaining_paths, serialize_json=True)
+
+            return jsonify({
+                "success": True,
+                "removed_count": removed_count,
+                "paths": remaining_paths,
+                "folders": remaining_paths,
+            })
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
