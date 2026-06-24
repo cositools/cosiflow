@@ -4,13 +4,14 @@ A high-level reactive DAG template for filesystem-driven scientific workflows
 
 ## Overview
 
-`COSIDAG` is a convenience subclass of Airflow’s `DAG` designed to simplify the creation of **file-driven scientific pipelines**.
+`COSIDAG` is a convenience subclass of Airflow’s `DAG` designed to simplify the creation of reactive scientific pipelines.
 It encapsulates a standard five-step workflow pattern:
 
 1. **check_new_file**
-   Monitors one or more folders, searching for new subdirectories.
-   Handles date filtering, basename filtering, depth traversal, and stability checks.
-   Pushes the detected folder path into XCom and tracks processed folders via Airflow Variables.
+   Monitors one or more folders using a configurable monitoring policy.
+   In `folder-driven` mode it searches for new subdirectories; in `file-driven` mode it searches for new direct child files.
+   Handles date filtering, basename filtering, and stability checks.
+   Pushes the detected path into XCom and tracks processed paths via Airflow Variables.
 
 2. **automatic_retrig**
    Immediately triggers a new run of the same DAG, so the sensor keeps watching for fresh data.
@@ -34,7 +35,7 @@ This structure removes 80–90% of the boilerplate typically involved in writing
 
 CosiDAG solves common problems in scientific workflows:
 
-* **Dynamic file discovery** — your pipeline reacts automatically to new folders dropped on disk.
+* **Dynamic data discovery** — your pipeline reacts automatically to new folders or files dropped on disk.
 * **No hard-coded filenames** — files are resolved automatically using regex patterns.
 * **Unified behavior** — TSMap, Light Curve, and other pipelines share the same structure.
 * **Clean separation of infrastructure vs science code** — COSIDAG handles monitoring, deduplication, and XCom logic; the user only implements the scientific tasks.
@@ -82,6 +83,7 @@ with COSIDAG(
     select_policy="latest_mtime",
     only_basename="products",
     prefer_deepest=True,
+    policy="folder-driven",
     idle_seconds=5,
     build_custom=build_custom,
     tags=["example"],
@@ -95,9 +97,20 @@ with COSIDAG(
 
 CosiDAG uses **XCom** to pass runtime-discovered paths to the user-defined tasks.
 
-* `check_new_file` pushes the detected folder:
+* `check_new_file` always pushes the detected path:
 
   ```
+  key="detected_path"
+  ```
+* In `folder-driven` mode, it also pushes the detected folder:
+
+  ```
+  key="detected_folder"
+  ```
+* In `file-driven` mode, it also pushes the detected file and its parent folder:
+
+  ```
+  key="detected_file"
   key="detected_folder"
   ```
 * `resolve_inputs` pushes files matched by regex patterns, using the corresponding keys:
@@ -110,6 +123,7 @@ User tasks retrieve them via:
 
 ```python
 "{{ ti.xcom_pull('check_new_file', key='detected_folder') }}"
+"{{ ti.xcom_pull('check_new_file', key='detected_file') }}"
 "{{ ti.xcom_pull('resolve_inputs', key='response_file') }}"
 ```
 
@@ -133,12 +147,70 @@ This allows pipelines to be fully dynamic and independent of hard-coded paths.
 | `home_env_var`                | str                         | ENV var containing the UI base URL.                          |
 | `file_patterns`               | dict[str, str]              | Mapping XCom key → regex pattern for auto file resolution.   |
 | `select_policy`               | `"latest_mtime"`, `"first"` | Strategy for resolving multiple matches.                     |
+| `policy`                      | `"folder-driven"`, `"file-driven"` | Monitoring policy used by `check_new_file`.        |
 | `default_args_extra`          | dict                        | Additional default args for tasks.                           |
 | `tags`                        | list[str]                   | Airflow UI tags.                                             |
 | `auto_retrig`                 | bool                        | Enables real-time monitoring.                                |
+| `max_retrig_runs`             | int / blank                 | Optional automatic retrigger limit; leave blank for no limit.|
 | `processed_variable`          | str                         | Name of the Airflow Variable storing processed paths.        |
 | `builder_fn` / `build_custom` | callable                    | Function that attaches user-defined tasks.                   |
-| `xcom_detected_key`           | str                         | XCom key for detected folder path.                           |
+| `xcom_detected_key`           | str                         | XCom key for detected path.                                  |
+
+---
+
+## Monitoring Policies
+
+`check_new_file` supports two monitoring policies.
+
+### `folder-driven` (default)
+
+This is the historical COSIDAG behavior.
+
+1. The DAG monitors each configured `monitoring_folders` root.
+2. It scans child directories up to `level`.
+3. It applies optional filters such as `date`, `date_queries`, `only_basename`, `prefer_deepest`, `ready_marker`, `min_files`, and `idle_seconds`.
+4. When a stable, unprocessed directory is found, the sensor advances the DAG.
+5. The directory path is stored in `COSIDAG_PROCESSED::<dag_id>`.
+
+The sensor publishes:
+
+```text
+detected_path   = /path/to/folder
+detected_folder = /path/to/folder
+```
+
+### `file-driven`
+
+Use this mode when the workflow should trigger on files placed directly under the monitored folder.
+
+1. The DAG monitors each configured `monitoring_folders` root.
+2. It scans only direct child files (`level=1` behavior).
+3. It applies optional date and basename filters.
+4. When a stable, unprocessed file is found, the sensor advances the DAG.
+5. The file path is stored in `COSIDAG_PROCESSED::<dag_id>`.
+
+The sensor publishes:
+
+```text
+detected_path   = /path/to/file.fits
+detected_file   = /path/to/file.fits
+detected_folder = /path/to
+```
+
+Example:
+
+```python
+with COSIDAG(
+    dag_id="example_file_driven_cosidag",
+    schedule_interval=None,
+    start_date=datetime(2025, 1, 1),
+    monitoring_folders=["/data/incoming"],
+    policy="file-driven",
+    idle_seconds=20,
+    build_custom=build_custom,
+):
+    pass
+```
 
 ---
 
@@ -166,17 +238,19 @@ Every run will process a different dataset with identical logic.
 
 ---
 
-## Processed Folder Tracking (Airflow Variable)
+## Processed Path Tracking (Airflow Variable)
 
-Every CosiDAG keeps track of previously processed folders using an Airflow Variable named:
+Every CosiDAG keeps track of previously processed paths using an Airflow Variable named:
 
 ```
 COSIDAG_PROCESSED::<dag_id>
 ```
 
-This prevents the pipeline from reprocessing the same folder unless explicitly requested.
+This prevents the pipeline from reprocessing the same folder or file unless explicitly requested.
+In `folder-driven` mode the value is a JSON list of directory paths.
+In `file-driven` mode the value is a JSON list of file paths.
 
-### Viewing the stored folders
+### Viewing the stored paths
 
 From the CLI:
 
@@ -196,7 +270,8 @@ airflow variables set COSIDAG_PROCESSED::<dag_id> "[]"
 airflow variables delete COSIDAG_PROCESSED::<dag_id>
 ```
 
-These commands allow you to “reset” the monitoring history at any time.
+The Airflow UI also exposes **Develop tools → Reset Cosidag**, where you can clear the whole variable or select individual paths and delete only those entries.
+These commands allow you to reset the monitoring history at any time.
 
 ---
 
@@ -215,10 +290,10 @@ or by exposing it as a configurable parameter and turning it off in the Airflow 
 When retriggering is disabled:
 
 * The DAG will **not** restart automatically
-* You can manually rerun the pipeline on a folder that was already processed
+* You can manually rerun the pipeline on a path that was already processed
 * This is useful for **re-analysis**, debugging, or running multiple configurations on the same dataset
 
-Disabling retriggering + clearing the processed-variable list lets you fully reprocess any folder without modifying the DAG code.
+Disabling retriggering + clearing the processed-variable list lets you fully reprocess any path without modifying the DAG code.
 
 ---
 
@@ -264,6 +339,6 @@ Examples include:
 
 * CosiDAG pipelines are reusable and configurable directly from the Airflow UI
 * No need to modify the DAG script to process new datasets
-* Processed folders are stored in `COSIDAG_PROCESSED::<dag_id>`
+* Processed paths are stored in `COSIDAG_PROCESSED::<dag_id>`
 * CLI commands allow viewing, clearing, or deleting this history
-* The automatic retrigger step can be disabled to purposely re-run old folders
+* The automatic retrigger step can be disabled to purposely re-run old paths

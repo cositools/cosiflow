@@ -15,11 +15,12 @@ Notes
 * Requires Airflow 2.x.
 * Environment: define COSIFLOW_HOME_URL (in your .env) to point to the web UI homepage.
 * State: a Variable named f"COSIDAG_PROCESSED::{dag_id}" is used to track processed
-  folder paths across runs, to avoid reprocessing the same folder.
-  * To clear the processed folder paths, delete the Variable, with the command:
+  paths across runs. In folder-driven mode it stores folder paths; in file-driven
+  mode it stores file paths.
+  * To clear the processed paths, delete the Variable, with the command:
     airflow variables set COSIDAG_PROCESSED::{cosidag_id} []
 * Date queries: use date_queries (e.g. '>=2025-11-01' or ['>=2025-11-01','<=2025-11-05']).
-* Only basename: if only_basename is provided, it only accepts subfolders with the given basename.
+* Only basename: if only_basename is provided, it only accepts candidate paths with the given basename.
 * Prefer deepest: if prefer_deepest is True, it prefers the deepest subfolder.
 * File patterns: if file_patterns is provided, it searches for files matching the given patterns
   using glob recursion and selects according to select_policy.
@@ -37,6 +38,7 @@ from typing import Callable, Iterable, Optional, Sequence
 
 from airflow import DAG
 from airflow.models import Variable
+from airflow.models.param import Param
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 from airflow.sensors.python import PythonSensor
@@ -111,6 +113,11 @@ def cfg_bool(key: str, default: bool = False) -> bool:
     return str(v).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
 
+def _param(default, description: str) -> Param:
+    """Create an Airflow Param with a UI-facing description."""
+    return Param(default, description=description)
+
+
 # ----- Helper functions (MUST stay at module top-level) --------------------------
 
 
@@ -141,6 +148,17 @@ def _is_dir_stable(path: str, idle_seconds: int, min_files: int) -> bool:
     return (time.time() - latest) >= idle_seconds
 
 
+def _is_file_stable(path: str, idle_seconds: int) -> bool:
+    """True if file exists and its last write is older than idle_seconds."""
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return False
+    if not os.path.isfile(path):
+        return False
+    return (time.time() - st.st_mtime) >= idle_seconds
+
+
 def _normalize_folders(monitoring_folders: Iterable[str]) -> Sequence[str]:
     """Return absolute existing directories; ignore non-existing."""
     if isinstance(monitoring_folders, (str, os.PathLike)):
@@ -165,6 +183,20 @@ def _iter_subfolders(root: str, max_depth: int) -> Iterable[str]:
             continue
         if current_depth >= 1:
             yield current_root
+
+
+def _iter_direct_files(root: str) -> Iterable[str]:
+    """Yield regular files directly under root."""
+    try:
+        with os.scandir(root) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_file():
+                        yield entry.path
+                except FileNotFoundError:
+                    continue
+    except FileNotFoundError:
+        return
 
 
 def _date_filter_ok(path: str, date_queries) -> bool:
@@ -274,6 +306,76 @@ def _find_new_folder(
     return None
 
 
+def _find_new_file(
+    monitoring_folders: Iterable[str],
+    dag_id: str,
+    date_queries: Optional[str | list[str]] = None,
+    only_basename: Optional[str] = None,
+) -> Optional[str]:
+    """Return the first new direct child file across roots."""
+    print(
+        "[COSIDAG] _find_new_file: searching for new direct child files "
+        f"(dag_id={dag_id}, date_queries={date_queries}, only_basename={only_basename})"
+    )
+    roots = _normalize_folders(monitoring_folders)
+    if not roots:
+        print("[COSIDAG] _find_new_file: no valid monitoring folders found")
+        return None
+
+    print(f"[COSIDAG] _find_new_file: monitoring {len(roots)} root folder(s): {', '.join(roots)}")
+    processed = _load_processed_set(dag_id)
+    print(f"[COSIDAG] _find_new_file: loaded {len(processed)} already processed file(s)")
+
+    candidates: list[str] = []
+    for root in sorted(roots):
+        files = sorted(_iter_direct_files(root))
+        print(f"[COSIDAG] _find_new_file: found {len(files)} direct file(s) in {root}")
+        for file_path in files:
+            if only_basename and os.path.basename(file_path) != only_basename:
+                continue
+            if _date_filter_ok(file_path, date_queries):
+                candidates.append(file_path)
+
+    if not candidates:
+        print("[COSIDAG] _find_new_file: no candidates found after filtering")
+        return None
+
+    print(f"[COSIDAG] _find_new_file: {len(candidates)} candidate file(s) after filtering")
+    for path in sorted(candidates):
+        if path not in processed:
+            print(f"[COSIDAG] _find_new_file: found new file: {path}")
+            return path
+
+    print(f"[COSIDAG] _find_new_file: all {len(candidates)} candidate(s) already processed")
+    return None
+
+
+def _normalize_monitoring_policy(policy: Optional[str]) -> str:
+    """Normalize and validate the COSIDAG monitoring policy."""
+    normalized = str(policy or "folder-driven").strip().lower()
+    if normalized not in {"folder-driven", "file-driven"}:
+        raise ValueError(
+            f"Unsupported COSIDAG monitoring policy {policy!r}. "
+            "Expected 'folder-driven' or 'file-driven'."
+        )
+    return normalized
+
+
+def _normalize_optional_int(value, field_name: str) -> Optional[int]:
+    """Return None for unset/blank values, otherwise parse a non-negative int."""
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip() == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be blank or an integer, got {value!r}") from exc
+    if parsed < 0:
+        raise ValueError(f"{field_name} must be blank or a non-negative integer, got {value!r}")
+    return parsed
+
+
 
 class ConditionalTriggerDagRunOperator(TriggerDagRunOperator):
     """
@@ -283,7 +385,7 @@ class ConditionalTriggerDagRunOperator(TriggerDagRunOperator):
 
     def __init__(self, max_retrig_runs=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.max_retrig_runs = max_retrig_runs
+        self.max_retrig_runs = _normalize_optional_int(max_retrig_runs, "max_retrig_runs")
 
     def execute(self, context):
         dag_run = context.get("dag_run")
@@ -300,13 +402,18 @@ class ConditionalTriggerDagRunOperator(TriggerDagRunOperator):
                 print(f"[COSIDAG] Skipping automatic_retrig (dag_run.conf['auto_retrig']={val})")
                 return None
 
-        # Check run counter limit (before increment, which happens in the template)
-        if self.max_retrig_runs is not None:
+        # Check run counter limit (before increment, which happens in the template).
+        # Empty strings from the Trigger UI mean "no limit".
+        max_retrig_runs = _normalize_optional_int(
+            conf.get("max_retrig_runs", self.max_retrig_runs),
+            "max_retrig_runs",
+        )
+        if max_retrig_runs is not None:
             run_count = conf.get("retrig_run_count", 0)
             run_count = int(run_count) if isinstance(run_count, (int, str)) else 0
             
-            if run_count >= self.max_retrig_runs:
-                print(f"[COSIDAG] Skipping automatic_retrig (reached max_retrig_runs={self.max_retrig_runs}, current_count={run_count})")
+            if run_count >= max_retrig_runs:
+                print(f"[COSIDAG] Skipping automatic_retrig (reached max_retrig_runs={max_retrig_runs}, current_count={run_count})")
                 return None
 
         return super().execute(context)
@@ -342,6 +449,7 @@ class COSIDAG(DAG):
         prefer_deepest: bool = True,
         file_patterns: Optional[dict] = None,  # {"xcom_key": "glob_pattern", ...}
         select_policy: str = "first",  # "first" | "latest_mtime"
+        policy: str = "folder-driven",  # "folder-driven" | "file-driven"
         tags: Optional[list[str]] = None,
         default_args_extra: Optional[dict] = None,
         auto_retrig: bool = True,
@@ -359,6 +467,7 @@ class COSIDAG(DAG):
 
         # ensure that DAG receives the final default_args
         kwargs["default_args"] = base
+        policy = _normalize_monitoring_policy(policy)
 
         # --- merge tags ---
         existing_tags = list(kwargs.get("tags", []) or [])
@@ -371,37 +480,126 @@ class COSIDAG(DAG):
         # Decide whether monitoring is enabled (task existence, not just runtime behavior).
         self.has_monitoring = bool(monitoring_folders)
 
+        self.cosidag_defaults = {
+            "monitoring_folders": monitoring_folders,
+            "level": int(level),
+            "date": date,
+            "date_queries": date_queries,
+            "home_env_var": home_env_var,
+            "idle_seconds": int(idle_seconds),
+            "min_files": int(min_files),
+            "ready_marker": ready_marker,
+            "only_basename": only_basename,
+            "prefer_deepest": bool(prefer_deepest),
+            "file_patterns": file_patterns,
+            "select_policy": select_policy,
+            "policy": policy,
+            "max_active_runs": int(kwargs.get("max_active_runs", 2)),
+            "max_active_tasks": int(kwargs.get("max_active_tasks", 8)),
+            "concurrency": int(kwargs.get("concurrency", 8)),
+            "auto_retrig": bool(auto_retrig),
+            "max_retrig_runs": _normalize_optional_int(max_retrig_runs, "max_retrig_runs"),
+        }
+
         # Base params (can be overridden by dag_run.conf at runtime)
         self.params.update(
             {
-                "monitoring_folders": monitoring_folders,
-                "level": int(level),
-                "date": date,
-                "date_queries": date_queries,
-                "home_env_var": home_env_var,
-                "idle_seconds": int(idle_seconds),
-                "min_files": int(min_files),
-                "ready_marker": ready_marker,
-                "only_basename": only_basename,
-                "prefer_deepest": bool(prefer_deepest),
-                "file_patterns": file_patterns,
-                "select_policy": select_policy,
-                "max_active_runs": int(kwargs.get("max_active_runs", 2)),
-                "max_active_tasks": int(kwargs.get("max_active_tasks", 8)),
-                "concurrency": int(kwargs.get("concurrency", 8)),
-                "auto_retrig": bool(auto_retrig),
-                "max_retrig_runs": max_retrig_runs,
+                "monitoring_folders": _param(
+                    self.cosidag_defaults["monitoring_folders"],
+                    "List of root folders watched by the COSIDAG sensor. "
+                    "In folder-driven mode the sensor scans child directories; "
+                    "in file-driven mode it scans direct child files.",
+                ),
+                "level": _param(
+                    self.cosidag_defaults["level"],
+                    "Maximum child directory depth to scan in folder-driven mode. "
+                    "A value of 1 means direct child folders only. File-driven mode always uses direct child files.",
+                ),
+                "date": _param(
+                    self.cosidag_defaults["date"],
+                    "Optional exact date filter. When provided, it is treated as a date_queries value like '==YYYYMMDD'.",
+                ),
+                "date_queries": _param(
+                    self.cosidag_defaults["date_queries"],
+                    "Optional date filter expression or list of expressions, such as '>=2026-01-01' "
+                    "or ['>=2026-01-01', '<=2026-01-31']. The sensor applies these to candidate path names or mtimes.",
+                ),
+                "home_env_var": _param(
+                    self.cosidag_defaults["home_env_var"],
+                    "Environment variable that contains the COSIFLOW home URL used by show_results to build links.",
+                ),
+                "idle_seconds": _param(
+                    self.cosidag_defaults["idle_seconds"],
+                    "Minimum number of seconds since the last write before a candidate folder or file is considered stable.",
+                ),
+                "min_files": _param(
+                    self.cosidag_defaults["min_files"],
+                    "Minimum number of files required inside a candidate folder in folder-driven mode. "
+                    "Ignored by file-driven mode.",
+                ),
+                "ready_marker": _param(
+                    self.cosidag_defaults["ready_marker"],
+                    "Optional marker filename that must exist inside a candidate folder before it can be processed. "
+                    "Used only in folder-driven mode.",
+                ),
+                "only_basename": _param(
+                    self.cosidag_defaults["only_basename"],
+                    "Optional basename filter. If set, only candidate folders or files whose final path component "
+                    "matches this value are accepted.",
+                ),
+                "prefer_deepest": _param(
+                    self.cosidag_defaults["prefer_deepest"],
+                    "When folder-driven mode finds multiple candidate folders, prefer the deepest path first. "
+                    "Ignored by file-driven mode.",
+                ),
+                "file_patterns": _param(
+                    self.cosidag_defaults["file_patterns"],
+                    "Optional mapping of XCom keys to glob patterns used by resolve_inputs to find files "
+                    "inside the detected folder.",
+                ),
+                "select_policy": _param(
+                    self.cosidag_defaults["select_policy"],
+                    "Selection strategy used by resolve_inputs when a file pattern matches multiple files. "
+                    "Supported values are 'first' and 'latest_mtime'.",
+                ),
+                "policy": _param(
+                    self.cosidag_defaults["policy"],
+                    "Monitoring policy used by check_new_file. Use 'folder-driven' to process candidate folders "
+                    "or 'file-driven' to process direct child files.",
+                ),
+                "max_active_runs": _param(
+                    self.cosidag_defaults["max_active_runs"],
+                    "Maximum number of active runs allowed for this DAG.",
+                ),
+                "max_active_tasks": _param(
+                    self.cosidag_defaults["max_active_tasks"],
+                    "Maximum number of active tasks allowed for this DAG.",
+                ),
+                "concurrency": _param(
+                    self.cosidag_defaults["concurrency"],
+                    "Legacy Airflow concurrency limit for this DAG, kept for compatibility with older deployments.",
+                ),
+                "auto_retrig": _param(
+                    self.cosidag_defaults["auto_retrig"],
+                    "If true, the automatic_retrig task triggers a new run of the same DAG after a candidate is found. "
+                    "If false, automatic retriggering is skipped at runtime.",
+                ),
+                "max_retrig_runs": _param(
+                    "" if self.cosidag_defaults["max_retrig_runs"] is None else self.cosidag_defaults["max_retrig_runs"],
+                    "Optional safety limit for automatic retriggers. Leave this field empty for no limit.",
+                ),
             }
         )
 
         self.auto_retrig = bool(auto_retrig)
-        self.max_retrig_runs = max_retrig_runs
+        self.max_retrig_runs = self.cosidag_defaults["max_retrig_runs"]
 
         print(
             "[COSIDAG] enabled: "
             f"check_new_file={self.has_monitoring}, "
             f"automatic_retrig={self.auto_retrig}, "
-            f"resolve_inputs={bool(file_patterns)}"
+            f"resolve_inputs={bool(file_patterns)}, "
+            f"policy={policy}"
         )
 
         # ---------------------------------------------------------------------
@@ -410,50 +608,71 @@ class COSIDAG(DAG):
 
         def _sensor_poke(ti, **context):
             conf = (context.get("dag_run").conf or {}) if context.get("dag_run") else {}
-            monitoring = conf.get("monitoring_folders", self.params["monitoring_folders"])
-            level_val = int(conf.get("level", self.params["level"]))
+            defaults = self.cosidag_defaults
+            monitoring = conf.get("monitoring_folders", defaults["monitoring_folders"])
+            level_val = int(conf.get("level", defaults["level"]))
 
             # Date queries: runtime conf has precedence.
             conf_date_queries = conf.get("date_queries", None)
             if conf_date_queries is None:
                 # fallback: use the optional "date" as '==date'
-                conf_date = conf.get("date", self.params.get("date"))
+                conf_date = conf.get("date", defaults.get("date"))
                 if conf_date:
                     conf_date_queries = f"=={conf_date}"
                 else:
-                    conf_date_queries = self.params.get("date_queries")
+                    conf_date_queries = defaults.get("date_queries")
 
-            idle_s = int(conf.get("idle_seconds", self.params.get("idle_seconds", 20)))
-            min_f = int(conf.get("min_files", self.params.get("min_files", 1)))
-            marker = conf.get("ready_marker", self.params.get("ready_marker"))
-            only_bn = conf.get("only_basename", self.params.get("only_basename"))
-            prefer_deep = bool(conf.get("prefer_deepest", self.params.get("prefer_deepest", True)))
-
-            new_path = _find_new_folder(
-                monitoring_folders=monitoring,
-                level=level_val,
-                date_queries=conf_date_queries,
-                dag_id=self.dag_id,
-                only_basename=only_bn,
-                prefer_deepest=prefer_deep,
+            idle_s = int(conf.get("idle_seconds", defaults.get("idle_seconds", 20)))
+            min_f = int(conf.get("min_files", defaults.get("min_files", 1)))
+            marker = conf.get("ready_marker", defaults.get("ready_marker"))
+            only_bn = conf.get("only_basename", defaults.get("only_basename"))
+            prefer_deep = bool(conf.get("prefer_deepest", defaults.get("prefer_deepest", True)))
+            selected_policy = _normalize_monitoring_policy(
+                conf.get("monitoring_policy", conf.get("policy", defaults.get("policy", "folder-driven")))
             )
 
-            print(f"[COSIDAG] _sensor_poke: new_path={new_path}")
+            if selected_policy == "file-driven":
+                new_path = _find_new_file(
+                    monitoring_folders=monitoring,
+                    dag_id=self.dag_id,
+                    date_queries=conf_date_queries,
+                    only_basename=only_bn,
+                )
+            else:
+                new_path = _find_new_folder(
+                    monitoring_folders=monitoring,
+                    level=level_val,
+                    date_queries=conf_date_queries,
+                    dag_id=self.dag_id,
+                    only_basename=only_bn,
+                    prefer_deepest=prefer_deep,
+                )
+
+            print(f"[COSIDAG] _sensor_poke: policy={selected_policy}, new_path={new_path}")
             if not new_path:
                 return False
 
             print(f"[COSIDAG] _sensor_poke: marker={marker}")
-            if marker:
+            if marker and selected_policy == "folder-driven":
                 marker_path = os.path.join(new_path, marker)
                 if not os.path.exists(marker_path):
                     return False
 
             print(f"[COSIDAG] _sensor_poke: idle_seconds={idle_s}, min_files={min_f}")
-            if not _is_dir_stable(new_path, idle_seconds=idle_s, min_files=min_f):
+            if selected_policy == "file-driven":
+                if not _is_file_stable(new_path, idle_seconds=idle_s):
+                    return False
+            elif not _is_dir_stable(new_path, idle_seconds=idle_s, min_files=min_f):
                 return False
 
-            print("[COSIDAG] _sensor_poke: pushing detected_folder to XCom")
-            ti.xcom_push(key="detected_folder", value=new_path)
+            print("[COSIDAG] _sensor_poke: pushing detected path to XCom")
+            ti.xcom_push(key="detected_path", value=new_path)
+            ti.xcom_push(key="monitoring_policy", value=selected_policy)
+            if selected_policy == "file-driven":
+                ti.xcom_push(key="detected_file", value=new_path)
+                ti.xcom_push(key="detected_folder", value=os.path.dirname(new_path))
+            else:
+                ti.xcom_push(key="detected_folder", value=new_path)
             processed = _load_processed_set(self.dag_id)
             processed.add(new_path)
             _save_processed_set(self.dag_id, processed)
@@ -494,16 +713,12 @@ class COSIDAG(DAG):
                 "dag": self,
             }
 
-            # Propagate conf from previous run — must be valid JSON.
-            # Include logic to increment retrig_run_count if max_retrig_runs is set
-            if self.max_retrig_runs is not None:
-                trig_kwargs["conf"] = """{% set current_conf = dag_run.conf if dag_run and dag_run.conf else {} %}
+            # Propagate conf from previous run and increment the retrigger counter.
+            trig_kwargs["conf"] = """{% set current_conf = dag_run.conf if dag_run and dag_run.conf else {} %}
 {% set run_count = current_conf.get('retrig_run_count', 0) | int %}
 {% set new_conf = current_conf.copy() %}
 {% set _ = new_conf.update({'retrig_run_count': run_count + 1}) %}
 {{ new_conf | tojson }}"""
-            else:
-                trig_kwargs["conf"] = "{{ dag_run.conf | tojson if dag_run and dag_run.conf else '{}' }}"
 
             # Airflow version differences
             params = inspect.signature(TriggerDagRunOperator.__init__).parameters
@@ -682,28 +897,51 @@ class COSIDAG(DAG):
             conf = (dag_run.conf or {}) if dag_run else {}
 
             # -------------------------------------------------
-            # 1) Retrieve detected folder
+            # 1) Retrieve detected path
             # -------------------------------------------------
             detected = None
+            detected_file = None
+            policy_value = None
 
             if check_new_file is not None:
+                policy_value = ti.xcom_pull(
+                    task_ids="check_new_file",
+                    key="monitoring_policy"
+                )
+                detected = ti.xcom_pull(
+                    task_ids="check_new_file",
+                    key="detected_path"
+                )
+                detected_file = ti.xcom_pull(
+                    task_ids="check_new_file",
+                    key="detected_file"
+                )
+            if check_new_file is not None and not detected:
                 detected = ti.xcom_pull(
                     task_ids="check_new_file",
                     key="detected_folder"
                 )
-            else:
+            elif check_new_file is None:
                 detected = ti.xcom_pull(
                     key="detected_folder"
                 )
 
             # Allow manual runs
             if not detected:
-                detected = conf.get("detected_folder")
+                detected = conf.get("detected_path") or conf.get("detected_file") or conf.get("detected_folder")
+            if not detected_file:
+                detected_file = conf.get("detected_file") if conf else None
+            if not policy_value:
+                policy_value = conf.get(
+                    "monitoring_policy",
+                    conf.get("policy", self.cosidag_defaults.get("policy", "folder-driven")),
+                )
+            policy_value = _normalize_monitoring_policy(policy_value)
 
             if not detected:
                 print(
-                    "[COSIDAG] No detected folder available "
-                    "(monitoring disabled and no dag_run.conf['detected_folder'])"
+                    "[COSIDAG] No detected path available "
+                    "(monitoring disabled and no detected path in dag_run.conf)"
                 )
                 return None
 
@@ -711,21 +949,25 @@ class COSIDAG(DAG):
             # 2) Build deep-link URL (if possible)
             # -------------------------------------------------
             homepage = os.environ.get(
-                self.params.get("home_env_var", "COSIFLOW_HOME_URL")
+                self.cosidag_defaults.get("home_env_var", "COSIFLOW_HOME_URL")
             ) or os.environ.get("COSIFLOW_HOME_URL")
 
             url = None
             if homepage:
                 # ⚠️ Adapt this base path to your filesystem layout
                 DATA_ROOT = "/home/gamma/workspace/data"
-                rel = detected.replace(DATA_ROOT, "").lstrip("/")
+                link_path = os.path.dirname(detected) if policy_value == "file-driven" else detected
+                rel = link_path.replace(DATA_ROOT, "").lstrip("/")
                 url = f"{homepage.rstrip('/')}/folder/{rel}"
 
             # -------------------------------------------------
             # 3) Push structured result to XCom (canonical output)
             # -------------------------------------------------
             result = {
-                "folder": detected,
+                "path": detected,
+                "folder": os.path.dirname(detected) if policy_value == "file-driven" else detected,
+                "file": detected_file or (detected if policy_value == "file-driven" else None),
+                "policy": policy_value,
                 "url": url,
             }
 
@@ -739,7 +981,8 @@ class COSIDAG(DAG):
             # -------------------------------------------------
             print("=" * 80)
             print("📂 COSIDAG RESULT")
-            print(f"Folder: {detected}")
+            print(f"Policy: {policy_value}")
+            print(f"Path:   {detected}")
             if url:
                 print(f"URL:    {url}")
             else:
