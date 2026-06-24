@@ -277,7 +277,7 @@ These commands allow you to reset the monitoring history at any time.
 
 ## Disabling Automatic Retrigger
 
-By default, CosiDAG enables **automatic retriggering** (`automatic_retrig=True`), meaning the DAG keeps running in a loop to continuously watch for new folders.
+By default, CosiDAG enables **automatic retriggering** (`auto_retrig=True`), meaning the DAG keeps running in a loop to continuously watch for new folders.
 
 You can disable this behavior by setting:
 

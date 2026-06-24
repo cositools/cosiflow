@@ -202,7 +202,7 @@ In particular, a COSIDAG:
 
 COSIDAGs are used for all production scientific pipelines (e.g. Light Curve, TS Map), while standard DAGs are reserved for orchestration, testing, or utilities.
 
-**How to write and customize a COSIDAG** is explained in detail in the [tutorial section](modules/README.md).
+**How to write and customize a COSIDAG** is explained in detail in the [COSIDAG developer guide](modules/README.md).
 
 ---
 
@@ -218,7 +218,7 @@ A complete, step-by-step guide on how to:
 
 is available in:
 
-[tutorial section](tutorials/README.md).
+[COSIDAG developer guide](modules/README.md).
 
 This is the **recommended starting point for developers**.
 
@@ -226,14 +226,12 @@ This is the **recommended starting point for developers**.
 
 ## Available DAGs and COSIDAGs
 
-A complete and up-to-date list of all DAGs and COSIDAGs implemented in this repository — including:
+The core `cosiflow` repository provides the Airflow environment, the COSIDAG framework, callbacks, and UI plugins.
+It does **not** ship production scientific DAG Python files directly.
 
-* workflow purpose
-* inputs and outputs
-* task structure
-* operators used
-* XCom usage
+Scientific DAGs and COSIDAGs are supplied by modules installed alongside `cosiflow/`, for example:
 
-is documented in: [DAG and COSIDAG LIST README](dags/README.md)
+* `fast-transient-analysis-pipeline/src/dags/`
 
-This document serves as the **catalog and reference** for all workflows available in Cosiflow.
+The core repository reference is available in [dags/README.md](dags/README.md).
+Module-specific DAG catalogs should live in the module repository, next to the DAG files they describe.

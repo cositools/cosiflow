@@ -1,6 +1,6 @@
 # Creating and Managing Cosiflow Modules
 
-This guide explains how to create, install, and manage modules for Cosiflow, using the `fastpipeline` module as a reference example.
+This guide explains how to create, install, and manage modules for Cosiflow, using the `fast-transient-analysis-pipeline` module as a reference example.
 
 ---
 
@@ -54,18 +54,26 @@ your_module_name/
 │       └── *.py           # Your pipeline scripts
 ```
 
-### Example: Fastpipeline Module Structure
+### Example: Fast Transient Analysis Pipeline Module Structure
 
 ```
-fastpipeline/
+fast-transient-analysis-pipeline/
 ├── env/
 │   ├── Dockerfile
-│   └── requirements.txt
+│   ├── fta-pipe.config.yaml
+│   ├── requirements.txt
+│   └── requirements_nodeps.txt
 └── src/
     ├── dags/
     │   ├── cosipipe_simdata.py
-    │   ├── cosidag_lcurve.py
-    │   └── cosidag_tsmap.py
+    │   ├── cosidag_lcurve_extpy.py
+    │   ├── cosidag_lcurve_dock.py
+    │   ├── cosidag_tsmap_extpy.py
+    │   ├── cosidag_tsmap_dock.py
+    │   ├── cosidag_fast_localize_grb.py
+    │   ├── cosidag_fast_grb_timeseries.py
+    │   ├── cosidag_BGO.py
+    │   └── cosidag_GeD.py
     └── pipeline/
         ├── stage_files.py
         ├── bkg_cut.py
@@ -78,7 +86,7 @@ fastpipeline/
 
 To create a new module for Cosiflow:
 
-1. **Create the module directory** in the workspace root (same level as `cosiflow/` and `fastpipeline/`):
+1. **Create the module directory** in the workspace root (same level as `cosiflow/` and other modules such as `fast-transient-analysis-pipeline/`):
 
    ```bash
    mkdir -p your_module_name/src/dags
@@ -135,7 +143,7 @@ Paths are relative to the module root, unless they are absolute.
 ### Quick example (without configuration file)
 
 ```bash
-./hot_load_module.sh fastpipeline install
+./hot_load_module.sh fast-transient-analysis-pipeline install
 ```
 
 > **Note**: after installation, Airflow may take a few minutes to scan the DAGs and make them visible in the UI.
@@ -145,13 +153,13 @@ Paths are relative to the module root, unless they are absolute.
 ## Using Configuration Files
 
 To simplify and standardize module installation, you can define a **YAML configuration file**
-in the root of the module (same level as `src/` and `env/`).  
-The `hot_load_module.sh` script automatically detects it (e.g. `*.config.yaml` or `cosiflow.config.yaml`).
+in the root of the module (same level as `src/` and `env/`) or inside the module `env/` directory.
+The `hot_load_module.sh` script automatically detects common locations and names, including `cosiflow.config.yaml`, `*.config.yaml` in the module root, and `*.config.yaml` in `env/`.
 
-A concrete example is the `fta-pipe.config.yaml` file of the *Fast Transient Analysis Pipeline* module:
+A concrete example is the `env/fta-pipe.config.yaml` file of the *Fast Transient Analysis Pipeline* module:
 
 ```yaml
-install_mode: both
+install_mode: environment
 
 paths:
   dags: src/dags
@@ -161,9 +169,11 @@ paths:
 environments:
   cosipy:
     requirements: env/requirements.txt
+    requirements_no_deps: env/requirements_nodeps.txt
     venv_path: /home/gamma/envs/cosipy
     enabled: true
     description: "Stable cosipy environment"
+    python_version: "3.12"
 
 default_environment: cosipy
 ```
@@ -194,7 +204,7 @@ default_environment: cosipy
 
 ### How to use the configuration file
 
-If the configuration file is present in the module root, you can install the module with:
+If the configuration file is present in the module root or in the module `env/` directory, you can install the module with:
 
 ```bash
 cd cosiflow/env
@@ -202,7 +212,7 @@ cd cosiflow/env
 ```
 
 The script:
-- reads the configuration file (e.g. `fta-pipe.config.yaml`);
+- reads the configuration file (e.g. `env/fta-pipe.config.yaml`);
 - creates DAG/pipeline symlinks according to the configured paths;
 - creates Python environments with `enabled: true`;
 - builds the Docker image if requested by `install_mode`.
@@ -349,7 +359,7 @@ Each module should have a `Dockerfile` in its `env/` directory. This Docker imag
 
 ### Basic Structure
 
-Here's a template based on the `fastpipeline` module:
+Here's a template based on the `fast-transient-analysis-pipeline` module:
 
 ```dockerfile
 # =============================================================================
@@ -401,9 +411,9 @@ ENV PATH="/home/gamma/envs/your_env_name/bin:$PATH"
 CMD ["/bin/bash"]
 ```
 
-### Example: Fastpipeline Dockerfile
+### Example: Fast Transient Analysis Pipeline Dockerfile
 
-The `fastpipeline` module uses `python:3.10-slim` as its base image:
+The `fast-transient-analysis-pipeline` module uses a Python slim image as its base image:
 
 ```dockerfile
 FROM python:3.10-slim
@@ -454,7 +464,7 @@ Selecting an appropriate base image depends on your module's requirements:
 - **`python:3.10-slim`** or **`python:3.11-slim`**
   - Small image size (~50-100 MB)
   - Good for modules that only need Python and standard scientific libraries
-  - Example: `fastpipeline` module
+  - Example: `fast-transient-analysis-pipeline` module
 
 #### **For Modules Requiring System Libraries**
 - **`python:3.10`** or **`python:3.11`** (full Debian)
