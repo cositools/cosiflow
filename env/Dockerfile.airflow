@@ -15,6 +15,7 @@ RUN set -eux; \
   dnf install -y \
     python39 python39-devel python39-pip \
     python3.11 python3.11-devel python3.11-pip \
+    python3.12 python3.12-devel python3.12-pip \
     wget curl ca-certificates gnupg2 tar bzip2 xz unzip which rsync \
     git cmake3 gcc-c++ gcc make binutils \
     compat-openssl10 openssl-devel \
