@@ -21,7 +21,7 @@ x-common-env: &common-env
   HOST_WORKSPACE_PATH: ${HOST_WORKSPACE_PATH:-${PWD}/../..}
   #-------- SMTP Settings for MailHog
   # HOST_IP: Define once here, use everywhere
-  HOST_IP: ${HOST_IP:-merlin.iasfbo.inaf.it}                      # TOEDIT: set the IP address of the host (default: localhost)
+  HOST_IP: ${HOST_IP:-localhost}                      # TOEDIT: set the IP address of the host (default: localhost)
   MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}                 # TOEDIT: set the port for the MailHog Web UI (default: 8025)
   AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}                 # TOEDIT: set the port for the Airflow Web UI (default: 8080)
   # URLs will be constructed in entrypoint-airflow.sh as:
@@ -67,7 +67,7 @@ x-common-env: &common-env
   #-------- Main data type directories
   COSI_OBS_DIR: ${COSI_OBS_DIR:-/home/gamma/workspace/data/obs}
   COSI_TRANSIENT_DIR: ${COSI_TRANSIENT_DIR:-/home/gamma/workspace/data/transient}
-  COSI_TRIGGER_DIR: ${COSI_TRIGGER_DIR:-/home/gamma/workspace/data/trigger}
+  COSI_TRIGGER_DIR: ${COSI_TRIGGER_DIR:-/home/gamma/workspace/data/tdrss}
   COSI_MAPS_DIR: ${COSI_MAPS_DIR:-/home/gamma/workspace/data/maps}
   COSI_SOURCE_DIR: ${COSI_SOURCE_DIR:-/home/gamma/workspace/data/source}
 

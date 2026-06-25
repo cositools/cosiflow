@@ -161,7 +161,7 @@ inside the `x-common-env` block (and related sections), with their purpose:
 | **COSI_LOG_DIR** | Directory for COSI log files |
 | **COSI_OBS_DIR** | Directory for observation data |
 | **COSI_TRANSIENT_DIR** | Directory for transient event data |
-| **COSI_TRIGGER_DIR** | Directory for trigger event data |
+| **COSI_TRIGGER_DIR** | Directory for TDRSS trigger event data |
 | **COSI_MAPS_DIR** | Directory for map data products |
 | **COSI_SOURCE_DIR** | Directory for source-level data products |
 

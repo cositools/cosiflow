@@ -3,6 +3,22 @@
 
 cd /home/gamma
 
+# define a macro `log` for printing messages with color green
+log() {
+    echo -e "\033[32m$1\033[0m"
+}
+
+# define a macro `error` for printing messages with color red
+error() {
+    echo -e "\033[31m$1\033[0m"
+    exit 1
+}
+
+# define a macro `warning` for printing messages with color yellow
+warning() {
+    echo -e "\033[33m$1\033[0m"
+}
+
 if [ -n "${ALERT_EMAIL_SENDER:-}" ]; then
   export AIRFLOW__SMTP__SMTP_MAIL_FROM="$ALERT_EMAIL_SENDER"
 fi
@@ -20,7 +36,7 @@ AIRFLOW_WEBUI_PORT="${AIRFLOW_WEBUI_PORT:-8080}"
 export MAILHOG_WEBUI_URL="http://${HOST_IP}:${MAILHOG_WEBUI_PORT}"
 export COSIFLOW_HOME_URL="http://${HOST_IP}:${AIRFLOW_WEBUI_PORT}/heasarcbrowser"
 
-echo "🌐 URLs configured:"
+log "URLs configured:"
 echo "   MAILHOG_WEBUI_URL=${MAILHOG_WEBUI_URL}"
 echo "   COSIFLOW_HOME_URL=${COSIFLOW_HOME_URL}"
 
@@ -58,14 +74,14 @@ if [ -n "${COSI_LOG_DIR:-}" ]; then
 fi
 
 # Create COSI directory structure if not present
-mkdir -p $COSI_DATA_DIR/{obs,transient,trigger,maps,source}
+mkdir -p $COSI_DATA_DIR/{obs,transient,tdrss,maps,source}
 
 # Activate Python venv
 if [ -f "/home/gamma/venv/bin/activate" ]; then
     source /home/gamma/venv/bin/activate
-    echo "✅ Virtual environment activated."
+    log "Virtual environment activated."
 else
-    echo "⚠️ venv activate script not found, assuming PATH is correct."
+    warning "venv activate script not found, assuming PATH is correct."
 fi
 # export PATH="$PATH:~/.local/bin" # Not needed with venv in PATH
 
@@ -81,9 +97,9 @@ if ! airflow users list | grep -q "$AIRFLOW_ADMIN_USERNAME"; then
     --role Admin \
     --email "$AIRFLOW_ADMIN_EMAIL" \
     --password "$AIRFLOW_ADMIN_PASSWORD"
-  echo "✅ Admin user created."
+  log "Admin user created."
 else
-  echo "ℹ️ Admin user already exists. Skipping creation."
+  warning "Admin user already exists. Skipping creation."
 fi
 
 # Start webserver (in background) and scheduler
