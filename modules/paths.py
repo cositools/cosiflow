@@ -14,7 +14,7 @@ YYYY_MM_RE = re.compile(r"^(?P<year>\d{4})_(?P<month>0[1-9]|1[0-2])$")
 class Domain(str, Enum):
     obs = "obs"
     transient = "transient"
-    trigger = "trigger"
+    trigger = "tdrss"
     maps = "maps"
     source = "source"
 
@@ -59,7 +59,7 @@ def transient_path(year: int, month: int, transient_id: str, leaf: CommonLeaf, *
     return DATA_ROOT / "transient" / _ym(year, month) / transient_id / leaf.value / Path(*rel)
 
 def trigger_path(year: int, month: int, trigger_id: str, leaf: CommonLeaf, *rel: str) -> Path:
-    return DATA_ROOT / "trigger" / _ym(year, month) / trigger_id / leaf.value / Path(*rel)
+    return DATA_ROOT / Domain.trigger.value / _ym(year, month) / trigger_id / leaf.value / Path(*rel)
 
 def maps_path(year: int, month: int, *rel: str) -> Path:
     return DATA_ROOT / "maps" / _ym(year, month) / Path(*rel)

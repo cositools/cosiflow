@@ -783,7 +783,15 @@ class COSIDAG(DAG):
                 # First pass: find all required files
                 found_files = {}
                 for key, pattern in file_patterns.items():
-                    matches = sorted(glob.glob(os.path.join(run_dir, "**", pattern), recursive=True))
+                    if isinstance(pattern, str) and pattern.startswith("regex:"):
+                        rx = re.compile(pattern[len("regex:"):])
+                        candidates = glob.glob(os.path.join(run_dir, "**", "*"), recursive=True)
+                        matches = sorted(
+                            path for path in candidates
+                            if os.path.isfile(path) and rx.match(os.path.basename(path))
+                        )
+                    else:
+                        matches = sorted(glob.glob(os.path.join(run_dir, "**", pattern), recursive=True))
                     chosen = pick_one(matches)
                     if not chosen:
                         raise AirflowFailException(
