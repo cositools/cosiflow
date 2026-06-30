@@ -525,6 +525,22 @@ create_single_env() {
         echo "   ❌ Failed to create virtual environment for '$env_name'."
         return 1
     fi
+
+    # Bootstrap packaging tools before installing requirements.
+    # Python 3.12 removed pkgutil.ImpImporter; old setuptools/pkg_resources
+    # releases still reference it and fail at import time.
+    echo "   🧰 Bootstrapping pip/setuptools/wheel..."
+    dexec "$venv_path/bin/python" -m ensurepip --upgrade
+    if [ $? -ne 0 ]; then
+        echo "   ❌ Failed to bootstrap pip with ensurepip for '$env_name'."
+        return 1
+    fi
+
+    dexec "$venv_path/bin/python" -m pip install --no-cache-dir --upgrade "pip" "setuptools>=68" "wheel"
+    if [ $? -ne 0 ]; then
+        echo "   ❌ Failed to upgrade pip/setuptools/wheel for '$env_name'."
+        return 1
+    fi
     
     # Copy requirements file to container
     local temp_req="/tmp/requirements_${env_name}.txt"
@@ -538,9 +554,7 @@ create_single_env() {
     
     # Install packages
     echo "   🔧 Installing packages..."
-    dexec bash -c ". $venv_path/bin/activate && \
-        pip install --no-cache-dir --upgrade pip setuptools wheel && \
-        pip install --no-cache-dir -r $temp_req"
+    dexec "$venv_path/bin/python" -m pip install --no-cache-dir -r "$temp_req"
     
     local install_status=$?
     
@@ -551,15 +565,30 @@ create_single_env() {
         echo "   ❌ Failed to install packages for '$env_name'."
         return 1
     fi
+
+    dexec "$venv_path/bin/python" -c "import pkg_resources" 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo "   ❌ pkg_resources is not importable in '$env_name' after installing setuptools."
+        return 1
+    fi
     
     # Optional: install extra requirements with --no-deps (e.g. to avoid dependency conflicts)
     if [ -n "$requirements_no_deps_file" ] && [ -f "$requirements_no_deps_file" ]; then
         local temp_nodeps="/tmp/requirements_${env_name}_nodeps.txt"
         echo "   📋 Installing extra packages (--no-deps)..."
         docker cp "$requirements_no_deps_file" "$CONTAINER_NAME:$temp_nodeps"
-        if [ $? -eq 0 ]; then
-            dexec bash -c ". $venv_path/bin/activate && pip install --no-cache-dir --no-deps -r $temp_nodeps"
-            dexec rm -f "$temp_nodeps"
+        if [ $? -ne 0 ]; then
+            echo "   ❌ Failed to copy no-deps requirements file."
+            return 1
+        fi
+
+        dexec "$venv_path/bin/python" -m pip install --no-cache-dir --no-deps -r "$temp_nodeps"
+        local nodeps_install_status=$?
+        dexec rm -f "$temp_nodeps"
+
+        if [ $nodeps_install_status -ne 0 ]; then
+            echo "   ❌ Failed to install no-deps packages for '$env_name'."
+            return 1
         fi
     fi
     
@@ -814,7 +843,7 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
             echo "   📄 Using multi-environment mode with $(basename "$YAML_CONFIG")"
             
             # Determine which environments to create
-            local envs_to_create=()
+            envs_to_create=()
             
             if [ "$ENV_SELECTION" = "all" ]; then
                 # Get all environments from YAML
@@ -828,19 +857,19 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                 echo "   ⚠️  No environments found or specified."
                 echo "       Skipping environment creation."
             else
-                local success_count=0
-                local fail_count=0
+                success_count=0
+                fail_count=0
                 
                 for env_name in "${envs_to_create[@]}"; do
                     env_name=$(echo "$env_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                     
                     # Extract environment configuration from YAML
-                    local req_path=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements")
-                    local venv_path_yaml=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "venv_path")
-                    local enabled=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "enabled")
-                    local description=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "description")
-                    local python_version=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "python_version")
-                    local req_no_deps=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements_no_deps")
+                    req_path=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements")
+                    venv_path_yaml=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "venv_path")
+                    enabled=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "enabled")
+                    description=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "description")
+                    python_version=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "python_version")
+                    req_no_deps=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements_no_deps")
                     
                     if [ -z "$req_path" ]; then
                         echo "   ⚠️  Environment '$env_name' not found in YAML or missing requirements."
@@ -856,7 +885,7 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                     fi
                     
                     # Resolve requirements_no_deps path (optional)
-                    local REQUIREMENTS_NODEPS_FILE=""
+                    REQUIREMENTS_NODEPS_FILE=""
                     if [ -n "$req_no_deps" ]; then
                         if [ "${req_no_deps:0:1}" = "/" ]; then
                             REQUIREMENTS_NODEPS_FILE="$req_no_deps"
@@ -866,7 +895,7 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                     fi
                     
                     # Use venv_path from YAML or default
-                    local final_venv_path="${venv_path_yaml:-/home/gamma/envs/$env_name}"
+                    final_venv_path="${venv_path_yaml:-/home/gamma/envs/$env_name}"
                     
                     # Show description if available
                     if [ -n "$description" ]; then
