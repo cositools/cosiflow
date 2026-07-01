@@ -32,9 +32,29 @@ VENV_PATH="/home/gamma/envs/cosipy"
 ENV_SELECTION=""  # Empty = use YAML enabled, "all" = all, or comma-separated list
 CONFIG_FILE=""    # Optional path to config file (overrides auto-detect when set)
 
+##########################################################################
+# HELPER FUNCTIONS
+##########################################################################
+
 # Helper to run docker exec as airflow user
 dexec() {
     docker exec -u $CONTAINER_USER $CONTAINER_NAME "$@"
+}
+
+# define a macro `log` for printing messages with color green
+log() {
+    echo -e "\033[32m$1\033[0m"
+}
+
+# define a macro `warning` for printing messages with color yellow
+warning() {
+    echo -e "\033[33m$1\033[0m"
+}
+
+# define a macro `error` for printing messages with color red
+error() {
+    echo -e "\033[31m$1\033[0m"
+    exit 1
 }
 
 # Function to parse YAML and extract top-level configuration values
@@ -227,6 +247,10 @@ load_yaml_config() {
     return 0
 }
 
+##########################################################################
+# MAIN SCRIPT
+##########################################################################
+
 # Parse positional args: module_name [action]
 MODULE_NAME=$1
 if [ "$2" = "install" ] || [ "$2" = "remove" ] || [ "$2" = "update" ]; then
@@ -296,8 +320,7 @@ fi
 # If -c was used: resolve to absolute path and reload config from that file
 if [ -n "$CONFIG_FILE" ]; then
     if [ ! -f "$CONFIG_FILE" ]; then
-        echo "❌ Config file not found: $CONFIG_FILE" >&2
-        exit 1
+        error "Config file not found: $CONFIG_FILE"
     fi
     CONFIG_FILE="$(cd "$(dirname "$CONFIG_FILE")" && pwd)/$(basename "$CONFIG_FILE")"
     load_yaml_config "$MODULE_PATH" "$CONFIG_FILE"
@@ -508,52 +531,48 @@ create_single_env() {
         else
             python_bin="python${python_version}"
         fi
-        echo "   🐍 Using Python: $python_bin"
+        log "   - Using Python: $python_bin"
     fi
     
-    echo "   📦 Creating environment '$env_name' at $venv_path..."
+    log "   - Creating environment '$env_name' at $venv_path..."
     
     # Create venv
     dexec $python_bin -m venv "$venv_path" 2>/dev/null || {
         # If venv already exists, remove it first
-        echo "   ⚠️  Virtual environment already exists, removing old one..."
+        log "   -  Virtual environment already exists, removing old one..."
         dexec rm -rf "$venv_path"
         dexec $python_bin -m venv "$venv_path"
     }
     
     if [ $? -ne 0 ]; then
-        echo "   ❌ Failed to create virtual environment for '$env_name'."
-        return 1
+        error "    Failed to create virtual environment for '$env_name'."
     fi
 
     # Bootstrap packaging tools before installing requirements.
     # Python 3.12 removed pkgutil.ImpImporter; old setuptools/pkg_resources
     # releases still reference it and fail at import time.
-    echo "   🧰 Bootstrapping pip/setuptools/wheel..."
+    log "   - Bootstrapping pip/setuptools/wheel..."
     dexec "$venv_path/bin/python" -m ensurepip --upgrade
     if [ $? -ne 0 ]; then
-        echo "   ❌ Failed to bootstrap pip with ensurepip for '$env_name'."
-        return 1
+        error "   - Failed to bootstrap pip with ensurepip for '$env_name'."
     fi
 
     dexec "$venv_path/bin/python" -m pip install --no-cache-dir --upgrade "pip" "setuptools>=68" "wheel"
     if [ $? -ne 0 ]; then
-        echo "   ❌ Failed to upgrade pip/setuptools/wheel for '$env_name'."
-        return 1
+        error "   - Failed to upgrade pip/setuptools/wheel for '$env_name'."
     fi
     
     # Copy requirements file to container
     local temp_req="/tmp/requirements_${env_name}.txt"
-    echo "   📋 Copying requirements file to container..."
+    log "   - Copying requirements file to container..."
     docker cp "$requirements_file" "$CONTAINER_NAME:$temp_req"
     
     if [ $? -ne 0 ]; then
-        echo "   ❌ Failed to copy requirements file."
-        return 1
+        error "   - Failed to copy requirements file."
     fi
     
     # Install packages
-    echo "   🔧 Installing packages..."
+    log "   - Installing packages..."
     dexec "$venv_path/bin/python" -m pip install --no-cache-dir -r "$temp_req"
     
     local install_status=$?
@@ -562,24 +581,21 @@ create_single_env() {
     dexec rm -f "$temp_req"
     
     if [ $install_status -ne 0 ]; then
-        echo "   ❌ Failed to install packages for '$env_name'."
-        return 1
+        error "   - Failed to install packages for '$env_name'."
     fi
 
     dexec "$venv_path/bin/python" -c "import pkg_resources" 2>/dev/null
     if [ $? -ne 0 ]; then
-        echo "   ❌ pkg_resources is not importable in '$env_name' after installing setuptools."
-        return 1
+        error "   - pkg_resources is not importable in '$env_name' after installing setuptools."
     fi
     
     # Optional: install extra requirements with --no-deps (e.g. to avoid dependency conflicts)
     if [ -n "$requirements_no_deps_file" ] && [ -f "$requirements_no_deps_file" ]; then
         local temp_nodeps="/tmp/requirements_${env_name}_nodeps.txt"
-        echo "   📋 Installing extra packages (--no-deps)..."
+        log "   - Installing extra packages (--no-deps)..."
         docker cp "$requirements_no_deps_file" "$CONTAINER_NAME:$temp_nodeps"
         if [ $? -ne 0 ]; then
-            echo "   ❌ Failed to copy no-deps requirements file."
-            return 1
+            error "   - Failed to copy no-deps requirements file."
         fi
 
         dexec "$venv_path/bin/python" -m pip install --no-cache-dir --no-deps -r "$temp_nodeps"
@@ -587,8 +603,7 @@ create_single_env() {
         dexec rm -f "$temp_nodeps"
 
         if [ $nodeps_install_status -ne 0 ]; then
-            echo "   ❌ Failed to install no-deps packages for '$env_name'."
-            return 1
+            error "   - Failed to install no-deps packages for '$env_name'."
         fi
     fi
     
@@ -598,25 +613,25 @@ create_single_env() {
 #!/bin/bash
 # Helper script to activate the $env_name virtual environment
 source $venv_path/bin/activate
-echo \"✅ Activated Python environment: \$VIRTUAL_ENV\"
-echo \"Python path: \$(which python)\"
+log \"   - Activated Python environment: \$VIRTUAL_ENV\"
+log \"       - Python path: \$(which python)\"
 EOF
         chmod +x $activate_script"
     
-    echo "   ✅ Environment '$env_name' created successfully."
-    echo "      💡 Activate with: source $activate_script"
-    echo "      💡 Or use: $venv_path/bin/python"
+    log "   - Environment '$env_name' created successfully."
+    log "       - Activate with: source $activate_script"
+    log "       - Or use: $venv_path/bin/python"
     
     return 0
 }
 
-echo "🔹 Action: $ACTION module '$MODULE_NAME'"
+log "\n1.     Action: $ACTION module '$MODULE_NAME'"
 
 # ==============================================================================
 # REMOVE
 # ==============================================================================
 if [ "$ACTION" == "remove" ]; then
-    echo "Removing module '$MODULE_NAME'..."
+    log "   - Removing module '$MODULE_NAME'..."
     
     MODULE_PATH="$WORKSPACE_ROOT/$MODULE_NAME"
     if [ -n "$CONFIG_FILE" ]; then
@@ -630,7 +645,7 @@ if [ "$ACTION" == "remove" ]; then
     remove_container=false
     
     if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ]; then
-        echo "📄 Using configuration from: $(basename "$YAML_CONFIG")"
+        log "   - Using configuration from: $(basename "$YAML_CONFIG")"
         
         # Check what was configured to install
         install_mode=$(parse_yaml_config "$YAML_CONFIG" "install_mode")
@@ -663,21 +678,21 @@ if [ "$ACTION" == "remove" ]; then
     fi
     
     # Remove DAGs link
-    echo "  🔗 Removing DAGs link..."
+    log "   - Removing DAGs link..."
     dexec rm -f /home/gamma/airflow/dags/$MODULE_NAME$EXTENSION_MODULE 2>/dev/null
-    echo "    ✅ DAGs link removed."
+    log "   - DAGs link removed."
     
     # Remove Pipeline scripts link (only if pipeline path was configured)
     if [ -n "$PATH_PIPELINE" ]; then
-        echo "  🔗 Removing Pipeline scripts link..."
+        log "   - Removing Pipeline scripts link..."
         dexec rm -f /home/gamma/airflow/pipeline/$MODULE_NAME$EXTENSION_MODULE 2>/dev/null
-        echo "    ✅ Pipeline scripts link removed."
+        log "   - Pipeline scripts link removed."
     fi
     
     # Remove Python virtual environments (if configured)
     if [ "$remove_envs" = true ]; then
         if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ]; then
-            echo "  🐍 Removing Python virtual environments..."
+            log "   - Removing Python virtual environments..."
             all_envs=($(list_yaml_envs "$YAML_CONFIG"))
             if [ ${#all_envs[@]} -gt 0 ]; then
                 for env_name in "${all_envs[@]}"; do
@@ -687,36 +702,36 @@ if [ "$ACTION" == "remove" ]; then
                     
                     dexec rm -rf "$venv_path" 2>/dev/null
                     dexec rm -f "$activate_script" 2>/dev/null
-                    echo "    ✅ Removed environment '$env_name'"
+                    log "   - Removed environment '$env_name'"
                 done
             else
-                echo "    ⚠️  No environments found in config."
+                warning "   - No environments found in config."
             fi
         else
             # Legacy: remove default cosipy environment
             dexec rm -rf "$VENV_PATH" 2>/dev/null
             dexec rm -f /home/gamma/activate_cosipy.sh 2>/dev/null
-            echo "    ✅ Removed default Python environment."
+            log "   - Removed default Python environment."
         fi
     else
-        echo "  ⏭️  Skipping Python environments (not configured)."
+        log "   - Skipping Python environments (not configured)."
     fi
     
     # Remove Docker image (if configured)
     if [ "$remove_container" = true ]; then
-        echo "  🐳 Removing Docker image..."
+        log "   - Removing Docker image..."
         docker rmi -f ${MODULE_NAME}:latest 2>/dev/null
         if [ $? -eq 0 ]; then
-            echo "    ✅ Removed image ${MODULE_NAME}:latest."
+            log "   - Removed image ${MODULE_NAME}:latest."
         else
-            echo "    ⚠️  Image ${MODULE_NAME}:latest not found or already removed."
+            warning "   - Image ${MODULE_NAME}:latest not found or already removed."
         fi
     else
-        echo "  ⏭️  Skipping Docker image (not configured)."
+        log "   - Skipping Docker image (not configured)."
     fi
     
     echo ""
-    echo "✅ Module $MODULE_NAME removed from Airflow."
+    log "   - Module $MODULE_NAME removed from Airflow."
     exit 0
 fi
 
@@ -733,20 +748,20 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
     fi
     
     if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ]; then
-        echo "📄 Configuration loaded from: $(basename "$YAML_CONFIG")"
+        log "   - Configuration loaded from: $(basename "$YAML_CONFIG")"
         install_mode=$(parse_yaml_config "$YAML_CONFIG" "install_mode")
         
         # Debug: check what was read
         if [ -z "$install_mode" ]; then
-            echo "   ⚠️  Warning: install_mode not found or empty in YAML"
-            echo "   Trying direct grep..."
+            warning "   - Warning: install_mode not found or empty in YAML"
+            warning "   - Trying direct grep..."
             install_mode=$(grep -E "^install_mode:" "$YAML_CONFIG" | sed 's/^install_mode:[[:space:]]*//' | sed 's/[[:space:]]*$//' | head -n 1)
         fi
         
         if [ -n "$install_mode" ]; then
-            echo "   Install mode: $install_mode"
+            log "   - Install mode: $install_mode"
         else
-            echo "   ⚠️  Install mode: (empty or not found)"
+            warning "   - Install mode: (empty or not found)"
         fi
         echo ""
         
@@ -771,10 +786,10 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                     ;;
             esac
             # Debug output
-            echo "   🔧 Applied settings: BUILD_DOCKER=$BUILD_DOCKER, CREATE_ENV=$CREATE_ENV"
+            log "   - Applied settings: BUILD_DOCKER=$BUILD_DOCKER, CREATE_ENV=$CREATE_ENV"
             echo ""
         else
-            echo "   ⚠️  Cannot apply install_mode: value is empty"
+            warning "   - Cannot apply install_mode: value is empty"
             echo ""
         fi
         
@@ -804,43 +819,43 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
         fi
     fi
     
+    log "2.  Linking module '$MODULE_NAME' into Airflow..."
+
     # 1. Link DAGs (Airflow needs the DAG definition)
-    echo "1️⃣  Linking DAGs..."
+    log "   - Linking DAGs..."
     dexec ln -sfn /home/gamma/airflow/modules_pool/$MODULE_NAME/$PATH_DAGS /home/gamma/airflow/dags/$MODULE_NAME$EXTENSION_MODULE
     
     if [ $? -eq 0 ]; then
-        echo "   ✅ DAGs linked."
+        log "   - DAGs linked."
     else
-        echo "   ❌ Failed to link DAGs."
-        exit 1
+        error "Failed to link DAGs."
     fi
 
     # 2. Link Pipeline scripts (only if pipeline path is configured)
     if [ -n "$PATH_PIPELINE" ]; then
-        echo "2️⃣  Linking Pipeline scripts..."
+        log "   - Linking Pipeline scripts..."
         dexec ln -sfn /home/gamma/airflow/modules_pool/$MODULE_NAME/$PATH_PIPELINE /home/gamma/airflow/pipeline/$MODULE_NAME$EXTENSION_MODULE
         
         if [ $? -eq 0 ]; then
-            echo "   ✅ Pipeline scripts linked."
+            log "   - Pipeline scripts linked."
         else
-            echo "   ❌ Failed to link Pipeline scripts."
-            exit 1
+            error "Failed to link Pipeline scripts."
         fi
     else
-        echo "2️⃣  ⏭️  Skipping Pipeline scripts (not configured)."
+        log "   - Skipping Pipeline scripts (not configured)."
     fi
 
     # 3. Create Python Virtual Environment(s) (if requested)
     if [ "$CREATE_ENV" == true ]; then
         if [ "$ACTION" == "update" ]; then
-            echo "3️⃣  Updating Python Virtual Environment(s)..."
+            log "3.  Updating Python Virtual Environment(s)..."
         else
-            echo "3️⃣  Creating Python Virtual Environment(s)..."
+            log "3.  Creating Python Virtual Environment(s)..."
         fi
         
         # Check if YAML config exists and -E flag was used (multi-env mode)
         if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ] && [ -n "$ENV_SELECTION" ]; then
-            echo "   📄 Using multi-environment mode with $(basename "$YAML_CONFIG")"
+            log "   - Using multi-environment mode with $(basename "$YAML_CONFIG")"
             
             # Determine which environments to create
             envs_to_create=()
@@ -854,8 +869,8 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
             fi
             
             if [ ${#envs_to_create[@]} -eq 0 ]; then
-                echo "   ⚠️  No environments found or specified."
-                echo "       Skipping environment creation."
+                warning "   - No environments found or specified."
+                log "       Skipping environment creation."
             else
                 success_count=0
                 fail_count=0
@@ -872,7 +887,7 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                     req_no_deps=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements_no_deps")
                     
                     if [ -z "$req_path" ]; then
-                        echo "   ⚠️  Environment '$env_name' not found in YAML or missing requirements."
+                        warning "   - Environment '$env_name' not found in YAML or missing requirements."
                         ((fail_count++))
                         continue
                     fi
@@ -899,13 +914,13 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                     
                     # Show description if available
                     if [ -n "$description" ]; then
-                        echo "   📝 $description"
+                        log "   - $description"
                     fi
                     
                     # Check if requirements file exists
                     if [ ! -f "$REQUIREMENTS_FILE" ]; then
-                        echo "   ⚠️  Requirements file not found: $REQUIREMENTS_FILE"
-                        echo "       Skipping environment '$env_name'."
+                        warning "   - Requirements file not found: $REQUIREMENTS_FILE"
+                        log "       Skipping environment '$env_name'."
                         ((fail_count++))
                         continue
                     fi
@@ -919,23 +934,23 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                     echo ""
                 done
                 
-                echo "   📊 Summary: $success_count environment(s) created successfully"
+                log "   - Summary: $success_count environment(s) created successfully"
                 if [ $fail_count -gt 0 ]; then
-                    echo "   ⚠️  $fail_count environment(s) failed"
+                    warning "   - $fail_count environment(s) failed"
                 fi
             fi
             
         elif [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ] && [ -z "$ENV_SELECTION" ]; then
             # YAML exists but no -E flag: use enabled environments
-            echo "   📄 Using $(basename "$YAML_CONFIG") (installing enabled environments)"
+            log "   - Using $(basename "$YAML_CONFIG") (installing enabled environments)"
             
             all_envs=($(list_yaml_envs "$YAML_CONFIG"))
             
             # Debug: show what was found
             if [ ${#all_envs[@]} -eq 0 ]; then
-                echo "   ⚠️  No environments found in YAML file: $YAML_CONFIG"
+                warning "   - No environments found in YAML file: $YAML_CONFIG"
             else
-                echo "   📋 Found ${#all_envs[@]} environment(s): ${all_envs[*]}"
+                log "   - Found ${#all_envs[@]} environment(s): ${all_envs[*]}"
             fi
             
             envs_to_create=()
@@ -949,11 +964,11 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
             
             if [ ${#envs_to_create[@]} -eq 0 ]; then
                 if [ ${#all_envs[@]} -eq 0 ]; then
-                    echo "   ⚠️  No environments found in YAML."
+                    warning "   - No environments found in YAML."
                 else
-                    echo "   ⚠️  No enabled environments found in YAML (found ${#all_envs[@]} environment(s) but none are enabled)."
+                    warning "   - No enabled environments found in YAML (found ${#all_envs[@]} environment(s) but none are enabled)."
                 fi
-                echo "       Use -E flag to specify environments or enable them in YAML."
+                log "       Use -E flag to specify environments or enable them in YAML."
             else
                 success_count=0
                 fail_count=0
@@ -983,11 +998,11 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                     final_venv_path="${venv_path_yaml:-/home/gamma/envs/$env_name}"
                     
                     if [ -n "$description" ]; then
-                        echo "   📝 $description"
+                        log "   - $description"
                     fi
                     
                     if [ ! -f "$REQUIREMENTS_FILE" ]; then
-                        echo "   ⚠️  Requirements file not found: $REQUIREMENTS_FILE"
+                        warning "   - Requirements file not found: $REQUIREMENTS_FILE"
                         ((fail_count++))
                         continue
                     fi
@@ -1000,15 +1015,15 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
                     echo ""
                 done
                 
-                echo "   📊 Summary: $success_count environment(s) created successfully"
+                log "   - Summary: $success_count environment(s) created successfully"
                 if [ $fail_count -gt 0 ]; then
-                    echo "   ⚠️  $fail_count environment(s) failed"
+                    warning "   - $fail_count environment(s) failed"
                 fi
             fi
             
         else
             # Legacy mode: single environment with -r flag or default
-            echo "   📦 Using legacy single-environment mode"
+            log "   - Using legacy single-environment mode"
             
             if [ "${PATH_REQUIREMENTS:0:1}" = "/" ]; then
                 REQUIREMENTS_FILE="$PATH_REQUIREMENTS"
@@ -1017,8 +1032,8 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
             fi
             
             if [ ! -f "$REQUIREMENTS_FILE" ]; then
-                echo "   ⚠️  Requirements file not found: $REQUIREMENTS_FILE"
-                echo "       Skipping environment creation."
+                warning "   - Requirements file not found: $REQUIREMENTS_FILE"
+                log "       Skipping environment creation."
             else
                 if create_single_env "cosipy" "$REQUIREMENTS_FILE" "$VENV_PATH"; then
                     echo ""
@@ -1031,7 +1046,7 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
 
     # 4. Build/Prepare Docker Image (if requested)
     if [ "$BUILD_DOCKER" == true ]; then
-        echo "4️⃣  Building Docker Image..."
+        log "4.  Building Docker Image..."
         
         # Resolve Docker context path
         if [ "${PATH_IMAGES:0:1}" = "/" ]; then
@@ -1041,30 +1056,26 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
         fi
         
         if [ -d "$MODULE_PATH" ] && [ -f "$DOCKER_CONTEXT/Dockerfile" ]; then
-            echo "   Found Dockerfile in $DOCKER_CONTEXT"
-            echo "   Building image '${MODULE_NAME}:latest'..."
+            log "   - Found Dockerfile in $DOCKER_CONTEXT"
+            log "   - Building image '${MODULE_NAME}:latest'..."
             
             # Build the image on the HOST
             docker build -t "${MODULE_NAME}:latest" "$DOCKER_CONTEXT"
             
             if [ $? -eq 0 ]; then
-                echo "   ✅ Image '${MODULE_NAME}:latest' built successfully."
+                log "   - Image '${MODULE_NAME}:latest' built successfully."
             else
-                echo "   ❌ Docker build failed."
-                exit 1
+                error "Docker build failed."
             fi
         else
-            echo "   ❌ Docker build requested but Dockerfile not found."
-            echo "       Checked path: $DOCKER_CONTEXT/Dockerfile"
-            exit 1
+            error "Docker build requested but Dockerfile not found.\n       Checked path: $DOCKER_CONTEXT/Dockerfile"
         fi
     else
-        echo "4️⃣  ⏭️  Skipping Docker image build (not requested)."
+        log "4.  -  Skipping Docker image build (not requested)."
     fi
 
-    echo "🎉 Module $MODULE_NAME ready!"
+    log "Module $MODULE_NAME ready!"
     exit 0
 fi
 
-echo "❌ Unknown action: $ACTION. Use [install|remove|update]"
-exit 1
+error "Unknown action: $ACTION. Use [install|remove|update]"
