@@ -92,6 +92,22 @@
   .notice-status { display: inline-block; padding: 2px 7px; border-radius: 4px; background: #eef2f7; }
   .notice-heartbeats { margin-bottom: 20px; }
   .notice-heartbeats pre { max-width: 520px; white-space: pre-wrap; }
+  .notice-pager-row { align-items: center; display: flex; justify-content: space-between; margin-top: 14px; }
+  .notice-pager { display: inline-flex; }
+  .notice-pager a,
+  .notice-pager span {
+    border: 1px solid #ddd;
+    color: #337ab7;
+    line-height: 1.4;
+    margin-left: -1px;
+    min-width: 34px;
+    padding: 6px 10px;
+    text-align: center;
+    text-decoration: none;
+  }
+  .notice-pager .is-active { background: #337ab7; border-color: #337ab7; color: #fff; }
+  .notice-pager .is-disabled { color: #aaa; cursor: not-allowed; }
+  .notice-count { color: #555; }
 </style>
 
 <div class="notice-wrap">
@@ -187,15 +203,37 @@
             <td>{{ notice.content_type }}<br><span class="notice-muted">{{ notice.parse_status }}</span></td>
             <td><span class="notice-status">{{ notice.validation_status }}</span></td>
             <td>{{ notice.mission or "" }}<br><span class="notice-muted">{{ notice.instrument or "" }}</span></td>
-            <td>{{ notice.event_name or notice.trig_id or "" }}</td>
-            <td>{{ notice.trigger_time or notice.isotime or "" }}</td>
-            <td>{% if notice.ra_deg is not none and notice.dec_deg is not none %}{{ notice.ra_deg }}, {{ notice.dec_deg }}{% endif %}</td>
+            <td>{{ notice.event_display }}</td>
+            <td>{{ notice.time_display }}</td>
+            <td>{{ notice.position_display }}</td>
           </tr>
         {% else %}
           <tr><td colspan="10" class="notice-muted">No notices found.</td></tr>
         {% endfor %}
       </tbody>
     </table>
+    <div class="notice-pager-row">
+      <div class="notice-pager">
+        {% if pagination.has_prev %}
+          <a href="{{ pagination.first_url }}">&laquo;</a>
+          <a href="{{ pagination.prev_url }}">&lsaquo;</a>
+        {% else %}
+          <span class="is-disabled">&laquo;</span>
+          <span class="is-disabled">&lsaquo;</span>
+        {% endif %}
+        <span class="is-active">{{ pagination.page }}</span>
+        {% if pagination.has_next %}
+          <a href="{{ pagination.next_url }}">&rsaquo;</a>
+          <a href="{{ pagination.last_url }}">&raquo;</a>
+        {% else %}
+          <span class="is-disabled">&rsaquo;</span>
+          <span class="is-disabled">&raquo;</span>
+        {% endif %}
+      </div>
+      <div class="notice-count">
+        Showing {{ pagination.start }}-{{ pagination.end }} of {{ pagination.total_count }} notices
+      </div>
+    </div>
   </div>
 </div>
 

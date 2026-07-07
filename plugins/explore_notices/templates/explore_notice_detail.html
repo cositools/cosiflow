@@ -30,9 +30,9 @@
         <tr><th>Validation</th><td>{{ notice.validation_status }}</td></tr>
         <tr><th>Mission</th><td>{{ notice.mission }} / {{ notice.instrument }}</td></tr>
         <tr><th>Alert</th><td>{{ notice.alert_type }} / {{ notice.alert_tense }}</td></tr>
-        <tr><th>Event</th><td>{{ notice.event_name }} {{ notice.event_ids_pretty }}</td></tr>
-        <tr><th>Time</th><td>trigger={{ notice.trigger_time }}, alert={{ notice.alert_datetime }}, iso={{ notice.isotime }}</td></tr>
-        <tr><th>Position</th><td>ra={{ notice.ra_deg }}, dec={{ notice.dec_deg }}</td></tr>
+        <tr><th>Event</th><td>{{ notice.event_display or notice.event_name }} {{ notice.event_ids_pretty }}</td></tr>
+        <tr><th>Time</th><td>{{ notice.time_display or notice.trigger_time or notice.alert_datetime or notice.isotime }}</td></tr>
+        <tr><th>Position</th><td>{{ notice.position_display }}</td></tr>
         <tr><th>HEALPix</th><td>{{ notice.healpix_url }}</td></tr>
       </tbody>
     </table>
