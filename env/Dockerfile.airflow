@@ -99,7 +99,7 @@ ENV CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINT_URL}" && \
     pip install --no-cache-dir apache-airflow-providers-docker apache-airflow-providers-postgres psycopg2-binary \
-    jupyter pandas plotly scikit-learn tensorboard tensorflow inotify_simple
+    jupyter pandas plotly scikit-learn tensorboard tensorflow inotify_simple PyMySQL
 
 # ------------------------------ Final Setup ------------------------------
 RUN mkdir -p ${HOME}/airflow

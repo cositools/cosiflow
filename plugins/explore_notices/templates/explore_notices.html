@@ -1,0 +1,115 @@
+{% extends "appbuilder/base.html" %}
+
+{% block content %}
+<style>
+  .notice-wrap { padding: 18px 24px; }
+  .notice-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 18px; }
+  .notice-toolbar label { display: grid; gap: 4px; font-weight: 600; }
+  .notice-toolbar input, .notice-toolbar select { min-width: 160px; padding: 5px 8px; }
+  .notice-toolbar button { padding: 6px 14px; }
+  .notice-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  .notice-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .notice-table th, .notice-table td { border-bottom: 1px solid #ddd; padding: 7px 8px; text-align: left; vertical-align: top; }
+  .notice-table th { background: #f7f7f7; position: sticky; top: 0; }
+  .notice-muted { color: #666; }
+  .notice-error { background: #fff0f0; border: 1px solid #e0a0a0; padding: 10px; margin-bottom: 12px; }
+  .notice-status { display: inline-block; padding: 2px 7px; border-radius: 4px; background: #eef2f7; }
+  .notice-heartbeats { margin-bottom: 20px; }
+  .notice-heartbeats pre { max-width: 520px; white-space: pre-wrap; }
+</style>
+
+<div class="notice-wrap">
+  <h2>Explore Notices</h2>
+  <p class="notice-muted">Consumer inbox GCN salvata in MySQL. Aggiornato: {{ now }}</p>
+
+  {% if error %}
+    <div class="notice-error">{{ error }}</div>
+  {% endif %}
+
+  <div class="notice-heartbeats">
+    <h4>Client Status</h4>
+    {% if heartbeats %}
+      <table class="notice-table">
+        <thead>
+          <tr><th>Component</th><th>Status</th><th>Updated</th><th>Details</th></tr>
+        </thead>
+        <tbody>
+          {% for hb in heartbeats %}
+            <tr>
+              <td>{{ hb.component }}</td>
+              <td><span class="notice-status">{{ hb.status }}</span></td>
+              <td>{{ hb.updated_at }}</td>
+              <td><pre>{{ hb.details_pretty }}</pre></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="notice-muted">No heartbeat rows yet.</p>
+    {% endif %}
+  </div>
+
+  <form class="notice-toolbar" method="get">
+    <label>Topic
+      <input type="text" name="topic" value="{{ filters.topic }}" placeholder="FERMI_GBM">
+    </label>
+    <label>Validation
+      <select name="validation_status">
+        <option value="">Any</option>
+        {% for value in ["valid", "invalid", "not_applicable", "not_checked"] %}
+          <option value="{{ value }}" {% if filters.validation_status == value %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Content
+      <select name="content_type">
+        <option value="">Any</option>
+        {% for value in ["json", "voevent_xml", "text", "unknown"] %}
+          <option value="{{ value }}" {% if filters.content_type == value %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Limit
+      <input type="number" min="1" max="500" name="limit" value="{{ filters.limit }}">
+    </label>
+    <button type="submit">Apply</button>
+  </form>
+
+  <div class="notice-grid">
+    <table class="notice-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Received</th>
+          <th>Topic</th>
+          <th>Offset</th>
+          <th>Type</th>
+          <th>Validation</th>
+          <th>Mission</th>
+          <th>Event / Trigger</th>
+          <th>Time</th>
+          <th>Position</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for notice in notices %}
+          <tr>
+            <td><a href="{{ url_for('ExploreNoticesView.notice_detail', notice_id=notice.id) }}">{{ notice.id }}</a></td>
+            <td>{{ notice.received_at }}</td>
+            <td>{{ notice.topic }}</td>
+            <td>{{ notice.kafka_offset }}</td>
+            <td>{{ notice.content_type }}<br><span class="notice-muted">{{ notice.parse_status }}</span></td>
+            <td><span class="notice-status">{{ notice.validation_status }}</span></td>
+            <td>{{ notice.mission or "" }}<br><span class="notice-muted">{{ notice.instrument or "" }}</span></td>
+            <td>{{ notice.event_name or notice.trig_id or "" }}</td>
+            <td>{{ notice.trigger_time or notice.isotime or "" }}</td>
+            <td>{% if notice.ra_deg is not none and notice.dec_deg is not none %}{{ notice.ra_deg }}, {{ notice.dec_deg }}{% endif %}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="10" class="notice-muted">No notices found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

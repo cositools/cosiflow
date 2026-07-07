@@ -1,0 +1,1 @@
+"""COSIflow GCN client prototype."""

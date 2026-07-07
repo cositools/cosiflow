@@ -1,0 +1,6 @@
+gcn-kafka>=0.3.3
+jsonschema>=4.22
+PyMySQL>=1.1.1
+python-dotenv>=1.0.1
+referencing>=0.35
+voevent-parse>=1.0.3

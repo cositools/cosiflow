@@ -1,0 +1,55 @@
+{% extends "appbuilder/base.html" %}
+
+{% block content %}
+<style>
+  .notice-wrap { padding: 18px 24px; }
+  .notice-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 18px; }
+  .notice-table th, .notice-table td { border-bottom: 1px solid #ddd; padding: 7px 8px; text-align: left; vertical-align: top; }
+  .notice-table th { width: 220px; background: #f7f7f7; }
+  .notice-error { background: #fff0f0; border: 1px solid #e0a0a0; padding: 10px; margin-bottom: 12px; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #f7f7f7; padding: 12px; border: 1px solid #ddd; }
+</style>
+
+<div class="notice-wrap">
+  <p><a href="{{ url_for('ExploreNoticesView.index') }}">Back to notices</a></p>
+  <h2>Notice Detail</h2>
+
+  {% if error %}
+    <div class="notice-error">{{ error }}</div>
+  {% endif %}
+
+  {% if notice %}
+    <table class="notice-table">
+      <tbody>
+        <tr><th>ID</th><td>{{ notice.id }}</td></tr>
+        <tr><th>Received</th><td>{{ notice.received_at }}</td></tr>
+        <tr><th>Source</th><td>{{ notice.source }}</td></tr>
+        <tr><th>Topic</th><td>{{ notice.topic }}</td></tr>
+        <tr><th>Kafka</th><td>partition={{ notice.kafka_partition }}, offset={{ notice.kafka_offset }}</td></tr>
+        <tr><th>Content</th><td>{{ notice.content_type }} / {{ notice.parse_status }}</td></tr>
+        <tr><th>Validation</th><td>{{ notice.validation_status }}</td></tr>
+        <tr><th>Mission</th><td>{{ notice.mission }} / {{ notice.instrument }}</td></tr>
+        <tr><th>Alert</th><td>{{ notice.alert_type }} / {{ notice.alert_tense }}</td></tr>
+        <tr><th>Event</th><td>{{ notice.event_name }} {{ notice.event_ids_pretty }}</td></tr>
+        <tr><th>Time</th><td>trigger={{ notice.trigger_time }}, alert={{ notice.alert_datetime }}, iso={{ notice.isotime }}</td></tr>
+        <tr><th>Position</th><td>ra={{ notice.ra_deg }}, dec={{ notice.dec_deg }}</td></tr>
+        <tr><th>HEALPix</th><td>{{ notice.healpix_url }}</td></tr>
+      </tbody>
+    </table>
+
+    <h4>Payload JSON</h4>
+    <pre>{{ notice.payload_json_pretty }}</pre>
+
+    <h4>Raw Payload</h4>
+    <pre>{{ notice.raw_payload }}</pre>
+
+    <h4>Validation Errors</h4>
+    <pre>{{ notice.validation_errors_pretty }}</pre>
+
+    <h4>Classification</h4>
+    <pre>{{ notice.classification_pretty }}</pre>
+  {% else %}
+    <p>Notice not found.</p>
+  {% endif %}
+</div>
+{% endblock %}
