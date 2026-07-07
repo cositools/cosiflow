@@ -43,12 +43,27 @@ def _json_pretty(value):
         return str(value)
 
 
-def _fetch_notices(limit, topic, validation_status, content_type):
+def _normalize_topics(values):
+    topics = []
+    seen = set()
+    for value in values:
+        for topic in value.split(","):
+            topic = topic.strip()
+            if topic and topic not in seen:
+                topics.append(topic)
+                seen.add(topic)
+    return topics
+
+
+def _fetch_notices(limit, topics, validation_status, content_type):
     where = []
     params = []
-    if topic:
-        where.append("topic LIKE %s")
-        params.append(f"%{topic}%")
+    if topics:
+        topic_clauses = []
+        for topic in topics:
+            topic_clauses.append("topic = %s")
+            params.append(topic)
+        where.append(f"({' OR '.join(topic_clauses)})")
     if validation_status:
         where.append("validation_status = %s")
         params.append(validation_status)
@@ -71,6 +86,20 @@ def _fetch_notices(limit, topic, validation_status, content_type):
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
+            return cur.fetchall()
+
+
+def _fetch_topics():
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT topic, COUNT(*) AS notice_count
+                FROM gcn_inbound_notices
+                GROUP BY topic
+                ORDER BY topic
+                """
+            )
             return cur.fetchall()
 
 
@@ -107,25 +136,28 @@ class ExploreNoticesView(BaseView):
         if not current_user.is_authenticated:
             return redirect("/login/?next=/explore-notices/")
         limit = min(max(int(request.args.get("limit", "100")), 1), 500)
-        topic = request.args.get("topic", "").strip()
+        topics = _normalize_topics(request.args.getlist("topic"))
         validation_status = request.args.get("validation_status", "").strip()
         content_type = request.args.get("content_type", "").strip()
         error = None
         notices = []
         heartbeats = []
+        available_topics = []
         try:
-            notices = _fetch_notices(limit, topic, validation_status, content_type)
+            notices = _fetch_notices(limit, topics, validation_status, content_type)
             heartbeats = _fetch_heartbeats()
+            available_topics = _fetch_topics()
         except Exception as exc:
             error = str(exc)
         return self.render_template(
             "explore_notices.html",
             notices=notices,
             heartbeats=heartbeats,
+            available_topics=available_topics,
             error=error,
             filters={
                 "limit": limit,
-                "topic": topic,
+                "topics": topics,
                 "validation_status": validation_status,
                 "content_type": content_type,
             },

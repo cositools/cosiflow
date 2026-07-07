@@ -7,6 +7,82 @@
   .notice-toolbar label { display: grid; gap: 4px; font-weight: 600; }
   .notice-toolbar input, .notice-toolbar select { min-width: 160px; padding: 5px 8px; }
   .notice-toolbar button { padding: 6px 14px; }
+  .notice-topic-filter { display: grid; gap: 4px; min-width: min(460px, 100%); font-weight: 600; position: relative; }
+  .notice-chip-box {
+    align-items: center;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    min-height: 34px;
+    padding: 3px 6px;
+  }
+  .notice-chip-box:focus-within { border-color: #1a73e8; box-shadow: 0 0 0 1px #1a73e8; }
+  .notice-topic-input {
+    border: 0;
+    flex: 1 1 180px;
+    min-width: 150px;
+    outline: 0;
+    padding: 4px 2px;
+  }
+  .notice-toolbar .notice-topic-input { min-width: 150px; }
+  .notice-topic-chip {
+    align-items: center;
+    background: #d6f2f4;
+    border-radius: 4px;
+    color: #2f5f67;
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 700;
+    gap: 4px;
+    line-height: 1.4;
+    max-width: 100%;
+    padding: 3px 7px;
+  }
+  .notice-topic-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .notice-topic-chip button {
+    background: transparent;
+    border: 0;
+    color: #42636a;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+  }
+  .notice-topic-options {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 0 0 4px 4px;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+    display: none;
+    font-weight: 400;
+    left: 0;
+    max-height: 260px;
+    min-width: 100%;
+    overflow-y: auto;
+    position: absolute;
+    top: calc(100% - 1px);
+    z-index: 50;
+  }
+  .notice-topic-options.is-open { display: block; }
+  .notice-topic-option {
+    background: #fff;
+    border: 0;
+    cursor: pointer;
+    display: block;
+    padding: 7px 9px;
+    text-align: left;
+    width: 100%;
+  }
+  .notice-topic-option:hover,
+  .notice-topic-option.is-active { background: #5897fb; color: #fff; }
+  .notice-topic-count { color: #666; font-size: 11px; margin-left: 6px; }
+  .notice-topic-option:hover .notice-topic-count,
+  .notice-topic-option.is-active .notice-topic-count { color: #fff; }
+  .notice-topic-empty { color: #666; padding: 8px 9px; }
   .notice-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
   .notice-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .notice-table th, .notice-table td { border-bottom: 1px solid #ddd; padding: 7px 8px; text-align: left; vertical-align: top; }
@@ -50,9 +126,19 @@
   </div>
 
   <form class="notice-toolbar" method="get">
-    <label>Topic
-      <input type="text" name="topic" value="{{ filters.topic }}" placeholder="FERMI_GBM">
-    </label>
+    <div class="notice-topic-filter" data-topic-filter>
+      <span>Topic</span>
+      <div class="notice-chip-box" data-chip-box>
+        <input
+          class="notice-topic-input"
+          type="text"
+          autocomplete="off"
+          placeholder="Filter topics by tag"
+          data-topic-input
+        >
+      </div>
+      <div class="notice-topic-options" data-topic-options></div>
+    </div>
     <label>Validation
       <select name="validation_status">
         <option value="">Any</option>
@@ -112,4 +198,166 @@
     </table>
   </div>
 </div>
+
+<script>
+  (function () {
+    var topicRows = {{ available_topics|tojson }};
+    var selectedTopics = {{ filters.topics|tojson }};
+    var form = document.querySelector(".notice-toolbar");
+    var filter = document.querySelector("[data-topic-filter]");
+    var chipBox = document.querySelector("[data-chip-box]");
+    var input = document.querySelector("[data-topic-input]");
+    var options = document.querySelector("[data-topic-options]");
+    var activeIndex = -1;
+
+    if (!form || !filter || !chipBox || !input || !options) {
+      return;
+    }
+
+    function availableValues() {
+      var selectedSet = new Set(selectedTopics);
+      var term = input.value.trim().toLowerCase();
+      return topicRows.filter(function (row) {
+        var topic = row.topic || "";
+        return !selectedSet.has(topic) && (!term || topic.toLowerCase().indexOf(term) !== -1);
+      });
+    }
+
+    function syncHiddenInputs() {
+      form.querySelectorAll("input[data-topic-hidden]").forEach(function (node) {
+        node.remove();
+      });
+      selectedTopics.forEach(function (topic) {
+        var hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.name = "topic";
+        hidden.value = topic;
+        hidden.setAttribute("data-topic-hidden", "true");
+        form.appendChild(hidden);
+      });
+    }
+
+    function renderChips() {
+      chipBox.querySelectorAll("[data-topic-chip]").forEach(function (node) {
+        node.remove();
+      });
+      selectedTopics.forEach(function (topic) {
+        var chip = document.createElement("span");
+        chip.className = "notice-topic-chip";
+        chip.setAttribute("data-topic-chip", "true");
+
+        var text = document.createElement("span");
+        text.textContent = topic;
+        chip.appendChild(text);
+
+        var remove = document.createElement("button");
+        remove.type = "button";
+        remove.setAttribute("aria-label", "Remove topic " + topic);
+        remove.textContent = "x";
+        remove.addEventListener("click", function () {
+          selectedTopics = selectedTopics.filter(function (value) {
+            return value !== topic;
+          });
+          render();
+          input.focus();
+        });
+        chip.appendChild(remove);
+
+        chipBox.insertBefore(chip, input);
+      });
+    }
+
+    function renderOptions() {
+      var rows = availableValues();
+      activeIndex = rows.length ? Math.min(Math.max(activeIndex, 0), rows.length - 1) : -1;
+      options.innerHTML = "";
+
+      if (!topicRows.length) {
+        options.classList.remove("is-open");
+        return;
+      }
+
+      if (!rows.length) {
+        var empty = document.createElement("div");
+        empty.className = "notice-topic-empty";
+        empty.textContent = "No matching topics";
+        options.appendChild(empty);
+        options.classList.add("is-open");
+        return;
+      }
+
+      rows.forEach(function (row, index) {
+        var option = document.createElement("button");
+        option.type = "button";
+        option.className = "notice-topic-option" + (index === activeIndex ? " is-active" : "");
+        option.textContent = row.topic;
+
+        var count = document.createElement("span");
+        count.className = "notice-topic-count";
+        count.textContent = "(" + row.notice_count + ")";
+        option.appendChild(count);
+
+        option.addEventListener("mousedown", function (event) {
+          event.preventDefault();
+          addTopic(row.topic);
+        });
+        options.appendChild(option);
+      });
+      options.classList.add("is-open");
+    }
+
+    function render() {
+      renderChips();
+      syncHiddenInputs();
+      renderOptions();
+    }
+
+    function addTopic(topic) {
+      if (topic && selectedTopics.indexOf(topic) === -1) {
+        selectedTopics.push(topic);
+      }
+      input.value = "";
+      activeIndex = -1;
+      render();
+      input.focus();
+    }
+
+    input.addEventListener("focus", renderOptions);
+    input.addEventListener("input", function () {
+      activeIndex = -1;
+      renderOptions();
+    });
+    input.addEventListener("keydown", function (event) {
+      var rows = availableValues();
+      if (event.key === "ArrowDown" && rows.length) {
+        event.preventDefault();
+        activeIndex = (activeIndex + 1) % rows.length;
+        renderOptions();
+      } else if (event.key === "ArrowUp" && rows.length) {
+        event.preventDefault();
+        activeIndex = (activeIndex - 1 + rows.length) % rows.length;
+        renderOptions();
+      } else if ((event.key === "Enter" || event.key === ",") && rows.length) {
+        event.preventDefault();
+        addTopic(rows[Math.max(activeIndex, 0)].topic);
+      } else if (event.key === "Backspace" && !input.value && selectedTopics.length) {
+        selectedTopics.pop();
+        render();
+      } else if (event.key === "Escape") {
+        options.classList.remove("is-open");
+      }
+    });
+
+    document.addEventListener("click", function (event) {
+      if (!filter.contains(event.target)) {
+        options.classList.remove("is-open");
+      }
+    });
+
+    form.addEventListener("submit", syncHiddenInputs);
+
+    renderChips();
+    syncHiddenInputs();
+  })();
+</script>
 {% endblock %}
