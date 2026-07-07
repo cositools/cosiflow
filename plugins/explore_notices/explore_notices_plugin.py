@@ -1,3 +1,5 @@
+"""Airflow plugin for browsing GCN notices stored by the COSIflow GCN client."""
+
 import json
 import os
 import re
@@ -66,6 +68,7 @@ def _bounded_int(value, default, minimum, maximum):
 
 
 def _notice_where(topics, validation_status, content_type):
+    """Build the shared WHERE clause used by both count and list queries."""
     where = []
     params = []
     if topics:
@@ -117,6 +120,7 @@ def _fetch_notices(limit, offset, topics, validation_status, content_type):
 
 
 def _parse_classic_text(raw_payload):
+    """Extract simple KEY: value fields from classic GCN text notices."""
     fields = {}
     for line in str(raw_payload or "").splitlines():
         match = re.match(r"^\s*([A-Z0-9_]+):\s*(.*?)\s*$", line)
@@ -126,6 +130,7 @@ def _parse_classic_text(raw_payload):
 
 
 def _topic_parts(topic):
+    """Infer mission and instrument from topic suffixes such as FERMI_GBM_POS_TEST."""
     suffix = str(topic or "").rsplit(".", 1)[-1]
     parts = suffix.split("_")
     if len(parts) < 2:
@@ -165,6 +170,7 @@ def _format_position(ra_deg, dec_deg):
 
 
 def _enrich_notice_display(notice):
+    """Add display-only fields without mutating persisted notice data."""
     fields = _parse_classic_text(notice.get("raw_payload"))
     topic_mission, topic_instrument = _topic_parts(notice.get("topic"))
     notice_type = fields.get("NOTICE_TYPE")
@@ -232,6 +238,7 @@ def _fetch_heartbeats():
 
 
 def _page_url(page, filters):
+    """Build pagination URLs while preserving active filters."""
     query = []
     for topic in filters["topics"]:
         query.append(("topic", topic))

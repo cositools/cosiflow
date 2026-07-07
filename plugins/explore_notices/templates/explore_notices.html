@@ -142,6 +142,7 @@
   </div>
 
   <form class="notice-toolbar" method="get">
+    {# The chip selector stores selected topics as hidden repeated topic inputs. #}
     <div class="notice-topic-filter" data-topic-filter>
       <span>Topic</span>
       <div class="notice-chip-box" data-chip-box>
@@ -262,6 +263,7 @@
     }
 
     function syncHiddenInputs() {
+      // Flask receives selected topics as repeated topic query parameters.
       form.querySelectorAll("input[data-topic-hidden]").forEach(function (node) {
         node.remove();
       });
@@ -306,6 +308,7 @@
     }
 
     function renderOptions() {
+      // Keep the dropdown limited to topics that are not already selected.
       var rows = availableValues();
       activeIndex = rows.length ? Math.min(Math.max(activeIndex, 0), rows.length - 1) : -1;
       options.innerHTML = "";
