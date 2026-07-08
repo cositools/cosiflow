@@ -86,6 +86,25 @@ def _notice_where(topics, validation_status, content_type):
     return f"WHERE {' AND '.join(where)}" if where else "", params
 
 
+def _outbox_where(status, dag_id, task_id, topic):
+    """Build the WHERE clause for outbound notice filters."""
+    where = []
+    params = []
+    if status:
+        where.append("status = %s")
+        params.append(status)
+    if dag_id:
+        where.append("created_by_dag_id = %s")
+        params.append(dag_id)
+    if task_id:
+        where.append("task_id = %s")
+        params.append(task_id)
+    if topic:
+        where.append("topic = %s")
+        params.append(topic)
+    return f"WHERE {' AND '.join(where)}" if where else "", params
+
+
 def _fetch_notice_count(topics, validation_status, content_type):
     where_sql, params = _notice_where(topics, validation_status, content_type)
     sql = f"SELECT COUNT(*) AS total FROM gcn_inbound_notices {where_sql}"
@@ -117,6 +136,67 @@ def _fetch_notices(limit, offset, topics, validation_status, content_type):
     for notice in notices:
         _enrich_notice_display(notice)
     return notices
+
+
+def _fetch_outbound_notice_count(status, dag_id, task_id, topic):
+    where_sql, params = _outbox_where(status, dag_id, task_id, topic)
+    sql = f"SELECT COUNT(*) AS total FROM gcn_outbound_notices {where_sql}"
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+            return int(row["total"] or 0)
+
+
+def _fetch_outbound_notices(limit, offset, status, dag_id, task_id, topic):
+    where_sql, params = _outbox_where(status, dag_id, task_id, topic)
+    sql = f"""
+        SELECT
+          id, created_at, updated_at, status, topic, topic_kind,
+          validation_status, mission, instrument, alert_type, alert_tense,
+          record_number, event_name, trigger_time, alert_datetime,
+          created_by_dag_id, dag_run_id, task_id, source_pipeline,
+          attempts_count, max_attempts, last_error, published_at,
+          payload_sha256, idempotency_key
+        FROM gcn_outbound_notices
+        {where_sql}
+        ORDER BY created_at DESC
+        LIMIT %s OFFSET %s
+    """
+    params.extend([limit, offset])
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+def _fetch_outbound_topics():
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT topic, COUNT(*) AS notice_count
+                FROM gcn_outbound_notices
+                GROUP BY topic
+                ORDER BY topic
+                """
+            )
+            return cur.fetchall()
+
+
+def _fetch_outbound_dags():
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT created_by_dag_id AS dag_id, COUNT(*) AS notice_count
+                FROM gcn_outbound_notices
+                WHERE created_by_dag_id IS NOT NULL
+                GROUP BY created_by_dag_id
+                ORDER BY created_by_dag_id
+                """
+            )
+            return cur.fetchall()
 
 
 def _parse_classic_text(raw_payload):
@@ -221,6 +301,35 @@ def _fetch_notice(notice_id):
     return notice
 
 
+def _fetch_outbound_notice(notice_id):
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM gcn_outbound_notices WHERE id = %s", (notice_id,))
+            notice = cur.fetchone()
+    return notice
+
+
+def _fetch_outbound_attempts(notice_id):
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                  id, attempt_no, started_at, finished_at, status, dry_run,
+                  topic, producer_client_label, kafka_partition, kafka_offset,
+                  kafka_metadata_json, error_class, error_message, payload_sha256
+                FROM gcn_delivery_attempts
+                WHERE outbound_notice_id = %s
+                ORDER BY attempt_no DESC, id DESC
+                """,
+                (notice_id,),
+            )
+            attempts = cur.fetchall()
+    for attempt in attempts:
+        attempt["kafka_metadata_pretty"] = _json_pretty(attempt.get("kafka_metadata_json"))
+    return attempts
+
+
 def _fetch_heartbeats():
     with _connect() as conn:
         with conn.cursor() as cur:
@@ -239,13 +348,21 @@ def _fetch_heartbeats():
 
 def _page_url(page, filters):
     """Build pagination URLs while preserving active filters."""
-    query = []
+    query = [("tab", filters["tab"])]
     for topic in filters["topics"]:
         query.append(("topic", topic))
     if filters["validation_status"]:
         query.append(("validation_status", filters["validation_status"]))
     if filters["content_type"]:
         query.append(("content_type", filters["content_type"]))
+    if filters["outbox_status"]:
+        query.append(("outbox_status", filters["outbox_status"]))
+    if filters["dag_id"]:
+        query.append(("dag_id", filters["dag_id"]))
+    if filters["task_id"]:
+        query.append(("task_id", filters["task_id"]))
+    if filters["outbox_topic"]:
+        query.append(("outbox_topic", filters["outbox_topic"]))
     query.extend(
         [
             ("limit", filters["limit"]),
@@ -285,36 +402,69 @@ class ExploreNoticesView(BaseView):
     def index(self):
         if not current_user.is_authenticated:
             return redirect("/login/?next=/explore-notices/")
+        tab = request.args.get("tab", "inbox").strip().lower()
+        if tab not in {"inbox", "outbox"}:
+            tab = "inbox"
         limit = _bounded_int(request.args.get("limit"), 15, 1, 500)
         page = _bounded_int(request.args.get("page"), 1, 1, 1000000)
         topics = _normalize_topics(request.args.getlist("topic"))
         validation_status = request.args.get("validation_status", "").strip()
         content_type = request.args.get("content_type", "").strip()
+        outbox_status = request.args.get("outbox_status", "").strip()
+        dag_id = request.args.get("dag_id", "").strip()
+        task_id = request.args.get("task_id", "").strip()
+        outbox_topic = request.args.get("outbox_topic", "").strip()
         filters = {
+            "tab": tab,
             "limit": limit,
             "topics": topics,
             "validation_status": validation_status,
             "content_type": content_type,
+            "outbox_status": outbox_status,
+            "dag_id": dag_id,
+            "task_id": task_id,
+            "outbox_topic": outbox_topic,
         }
         error = None
         notices = []
+        outbound_notices = []
         heartbeats = []
         available_topics = []
+        outbound_topics = []
+        outbound_dags = []
         pagination = _pagination(1, limit, 0, filters)
         try:
-            total_count = _fetch_notice_count(topics, validation_status, content_type)
+            if tab == "outbox":
+                total_count = _fetch_outbound_notice_count(outbox_status, dag_id, task_id, outbox_topic)
+            else:
+                total_count = _fetch_notice_count(topics, validation_status, content_type)
             pagination = _pagination(page, limit, total_count, filters)
             offset = (pagination["page"] - 1) * limit
-            notices = _fetch_notices(limit, offset, topics, validation_status, content_type)
+            if tab == "outbox":
+                outbound_notices = _fetch_outbound_notices(
+                    limit,
+                    offset,
+                    outbox_status,
+                    dag_id,
+                    task_id,
+                    outbox_topic,
+                )
+            else:
+                notices = _fetch_notices(limit, offset, topics, validation_status, content_type)
             heartbeats = _fetch_heartbeats()
             available_topics = _fetch_topics()
+            outbound_topics = _fetch_outbound_topics()
+            outbound_dags = _fetch_outbound_dags()
         except Exception as exc:
             error = str(exc)
         return self.render_template(
             "explore_notices.html",
             notices=notices,
+            outbound_notices=outbound_notices,
             heartbeats=heartbeats,
             available_topics=available_topics,
+            outbound_topics=outbound_topics,
+            outbound_dags=outbound_dags,
             pagination=pagination,
             error=error,
             filters=filters,
@@ -338,6 +488,28 @@ class ExploreNoticesView(BaseView):
         return self.render_template(
             "explore_notice_detail.html",
             notice=notice,
+            error=error,
+        )
+
+    @expose("/outbox/<int:notice_id>")
+    @login_required
+    def outbox_detail(self, notice_id):
+        error = None
+        notice = None
+        attempts = []
+        try:
+            notice = _fetch_outbound_notice(notice_id)
+            attempts = _fetch_outbound_attempts(notice_id)
+            if notice:
+                notice["payload_json_pretty"] = _json_pretty(notice.get("payload_json"))
+                notice["validation_errors_pretty"] = _json_pretty(notice.get("validation_errors"))
+                notice["event_ids_pretty"] = _json_pretty(notice.get("event_ids"))
+        except Exception as exc:
+            error = str(exc)
+        return self.render_template(
+            "explore_outbox_detail.html",
+            notice=notice,
+            attempts=attempts,
             error=error,
         )
 

@@ -3,6 +3,33 @@
 {% block content %}
 <style>
   .notice-wrap { padding: 18px 24px; }
+  .notice-tabs { border-bottom: 1px solid #ddd; display: flex; gap: 4px; margin: 16px 0; }
+  .notice-tab {
+    border: 1px solid transparent;
+    border-radius: 4px 4px 0 0;
+    color: #337ab7;
+    display: inline-block;
+    font-weight: 600;
+    margin-bottom: -1px;
+    padding: 9px 14px;
+    text-decoration: none;
+  }
+  .notice-tab.is-active {
+    background: #fff;
+    border-color: #ddd;
+    border-bottom-color: #fff;
+    color: #333;
+  }
+  .notice-summary {
+    background: #f8fbfd;
+    border: 1px solid #d9e7f2;
+    border-radius: 4px;
+    color: #2b4c60;
+    margin-bottom: 16px;
+    padding: 11px 13px;
+  }
+  .notice-summary p { margin: 0 0 7px; }
+  .notice-summary p:last-child { margin-bottom: 0; }
   .notice-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 18px; }
   .notice-toolbar label { display: grid; gap: 4px; font-weight: 600; }
   .notice-toolbar input, .notice-toolbar select { min-width: 160px; padding: 5px 8px; }
@@ -108,14 +135,33 @@
   .notice-pager .is-active { background: #337ab7; border-color: #337ab7; color: #fff; }
   .notice-pager .is-disabled { color: #aaa; cursor: not-allowed; }
   .notice-count { color: #555; }
+  .notice-hash { display: inline-block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .notice-error-cell { max-width: 300px; white-space: pre-wrap; word-break: break-word; }
 </style>
 
 <div class="notice-wrap">
   <h2>Explore Notices</h2>
-  <p class="notice-muted">Consumer inbox GCN salvata in MySQL. Aggiornato: {{ now }}</p>
+  <p class="notice-muted">GCN client inbox/outbox salvate in MySQL. Aggiornato: {{ now }}</p>
+
+  <div class="notice-tabs">
+    <a class="notice-tab {% if filters.tab == 'inbox' %}is-active{% endif %}" href="{{ url_for('ExploreNoticesView.index', tab='inbox') }}">Inbox</a>
+    <a class="notice-tab {% if filters.tab == 'outbox' %}is-active{% endif %}" href="{{ url_for('ExploreNoticesView.index', tab='outbox') }}">Outbox</a>
+  </div>
 
   {% if error %}
     <div class="notice-error">{{ error }}</div>
+  {% endif %}
+
+  {% if filters.tab == 'inbox' %}
+    <div class="notice-summary">
+      <p><strong>Inbox</strong> mostra le notice ricevute dal consumer GCN e normalizzate in <code>gcn_inbound_notices</code>.</p>
+      <p>Usala per verificare topic in ingresso, parsing, validazione e metadati derivati da payload JSON, VOEvent o classic text.</p>
+    </div>
+  {% else %}
+    <div class="notice-summary">
+      <p><strong>Outbox</strong> mostra le notice create dai DAG COSIflow e accodate in <code>gcn_outbound_notices</code>.</p>
+      <p><code>dry_run_published</code> significa che il publisher ha validato la notice e simulato l'invio; <code>published</code> indica un invio reale. <code>last_error</code> deve rimanere vuoto per un test riuscito.</p>
+    </div>
   {% endif %}
 
   <div class="notice-heartbeats">
@@ -141,78 +187,162 @@
     {% endif %}
   </div>
 
-  <form class="notice-toolbar" method="get">
-    {# The chip selector stores selected topics as hidden repeated topic inputs. #}
-    <div class="notice-topic-filter" data-topic-filter>
-      <span>Topic</span>
-      <div class="notice-chip-box" data-chip-box>
-        <input
-          class="notice-topic-input"
-          type="text"
-          autocomplete="off"
-          placeholder="Filter topics by tag"
-          data-topic-input
-        >
+  {% if filters.tab == 'inbox' %}
+    <form class="notice-toolbar" method="get">
+      <input type="hidden" name="tab" value="inbox">
+      {# The chip selector stores selected topics as hidden repeated topic inputs. #}
+      <div class="notice-topic-filter" data-topic-filter>
+        <span>Topic</span>
+        <div class="notice-chip-box" data-chip-box>
+          <input
+            class="notice-topic-input"
+            type="text"
+            autocomplete="off"
+            placeholder="Filter topics by tag"
+            data-topic-input
+          >
+        </div>
+        <div class="notice-topic-options" data-topic-options></div>
       </div>
-      <div class="notice-topic-options" data-topic-options></div>
-    </div>
-    <label>Validation
-      <select name="validation_status">
-        <option value="">Any</option>
-        {% for value in ["valid", "invalid", "not_applicable", "not_checked"] %}
-          <option value="{{ value }}" {% if filters.validation_status == value %}selected{% endif %}>{{ value }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Content
-      <select name="content_type">
-        <option value="">Any</option>
-        {% for value in ["json", "voevent_xml", "text", "unknown"] %}
-          <option value="{{ value }}" {% if filters.content_type == value %}selected{% endif %}>{{ value }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Limit
-      <input type="number" min="1" max="500" name="limit" value="{{ filters.limit }}">
-    </label>
-    <button type="submit">Apply</button>
-  </form>
+      <label>Validation
+        <select name="validation_status">
+          <option value="">Any</option>
+          {% for value in ["valid", "invalid", "not_applicable", "not_checked"] %}
+            <option value="{{ value }}" {% if filters.validation_status == value %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Content
+        <select name="content_type">
+          <option value="">Any</option>
+          {% for value in ["json", "voevent_xml", "text", "unknown"] %}
+            <option value="{{ value }}" {% if filters.content_type == value %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Limit
+        <input type="number" min="1" max="500" name="limit" value="{{ filters.limit }}">
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+  {% else %}
+    <form class="notice-toolbar" method="get">
+      <input type="hidden" name="tab" value="outbox">
+      <label>Status
+        <select name="outbox_status">
+          <option value="">Any</option>
+          {% for value in ["queued", "locked", "dry_run_published", "published", "failed", "invalid", "cancelled"] %}
+            <option value="{{ value }}" {% if filters.outbox_status == value %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>DAG
+        <select name="dag_id">
+          <option value="">Any</option>
+          {% for row in outbound_dags %}
+            <option value="{{ row.dag_id }}" {% if filters.dag_id == row.dag_id %}selected{% endif %}>
+              {{ row.dag_id }} ({{ row.notice_count }})
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Task
+        <input type="text" name="task_id" value="{{ filters.task_id }}" placeholder="GCN_GeD">
+      </label>
+      <label>Topic
+        <select name="outbox_topic">
+          <option value="">Any</option>
+          {% for row in outbound_topics %}
+            <option value="{{ row.topic }}" {% if filters.outbox_topic == row.topic %}selected{% endif %}>
+              {{ row.topic }} ({{ row.notice_count }})
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Limit
+        <input type="number" min="1" max="500" name="limit" value="{{ filters.limit }}">
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+  {% endif %}
 
   <div class="notice-grid">
-    <table class="notice-table">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Received</th>
-          <th>Topic</th>
-          <th>Offset</th>
-          <th>Type</th>
-          <th>Validation</th>
-          <th>Mission</th>
-          <th>Event / Trigger</th>
-          <th>Time</th>
-          <th>Position</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for notice in notices %}
+    {% if filters.tab == 'inbox' %}
+      <table class="notice-table">
+        <thead>
           <tr>
-            <td><a href="{{ url_for('ExploreNoticesView.notice_detail', notice_id=notice.id) }}">{{ notice.id }}</a></td>
-            <td>{{ notice.received_at }}</td>
-            <td>{{ notice.topic }}</td>
-            <td>{{ notice.kafka_offset }}</td>
-            <td>{{ notice.content_type }}<br><span class="notice-muted">{{ notice.parse_status }}</span></td>
-            <td><span class="notice-status">{{ notice.validation_status }}</span></td>
-            <td>{{ notice.mission or "" }}<br><span class="notice-muted">{{ notice.instrument or "" }}</span></td>
-            <td>{{ notice.event_display }}</td>
-            <td>{{ notice.time_display }}</td>
-            <td>{{ notice.position_display }}</td>
+            <th>ID</th>
+            <th>Received</th>
+            <th>Topic</th>
+            <th>Offset</th>
+            <th>Type</th>
+            <th>Validation</th>
+            <th>Mission</th>
+            <th>Event / Trigger</th>
+            <th>Time</th>
+            <th>Position</th>
           </tr>
-        {% else %}
-          <tr><td colspan="10" class="notice-muted">No notices found.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {% for notice in notices %}
+            <tr>
+              <td><a href="{{ url_for('ExploreNoticesView.notice_detail', notice_id=notice.id) }}">{{ notice.id }}</a></td>
+              <td>{{ notice.received_at }}</td>
+              <td>{{ notice.topic }}</td>
+              <td>{{ notice.kafka_offset }}</td>
+              <td>{{ notice.content_type }}<br><span class="notice-muted">{{ notice.parse_status }}</span></td>
+              <td><span class="notice-status">{{ notice.validation_status }}</span></td>
+              <td>{{ notice.mission or "" }}<br><span class="notice-muted">{{ notice.instrument or "" }}</span></td>
+              <td>{{ notice.event_display }}</td>
+              <td>{{ notice.time_display }}</td>
+              <td>{{ notice.position_display }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="10" class="notice-muted">No notices found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <table class="notice-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Status</th>
+            <th>Topic</th>
+            <th>Attempts</th>
+            <th>Last Error</th>
+            <th>Published</th>
+            <th>DAG Run</th>
+            <th>Payload</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for notice in outbound_notices %}
+            <tr>
+              <td><a href="{{ url_for('ExploreNoticesView.outbox_detail', notice_id=notice.id) }}">{{ notice.id }}</a></td>
+              <td>
+                <span class="notice-status">{{ notice.status }}</span><br>
+                <span class="notice-muted">{{ notice.validation_status }}</span>
+              </td>
+              <td>{{ notice.topic }}<br><span class="notice-muted">{{ notice.topic_kind }}</span></td>
+              <td>{{ notice.attempts_count }} / {{ notice.max_attempts }}</td>
+              <td class="notice-error-cell">{{ notice.last_error or "" }}</td>
+              <td>{{ notice.published_at or "" }}</td>
+              <td>
+                {{ notice.dag_run_id or "" }}<br>
+                <span class="notice-muted">{{ notice.created_by_dag_id or "" }} / {{ notice.task_id or "" }}</span>
+              </td>
+              <td>
+                {{ notice.event_name or "" }}<br>
+                <span class="notice-muted notice-hash">{{ notice.payload_sha256 }}</span>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="8" class="notice-muted">No outbound notices found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
     <div class="notice-pager-row">
       <div class="notice-pager">
         {% if pagination.has_prev %}
@@ -232,7 +362,7 @@
         {% endif %}
       </div>
       <div class="notice-count">
-        Showing {{ pagination.start }}-{{ pagination.end }} of {{ pagination.total_count }} notices
+        Showing {{ pagination.start }}-{{ pagination.end }} of {{ pagination.total_count }} {{ filters.tab }} notices
       </div>
     </div>
   </div>

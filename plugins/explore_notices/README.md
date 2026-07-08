@@ -4,14 +4,18 @@ The Explore Notices plugin adds an Airflow AppBuilder page for inspecting GCN no
 
 It is registered under `Results Browser > Explore Notices` and exposes two views:
 
-- `/explore-notices/`: paginated notice inbox with filters and client heartbeat status.
-- `/explore-notices/notice/<id>`: full notice detail view with raw payload, JSON payload, validation errors, and derived summary fields.
+- `/explore-notices/?tab=inbox`: paginated notice inbox with filters and client heartbeat status.
+- `/explore-notices/?tab=outbox`: paginated outbound notice outbox with delivery status and attempt summary.
+- `/explore-notices/notice/<id>`: full inbox notice detail view with raw payload, JSON payload, validation errors, and derived summary fields.
+- `/explore-notices/outbox/<id>`: full outbound notice detail view with payload JSON, validation errors, source DAG metadata, and delivery attempts.
 
 ## Data Source
 
 The plugin reads from the GCN client tables:
 
 - `gcn_inbound_notices`
+- `gcn_outbound_notices`
+- `gcn_delivery_attempts`
 - `gcn_client_heartbeats`
 
 Database connection settings are read from the same environment variables used by the GCN client:
@@ -23,7 +27,7 @@ Database connection settings are read from the same environment variables used b
 - `GCN_DB_PASSWORD`
 - `GCN_DB_CONNECT_TIMEOUT`
 
-## Notice List
+## Inbox Notice List
 
 The list view supports:
 
@@ -54,11 +58,24 @@ To keep the UI useful without requiring a database backfill, the plugin derives 
 
 These derived values are only used for display. They do not update rows in `gcn_inbound_notices`.
 
+## Outbox Notice List
+
+The outbox tab shows notices written by COSIflow DAG tasks before they are handed to the GCN producer. It highlights the fields used for operational checks:
+
+- `status`: `queued`, `locked`, `dry_run_published`, `published`, `failed`, `invalid`, or `cancelled`.
+- `attempts_count` / `max_attempts`: how many publish attempts have been made.
+- `last_error`: the latest validation, safety, or producer failure. Empty means no current failure.
+- `published_at`: when the worker finished a dry-run or real publish attempt.
+- `dag_run_id`, `created_by_dag_id`, and `task_id`: the Airflow source of the outbound notice.
+
+For local prototype runs, `dry_run_published` is the expected success state when `GCN_DRY_RUN=true` or `GCN_PRODUCER_ENABLED=false`.
+
 ## Files
 
 - `explore_notices_plugin.py`: Flask/AppBuilder view, SQL queries, pagination, and notice display enrichment.
-- `templates/explore_notices.html`: list view, filters, topic chip selector, pagination controls.
+- `templates/explore_notices.html`: inbox/outbox tabbed list view, filters, topic chip selector, pagination controls.
 - `templates/explore_notice_detail.html`: detail view for a single notice.
+- `templates/explore_outbox_detail.html`: detail view for an outbound notice and its delivery attempts.
 
 ## Development Notes
 
