@@ -1,14 +1,20 @@
 """Airflow plugin for browsing GCN notices stored by the COSIflow GCN client."""
 
+import hashlib
 import json
 import os
 import re
-from datetime import datetime
+import socket
+from datetime import datetime, timezone
 from urllib.parse import urlencode
+from urllib.parse import urlparse
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+from uuid import uuid4
 
 import pymysql
 from airflow.plugins_manager import AirflowPlugin
-from flask import Blueprint, redirect, request
+from flask import Blueprint, flash, redirect, request, url_for
 from flask_appbuilder import BaseView, expose
 from flask_login import current_user, login_required
 
@@ -47,12 +53,121 @@ def _json_pretty(value):
         return str(value)
 
 
+def _payload_sha256(value):
+    if isinstance(value, str):
+        value = value.encode("utf-8")
+    return hashlib.sha256(value).hexdigest()
+
+
+def _canonical_json(payload):
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def _json_or_none(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def _schema_version(schema_url):
+    if not schema_url:
+        return None
+    text = str(schema_url)
+    marker = "/schema/"
+    if marker not in text:
+        return None
+    tail = text.split(marker, 1)[1]
+    return tail.split("/", 1)[0] if "/" in tail else tail
+
+
+def _parse_iso_datetime(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ", timespec="microseconds")
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed.isoformat(sep=" ", timespec="microseconds")
+
+
+def _string_or_json(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return _canonical_json(value)
+
+
+def _normalize_json_notice(payload):
+    event_ids = payload.get("id")
+    if event_ids is not None and not isinstance(event_ids, list):
+        event_ids = [event_ids]
+    return {
+        "schema_url": payload.get("$schema"),
+        "schema_version": _schema_version(payload.get("$schema")),
+        "mission": payload.get("mission"),
+        "instrument": payload.get("instrument"),
+        "alert_type": payload.get("alert_type"),
+        "alert_tense": payload.get("alert_tense"),
+        "event_name": _string_or_json(payload.get("event_name")),
+        "event_ids": event_ids,
+        "trigger_time": _parse_iso_datetime(payload.get("trigger_time")),
+        "alert_datetime": _parse_iso_datetime(payload.get("alert_datetime")),
+        "ra_deg": payload.get("ra"),
+        "dec_deg": payload.get("dec"),
+        "ra_dec_error_json": payload.get("ra_dec_error"),
+        "healpix_url": payload.get("healpix_url"),
+        "classification_json": payload.get("classification"),
+        "record_number": payload.get("record_number"),
+    }
+
+
 def _normalize_topics(values):
     topics = []
     seen = set()
     for value in values:
         for topic in value.split(","):
             topic = topic.strip()
+            if topic and topic not in seen:
+                topics.append(topic)
+                seen.add(topic)
+    return topics
+
+
+def _csv_env(name, default=""):
+    raw = os.environ.get(name, default)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _configured_consumer_topics():
+    return _csv_env("GCN_CONSUMER_TOPICS")
+
+
+def _subscribed_topics(heartbeats):
+    topics = []
+    seen = set()
+    for topic in _configured_consumer_topics():
+        topics.append(topic)
+        seen.add(topic)
+    for heartbeat in heartbeats:
+        details = heartbeat.get("details_json")
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except Exception:
+                details = {}
+        if not isinstance(details, dict):
+            continue
+        for topic in details.get("topics") or []:
             if topic and topic not in seen:
                 topics.append(topic)
                 seen.add(topic)
@@ -330,7 +445,7 @@ def _fetch_outbound_attempts(notice_id):
     return attempts
 
 
-def _fetch_heartbeats():
+def _fetch_heartbeats(service_status=None):
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -341,9 +456,317 @@ def _fetch_heartbeats():
                 """
             )
             rows = cur.fetchall()
+    service_status = service_status or _fetch_gcn_service_status()
+    existing = {row.get("component") for row in rows}
+    for component in ["inbound", "outbox"]:
+        if component not in existing:
+            rows.append(
+                {
+                    "component": component,
+                    "updated_at": None,
+                    "status": "off",
+                    "details_json": {"reason": "no heartbeat row"},
+                }
+            )
     for row in rows:
+        if service_status.get("status_class") == "off":
+            row["status"] = "off"
+            details = row.get("details_json")
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details)
+                except Exception:
+                    details = {"raw_details": details}
+            if not isinstance(details, dict):
+                details = {}
+            details["service_state"] = service_status.get("raw_status")
+            row["details_json"] = details
         row["details_pretty"] = _json_pretty(row.get("details_json"))
+        row["status_class"] = _heartbeat_status_class(row.get("status"))
     return rows
+
+
+def _heartbeat_status_class(status):
+    status = str(status or "").strip().lower()
+    if status == "running":
+        return "running"
+    if status in {"warning", "warn", "idle", "degraded", "starting", "locked"}:
+        return "warning"
+    if status in {"off", "offline", "stopped", "down", "failed", "error", "dead"}:
+        return "off"
+    return "unknown"
+
+
+def _docker_base_url():
+    docker_host = os.environ.get("DOCKER_HOST", "tcp://docker-proxy:2375")
+    parsed = urlparse(docker_host)
+    if parsed.scheme == "tcp":
+        return f"http://{parsed.netloc}"
+    if parsed.scheme in {"http", "https"}:
+        return docker_host.rstrip("/")
+    return "http://docker-proxy:2375"
+
+
+def _fetch_gcn_service_status():
+    container = os.environ.get("GCN_CLIENT_CONTAINER", "cosi_gcn_client")
+    url = f"{_docker_base_url()}/containers/{container}/json"
+    status = {
+        "name": container,
+        "status": "unknown",
+        "status_class": "unknown",
+        "raw_status": "unknown",
+        "started_at": None,
+        "finished_at": None,
+    }
+    request = Request(url, method="GET")
+    try:
+        with urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        if exc.code == 404:
+            status.update(
+                {
+                    "status": "off",
+                    "status_class": "off",
+                    "raw_status": "not_found",
+                }
+            )
+            return status
+        status.update(
+            {
+                "status": "warning",
+                "status_class": "warning",
+                "raw_status": f"docker_status_http_{exc.code}",
+            }
+        )
+        return status
+    except Exception as exc:
+        status.update(
+            {
+                "status": "warning",
+                "status_class": "warning",
+                "raw_status": f"docker_status_unavailable: {exc}",
+            }
+        )
+        return status
+
+    state = payload.get("State") or {}
+    running = bool(state.get("Running"))
+    raw_status = state.get("Status") or ("running" if running else "stopped")
+    status.update(
+        {
+            "status": "running" if running else "off",
+            "status_class": "running" if running else "off",
+            "raw_status": raw_status,
+            "started_at": state.get("StartedAt"),
+            "finished_at": state.get("FinishedAt"),
+        }
+    )
+    return status
+
+
+def _control_gcn_container(action, component):
+    allowed = {"start", "stop", "restart"}
+    action = str(action or "").strip().lower()
+    component = str(component or "gcn-client").strip() or "gcn-client"
+    if action not in allowed:
+        raise ValueError(f"Unsupported control action: {action}")
+    container = os.environ.get("GCN_CLIENT_CONTAINER", "cosi_gcn_client")
+    query = "?t=2" if action in {"stop", "restart"} else ""
+    url = f"{_docker_base_url()}/containers/{container}/{action}{query}"
+    request = Request(url, data=b"", method="POST", headers={"Content-Length": "0"})
+    timed_out = False
+    try:
+        with urlopen(request, timeout=45) as response:
+            response.read()
+    except HTTPError as exc:
+        if exc.code not in {204, 304}:
+            raise
+    except (TimeoutError, socket.timeout):
+        if action not in {"stop", "restart"}:
+            raise
+        timed_out = True
+    return {
+        "action": action,
+        "component": component,
+        "container": container,
+        "timed_out": timed_out,
+    }
+
+
+def _inject_inbound_notice(raw_payload, topic, source):
+    raw_payload = str(raw_payload or "")
+    topic = str(topic or "").strip()
+    source = str(source or "manual").strip() or "manual"
+    if not topic:
+        raise ValueError("Inbox topic is required.")
+    subscribed_topics = _configured_consumer_topics()
+    if subscribed_topics and topic not in subscribed_topics:
+        raise ValueError(f"Inbox topic {topic!r} is not among configured GCN_CONSUMER_TOPICS.")
+    if not subscribed_topics:
+        raise ValueError("No GCN_CONSUMER_TOPICS configured; manual inbox injection is disabled.")
+    if not raw_payload.strip():
+        raise ValueError("Inbox payload is required.")
+
+    payload_json = None
+    normalized = {}
+    content_type = "unknown"
+    parse_status = "raw_only"
+    validation_status = "not_applicable"
+    validation_errors = None
+    try:
+        parsed = json.loads(raw_payload)
+        content_type = "json"
+        if not isinstance(parsed, dict):
+            parse_status = "failed"
+            validation_status = "invalid"
+            validation_errors = [{"message": "JSON notice payload must be an object"}]
+        else:
+            payload_json = parsed
+            normalized = _normalize_json_notice(parsed)
+            parse_status = "parsed"
+            validation_status = "not_checked"
+    except json.JSONDecodeError as exc:
+        validation_errors = [{"message": str(exc), "parser": "manual_json"}]
+        content_type = "text" if topic.startswith("gcn.classic.text.") else "unknown"
+
+    row = {
+        "notice_uuid": str(uuid4()),
+        "source": source,
+        "topic": topic,
+        "content_type": content_type,
+        "payload_sha256": _payload_sha256(raw_payload),
+        "raw_payload": raw_payload,
+        "payload_json": payload_json,
+        "parse_status": parse_status,
+        "validation_status": validation_status,
+        "validation_errors": validation_errors,
+        **normalized,
+    }
+    columns = [
+        "notice_uuid",
+        "source",
+        "topic",
+        "content_type",
+        "payload_sha256",
+        "raw_payload",
+        "payload_json",
+        "parse_status",
+        "validation_status",
+        "validation_errors",
+        "schema_url",
+        "schema_version",
+        "mission",
+        "instrument",
+        "alert_type",
+        "alert_tense",
+        "event_name",
+        "event_ids",
+        "trigger_time",
+        "alert_datetime",
+        "ra_deg",
+        "dec_deg",
+        "ra_dec_error_json",
+        "healpix_url",
+        "classification_json",
+    ]
+    for json_column in ["payload_json", "validation_errors", "event_ids", "ra_dec_error_json", "classification_json"]:
+        row[json_column] = _json_or_none(row.get(json_column))
+    placeholders = ", ".join(["%s"] * len(columns))
+    sql = f"INSERT INTO gcn_inbound_notices ({', '.join(columns)}) VALUES ({placeholders})"
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, [row.get(column) for column in columns])
+            conn.commit()
+            return int(cur.lastrowid)
+
+
+def _queue_manual_outbound_notice(raw_payload, topic, idempotency_key=None):
+    raw_payload = str(raw_payload or "")
+    topic = str(topic or "").strip()
+    if not topic:
+        raise ValueError("Outbox topic is required.")
+    if not raw_payload.strip():
+        raise ValueError("Outbox JSON payload is required.")
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Outbox payload must be valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Outbox payload must be a JSON object.")
+
+    canonical = _canonical_json(payload)
+    payload_hash = _payload_sha256(canonical)
+    normalized = _normalize_json_notice(payload)
+    key = str(idempotency_key or "").strip() or f"manual:{topic}:{payload_hash}"
+    row = {
+        "outbox_uuid": str(uuid4()),
+        "status": "queued",
+        "topic": topic,
+        "topic_kind": "test" if "test" in topic.lower() else "manual",
+        "payload_json": canonical,
+        "payload_sha256": payload_hash,
+        "validation_status": "not_checked",
+        "validation_errors": None,
+        "created_by_dag_id": "manual",
+        "dag_run_id": f"manual__{datetime.utcnow().isoformat(timespec='seconds')}",
+        "task_id": "manual_injection",
+        "source_pipeline": "manual",
+        "priority": 0,
+        "max_attempts": int(os.environ.get("GCN_MAX_ATTEMPTS", "3")),
+        "idempotency_key": key,
+        **normalized,
+    }
+    columns = [
+        "outbox_uuid",
+        "status",
+        "topic",
+        "topic_kind",
+        "payload_json",
+        "payload_sha256",
+        "schema_url",
+        "schema_version",
+        "validation_status",
+        "validation_errors",
+        "mission",
+        "instrument",
+        "alert_type",
+        "alert_tense",
+        "record_number",
+        "event_name",
+        "event_ids",
+        "trigger_time",
+        "alert_datetime",
+        "created_by_dag_id",
+        "dag_run_id",
+        "task_id",
+        "source_pipeline",
+        "priority",
+        "max_attempts",
+        "idempotency_key",
+    ]
+    for json_column in ["payload_json", "validation_errors", "event_ids"]:
+        row[json_column] = _json_or_none(row.get(json_column))
+    placeholders = ", ".join(["%s"] * len(columns))
+    update_columns = [
+        "updated_at = CURRENT_TIMESTAMP(6)",
+        "id = LAST_INSERT_ID(id)",
+        "payload_json = VALUES(payload_json)",
+        "payload_sha256 = VALUES(payload_sha256)",
+        "validation_status = VALUES(validation_status)",
+        "validation_errors = VALUES(validation_errors)",
+        "last_error = NULL",
+    ]
+    sql = f"""
+        INSERT INTO gcn_outbound_notices ({", ".join(columns)})
+        VALUES ({placeholders})
+        ON DUPLICATE KEY UPDATE {", ".join(update_columns)}
+    """
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, [row.get(column) for column in columns])
+            conn.commit()
+            return int(cur.lastrowid)
 
 
 def _page_url(page, filters):
@@ -397,6 +820,58 @@ class ExploreNoticesView(BaseView):
     default_view = "index"
     route_base = "/explore-notices"
 
+    @expose("/inject-inbox", methods=["POST"])
+    @login_required
+    def inject_inbox(self):
+        if not current_user.is_authenticated:
+            return redirect("/login/?next=/explore-notices/")
+        try:
+            notice_id = _inject_inbound_notice(
+                request.form.get("payload", ""),
+                request.form.get("topic", ""),
+                request.form.get("source", "manual"),
+            )
+            flash(f"Manual inbox notice inserted with ID {notice_id}.", "success")
+        except Exception as exc:
+            flash(f"Manual inbox injection failed: {exc}", "error")
+        return redirect(url_for("ExploreNoticesView.index", tab="inbox"))
+
+    @expose("/inject-outbox", methods=["POST"])
+    @login_required
+    def inject_outbox(self):
+        if not current_user.is_authenticated:
+            return redirect("/login/?next=/explore-notices/")
+        try:
+            notice_id = _queue_manual_outbound_notice(
+                request.form.get("payload", ""),
+                request.form.get("topic", ""),
+                request.form.get("idempotency_key", ""),
+            )
+            flash(f"Manual outbox notice queued with ID {notice_id}.", "success")
+        except Exception as exc:
+            flash(f"Manual outbox injection failed: {exc}", "error")
+        return redirect(url_for("ExploreNoticesView.index", tab="outbox"))
+
+    @expose("/control-component", methods=["POST"])
+    @login_required
+    def control_component(self):
+        if not current_user.is_authenticated:
+            return redirect("/login/?next=/explore-notices/")
+        tab = request.form.get("tab", "inbox")
+        try:
+            result = _control_gcn_container(
+                request.form.get("action", ""),
+                request.form.get("component", ""),
+            )
+            suffix = " The Docker API did not return before timeout, but the request was sent." if result.get("timed_out") else ""
+            flash(
+                f"Requested {result['action']} for {result['component']} via container {result['container']}.{suffix}",
+                "success",
+            )
+        except Exception as exc:
+            flash(f"Component control failed: {exc}", "error")
+        return redirect(url_for("ExploreNoticesView.index", tab=tab))
+
     @expose("/")
     @login_required
     def index(self):
@@ -432,6 +907,8 @@ class ExploreNoticesView(BaseView):
         available_topics = []
         outbound_topics = []
         outbound_dags = []
+        subscribed_topics = _configured_consumer_topics()
+        service_status = _fetch_gcn_service_status()
         pagination = _pagination(1, limit, 0, filters)
         try:
             if tab == "outbox":
@@ -451,7 +928,9 @@ class ExploreNoticesView(BaseView):
                 )
             else:
                 notices = _fetch_notices(limit, offset, topics, validation_status, content_type)
-            heartbeats = _fetch_heartbeats()
+            service_status = _fetch_gcn_service_status()
+            heartbeats = _fetch_heartbeats(service_status)
+            subscribed_topics = _subscribed_topics(heartbeats)
             available_topics = _fetch_topics()
             outbound_topics = _fetch_outbound_topics()
             outbound_dags = _fetch_outbound_dags()
@@ -465,6 +944,8 @@ class ExploreNoticesView(BaseView):
             available_topics=available_topics,
             outbound_topics=outbound_topics,
             outbound_dags=outbound_dags,
+            subscribed_topics=subscribed_topics,
+            service_status=service_status,
             pagination=pagination,
             error=error,
             filters=filters,
