@@ -1,0 +1,74 @@
+airflow:
+  compose_file: ../env/docker-compose.yaml
+  service: airflow
+  project_directory: ../env
+  container_data_root: /home/gamma/workspace/data
+  unpause_before_trigger: true
+
+csv:
+  output: results/cosidag_performance.csv
+  append: false
+
+charts:
+  enabled: true
+  output: results/charts
+  airflow_graphs:
+    enabled: true
+    output: airflow_graphs
+    format: png
+    include_graphviz: false
+
+polling:
+  interval_seconds:  1
+  timeout_seconds: 14400
+
+logging:
+  verbose_commands: false
+  show_subprocess_stderr: false
+  verbose_cleanup: false
+
+cleanup:
+  enabled: true
+  dry_run: false
+  verbose: false
+  roots:
+    - path: data/tdrss/2026_06/260630002
+      keep_files:
+        - DC4_final_530km_3_month_with_slew_1sbins_GalacticEarth_SAA.fits
+        - GRB_bn090424592_3months_unbinned_data_filtered_with_SAAcut.fits
+        - ResponseContinuum.o3.e100_10000.b10log.s10396905069491.m2284.filtered.nonsparse.binnedimaging.imagingresponse.h5
+        - Total_DC4_BG_3months_unbinned_data_filtered_with_SAAcut_withSAAbck_window.fits
+        - Total_DC4_BG_3months_unbinned_data_filtered_with_SAAcut_withSAAbck.fits
+    - path: data/tdrss/2026_06/260630001
+      keep_files:
+        - bn240810880light_curve.npz
+        - DC4_final_530km_3_month_with_slew_1sbins_GalacticEarth_SAA.fits
+        - ResponseContinuum.o3.e100_10000.b10log.s10396905069491.m2284.filtered.nonsparse.binnedimaging.imagingresponse.h5
+        - hard_lut_run10.pkl
+        - medium_lut_run10.pkl
+        - soft_lut_run10.pkl
+
+dags:
+  - dag_id: cosidag_BGO
+    reset_cosidag_variable: true
+    trigger: true
+    conf:
+      performance_test_dataset: data/tdrss/2026_06/260630001/products
+  - dag_id: cosidag_GeD
+    reset_cosidag_variable: true
+    trigger: true
+    conf:
+      performance_test_dataset: data/tdrss/2026_06/260630002/products
+
+resources:
+  docker_stats: true
+  containers:
+    - cosi_airflow
+  gpu:
+    enabled: false
+    container: cosi_airflow
+
+finalization:
+  pause_dags: true
+  stop_active_runs: true
+  stop_other_active_runs: true
