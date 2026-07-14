@@ -170,3 +170,6 @@ data/*
 
 # OS
 .DS_Store
+
+# Test folder
+test/results/*
