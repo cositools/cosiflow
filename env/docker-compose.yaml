@@ -4,7 +4,11 @@
 # Build arguments for Dockerfile (UID and GID)
 x-build-args: &build-args
   UID: ${UID:-}                                                # TOEDIT: set the UID of the user in the container (default: 501)
-  GID: ${GID:-}                                                # TOEDIT: set the GID of the user in the container (default: 20)
+  GID: ${GID:-}                                                 # TOEDIT: set the GID of the user in the container (default: 20)
+
+# Host values defined directly in this file (no .env required).
+x-host-ip: &host-ip "127.0.0.1"
+x-gcn-mysql-host-port: &gcn-mysql-host-port 3307
 
 x-common-env: &common-env
   #-------- BOOTSTRAP ID user for container (can be overridden via .env)
@@ -21,7 +25,7 @@ x-common-env: &common-env
   HOST_WORKSPACE_PATH: ${HOST_WORKSPACE_PATH:-${PWD}/../..}
   #-------- SMTP Settings for MailHog
   # HOST_IP: Define once here, use everywhere
-  HOST_IP: ${HOST_IP:-localhost}                      # TOEDIT: set the IP address of the host (default: localhost)
+  HOST_IP: *host-ip                                   # TOEDIT: set x-host-ip above
   MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}                 # TOEDIT: set the port for the MailHog Web UI (default: 8025)
   AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}                 # TOEDIT: set the port for the Airflow Web UI (default: 8080)
   # URLs will be constructed in entrypoint-airflow.sh as:
@@ -35,7 +39,7 @@ x-common-env: &common-env
 #-------- Database name for Airflow
   POSTGRES_DB: ${POSTGRES_DB:-airflow_db}            
 #-------- Password for Airflow DB
-  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}  # Password for Airflow DB
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}  # Password for Airflow DB
 ###################################
 ###### MAILHOG CONFIGURATION ######
 ###################################
@@ -76,6 +80,7 @@ x-common-env: &common-env
   # Dedicated MySQL DB for GCN notices; keep separate from Airflow Postgres.
   GCN_DB_HOST: ${GCN_DB_HOST:-gcn-mysql}
   GCN_DB_PORT: ${GCN_DB_PORT:-3306}
+  GCN_MYSQL_HOST_PORT: *gcn-mysql-host-port           # TOEDIT: set x-gcn-mysql-host-port above
   GCN_DB_NAME: ${GCN_DB_NAME:-gcn}
   GCN_DB_USER: ${GCN_DB_USER:-gcn_user}
   GCN_DB_PASSWORD: ${GCN_DB_PASSWORD:-gcn_password}
@@ -133,7 +138,11 @@ services:
     volumes:
       - ../data/gcn_mysql_data:/var/lib/mysql
     ports:
-      - "127.0.0.1:${GCN_MYSQL_HOST_PORT:-3307}:3306"
+      - name: gcn-mysql
+        target: 3306
+        published: *gcn-mysql-host-port
+        host_ip: *host-ip
+        protocol: tcp
 
   # ---------------------------------------------------------------------------
   # GCN CLIENT SERVICE
@@ -146,8 +155,6 @@ services:
     container_name: cosi_gcn_client
     environment:
       <<: *common-env
-    volumes:
-      - ../../GCN-design-for-COSIflow/gcn-schema:/app/gcn-schema:ro
     depends_on:
       gcn-mysql:
         condition: service_healthy
