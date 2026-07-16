@@ -535,15 +535,14 @@ create_single_env() {
     fi
     
     log "   - Creating environment '$env_name' at $venv_path..."
-    
-    # Create venv
-    dexec $python_bin -m venv "$venv_path" 2>/dev/null || {
-        # If venv already exists, remove it first
-        log "   -  Virtual environment already exists, removing old one..."
-        dexec rm -rf "$venv_path"
-        dexec $python_bin -m venv "$venv_path"
-    }
-    
+
+    # `python -m venv` succeeds even when the target already exists, leaving
+    # stale editable VCS checkouts under <venv>/src. Always recreate managed
+    # environments so changes of repository URL or pinned revision are applied
+    # non-interactively and reproducibly.
+    dexec rm -rf "$venv_path"
+    dexec "$python_bin" -m venv "$venv_path"
+
     if [ $? -ne 0 ]; then
         error "    Failed to create virtual environment for '$env_name'."
     fi
