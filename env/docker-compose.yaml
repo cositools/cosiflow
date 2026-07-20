@@ -243,8 +243,10 @@ services:
       - ..:/shared_dir
 
       # Data workspace directory for processing large files
-      - ../data:/home/gamma/workspace/data
+      - ../data/heasarc:/home/gamma/workspace/data
 
+      # Logs directory for Airflow (can be overridden via .env)
+      - ../data/logs:/home/gamma/airflow/logs
     ports:
       - "8080:8080"   # Airflow Web UI
       - "28888:28888" # Jupyter Notebook (if enabled)
