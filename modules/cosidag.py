@@ -1019,7 +1019,7 @@ class COSIDAG(DAG):
         show_results = PythonOperator(
             task_id="show_results",
             python_callable=_show_results,
-            trigger_rule=TriggerRule.ALL_DONE,
+            trigger_rule=TriggerRule.ALL_SUCCESS,
             dag=self,
         )
 
