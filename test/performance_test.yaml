@@ -13,7 +13,7 @@ charts:
   enabled: true
   output: results/charts
   airflow_graphs:
-    enabled: true
+    enabled: false
     output: airflow_graphs
     format: png
     include_graphviz: false
