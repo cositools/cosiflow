@@ -276,7 +276,7 @@
   <div class="notice-title-row">
     <div>
       <h2>Explore Notices</h2>
-      <p class="notice-muted">GCN client inbox/outbox salvate in MySQL. Aggiornato: {{ now }}</p>
+      <p class="notice-muted">GCN client inbox/outbox stored in MySQL. Last update: {{ now }}</p>
     </div>
     <div class="refresh-actions" data-refresh-bar>
       <span class="loading-dots refresh-loading" id="loading-dots" style="display: none;">
@@ -312,13 +312,14 @@
 
   {% if filters.tab == 'inbox' %}
     <div class="notice-summary">
-      <p><strong>Inbox</strong> mostra le notice ricevute dal consumer GCN e normalizzate in <code>gcn_inbound_notices</code>.</p>
-      <p>Usala per verificare topic in ingresso, parsing, validazione e metadati derivati da payload JSON, VOEvent o classic text.</p>
+      <p><strong>Inbox</strong> shows the notices received by the GCN consumer and normalized in <code>gcn_inbound_notices</code>.</p>
+      <p><strong>Inbox</strong> shows the notices received by the GCN consumer and normalized in <code>gcn_inbound_notices</code>.</p>
+      <p>Use it to verify incoming topics, parsing, validation, and metadata derived from JSON payload, VOEvent, or classic text.</p>
     </div>
   {% else %}
     <div class="notice-summary">
-      <p><strong>Outbox</strong> mostra le notice create dai DAG COSIflow e accodate in <code>gcn_outbound_notices</code>.</p>
-      <p><code>dry_run_published</code> significa che il publisher ha validato la notice e simulato l'invio; <code>published</code> indica un invio reale. <code>last_error</code> deve rimanere vuoto per un test riuscito.</p>
+      <p><strong>Outbox</strong> shows the notices created by the COSIflow DAGs and queued in <code>gcn_outbound_notices</code>.</p>
+      <p><code>dry_run_published</code> means that the publisher has validated the notice and simulated the submission; <code>published</code> indicates a real submission. <code>last_error</code> should remain empty for a successful test.</p>
     </div>
   {% endif %}
 
