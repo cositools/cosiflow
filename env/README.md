@@ -2,18 +2,68 @@
 
 This guide explains how to create, install, and manage modules for Cosiflow, using the `fast-transient-analysis-pipeline` module as a reference example.
 
+## Important: configure GCN Kafka credentials first
+
+If a pipeline uses the GCN client prototype, create `cosiflow/env/.env` before
+starting the Docker Compose stack. The file must contain your own GCN Kafka
+client credentials:
+
+```dotenv
+GCN_CLIENT_ID=<your-gcn-client-id>
+GCN_CLIENT_SECRET=<your-gcn-client-secret>
+```
+
+Do not copy credentials from another user or commit this file. `.env` is
+excluded by the repository `.gitignore`, and local access can be restricted
+with:
+
+```bash
+chmod 600 .env
+```
+
+Obtain the values through the official GCN workflow:
+
+1. open [gcn.nasa.gov](https://gcn.nasa.gov/);
+2. locate the **GCN Kafka** card and click **Get Started**;
+3. sign in or sign up;
+4. create or select a client credential with the public-consumer scope;
+5. choose the alert formats and topics needed by the pipeline;
+6. generate the sample code and copy its client ID and secret into `.env`.
+
+The public-consumer scope is sufficient for receiving public notices. Real
+publication of COSI mission notices requires separate authorization from the
+GCN team and mission-producer credentials; keep the prototype producer in
+dry-run mode unless that setup has been approved. See the official
+[Kafka client setup](https://gcn.nasa.gov/docs/client) and
+[new notice producer](https://gcn.nasa.gov/docs/notices/producers) guides.
+
+Docker Compose automatically reads `.env` from this directory. After creating
+or changing it, recreate the GCN client:
+
+```bash
+docker compose up -d --force-recreate gcn-client
+docker compose logs -f gcn-client
+```
+
+For the receiver/producer architecture, four-table MySQL schema, inbox/outbox
+queries, and sample COSI alert, read
+[`../gcn-client/README.md`](../gcn-client/README.md). For the complete
+Fast Transient Analysis Pipeline bootstrap procedure, read
+[`../../fast-transient-analysis-pipeline/env/bin/README.md`](../../fast-transient-analysis-pipeline/env/bin/README.md).
+
 ---
 
 ## Table of Contents
 
-1. [Module Structure](#module-structure)
-2. [Creating a New Module](#creating-a-new-module)
-3. [Installing a Module](#installing-a-module)
-4. [Using Configuration Files](#using-configuration-files)
-5. [Creating a Module from Scratch](#creating-a-module-from-scratch)
-6. [Updating a Module](#updating-a-module)
-7. [Removing a Module](#removing-a-module)
-8. [Writing a Dockerfile for a Module](#writing-a-dockerfile-for-a-module)
+1. [Configure GCN Kafka credentials](#important-configure-gcn-kafka-credentials-first)
+2. [Module Structure](#module-structure)
+3. [Creating a New Module](#creating-a-new-module)
+4. [Installing a Module](#installing-a-module)
+5. [Using Configuration Files](#using-configuration-files)
+6. [Creating a Module from Scratch](#creating-a-module-from-scratch)
+7. [Updating a Module](#updating-a-module)
+8. [Removing a Module](#removing-a-module)
+9. [Writing a Dockerfile for a Module](#writing-a-dockerfile-for-a-module)
 
 ---
 
