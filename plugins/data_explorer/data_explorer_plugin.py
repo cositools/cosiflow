@@ -2,6 +2,8 @@ import os
 import traceback
 import base64
 import mimetypes
+import struct
+import zlib
 from pathlib import Path
 from airflow.plugins_manager import AirflowPlugin
 from airflow.models import BaseOperator
@@ -25,6 +27,43 @@ heasarc_explorer_bp = Blueprint(
     static_folder=os.path.join(plugin_folder, "static"),
     url_prefix='/heasarcbrowser'
 )
+
+
+TOP_LEVEL_MENU_ORDER = (
+    "HEASARC Explorer",
+    "GCN Notices Explorer",
+    "Develop Tools",
+)
+
+
+def _reorder_top_level_menu(menu_items):
+    """Reorder selected top-level entries without moving Airflow core menus."""
+    desired_position = {
+        name.casefold(): position
+        for position, name in enumerate(TOP_LEVEL_MENU_ORDER)
+    }
+    target_indices = [
+        index
+        for index, item in enumerate(menu_items)
+        if str(getattr(item, "name", "")).casefold() in desired_position
+    ]
+    target_items = sorted(
+        (menu_items[index] for index in target_indices),
+        key=lambda item: desired_position[str(item.name).casefold()],
+    )
+    for index, item in zip(target_indices, target_items):
+        menu_items[index] = item
+
+
+@heasarc_explorer_bp.record_once
+def _apply_top_level_menu_order(state):
+    """Apply custom menu ordering after Airflow registers all plugin views."""
+    appbuilder = getattr(state.app, "appbuilder", None)
+    menu = getattr(appbuilder, "menu", None)
+    menu_items = getattr(menu, "menu", None)
+    if isinstance(menu_items, list):
+        _reorder_top_level_menu(menu_items)
+
 
 def get_content_type(filepath, mime_type):
     """Determine content type based on file extension and mime type"""
@@ -93,6 +132,138 @@ def get_file_icon(filename):
     
     # Default
     return "📄"
+
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+PNG_TEXT_CHUNKS = {b"tEXt", b"zTXt", b"iTXt"}
+MAX_PNG_TEXT_SIZE = 1024 * 1024
+
+
+def _decompress_png_text(payload):
+    """Decompress a PNG text payload while enforcing a one-megabyte limit."""
+    decompressor = zlib.decompressobj()
+    text = decompressor.decompress(payload, MAX_PNG_TEXT_SIZE + 1)
+    if len(text) > MAX_PNG_TEXT_SIZE or decompressor.unconsumed_tail:
+        return None
+    text += decompressor.flush()
+    return text if len(text) <= MAX_PNG_TEXT_SIZE else None
+
+
+def _decode_png_text_chunk(chunk_type, payload):
+    """Decode one valid PNG tEXt, zTXt, or iTXt chunk."""
+    try:
+        keyword, remainder = payload.split(b"\0", 1)
+        key = keyword.decode("latin-1")
+        if not key:
+            return None
+
+        if chunk_type == b"tEXt":
+            return key, remainder.decode("latin-1")
+
+        if chunk_type == b"zTXt":
+            if not remainder or remainder[0] != 0:
+                return None
+            text = _decompress_png_text(remainder[1:])
+            return (key, text.decode("latin-1")) if text is not None else None
+
+        if len(remainder) < 2:
+            return None
+        compression_flag, compression_method = remainder[0], remainder[1]
+        language, translated_and_text = remainder[2:].split(b"\0", 1)
+        translated_keyword, text = translated_and_text.split(b"\0", 1)
+        # Language and translated keyword are intentionally parsed but are not
+        # exposed; the English keyword is the stable API key used by the UI.
+        del language, translated_keyword
+        if compression_flag == 1:
+            if compression_method != 0:
+                return None
+            text = _decompress_png_text(text)
+            if text is None:
+                return None
+        elif compression_flag != 0:
+            return None
+        return key, text.decode("utf-8")
+    except (UnicodeDecodeError, ValueError, zlib.error):
+        return None
+
+
+def get_image_metadata(filepath):
+    """Read textual PNG metadata without optional image-processing packages."""
+    if Path(filepath).suffix.lower() != ".png":
+        return {}
+
+    metadata = {}
+    try:
+        with open(filepath, "rb") as image:
+            if image.read(len(PNG_SIGNATURE)) != PNG_SIGNATURE:
+                return {}
+
+            for _ in range(4096):
+                length_bytes = image.read(4)
+                if len(length_bytes) != 4:
+                    break
+                chunk_length = struct.unpack(">I", length_bytes)[0]
+                chunk_type = image.read(4)
+                if len(chunk_type) != 4:
+                    break
+
+                if chunk_length > MAX_PNG_TEXT_SIZE:
+                    image.seek(chunk_length + 4, os.SEEK_CUR)
+                    continue
+
+                payload = image.read(chunk_length)
+                crc_bytes = image.read(4)
+                if len(payload) != chunk_length or len(crc_bytes) != 4:
+                    break
+
+                expected_crc = struct.unpack(">I", crc_bytes)[0]
+                actual_crc = zlib.crc32(chunk_type)
+                actual_crc = zlib.crc32(payload, actual_crc) & 0xFFFFFFFF
+                if expected_crc != actual_crc:
+                    continue
+
+                if chunk_type in PNG_TEXT_CHUNKS:
+                    decoded = _decode_png_text_chunk(chunk_type, payload)
+                    if decoded is not None:
+                        key, value = decoded
+                        metadata[key] = value
+                if chunk_type == b"IEND":
+                    break
+        return metadata
+    except (OSError, struct.error):
+        # A malformed or unsupported image must not prevent the preview itself.
+        return {}
+
+
+def get_plot_preview_title(filepath, metadata):
+    """Resolve the preview heading from embedded metadata with safe fallbacks."""
+    preview_title = str(metadata.get("PreviewTitle", "")).strip()
+    if preview_title:
+        return preview_title
+
+    embedded_title = str(metadata.get("Title", "")).strip()
+    for separator in (" — ", "\n"):
+        if separator in embedded_title:
+            title_detail = embedded_title.rsplit(separator, 1)[-1].strip()
+            if title_detail:
+                return title_detail
+
+    description = str(
+        metadata.get("Description")
+        or metadata.get("Caption")
+        or ""
+    ).strip()
+    if description:
+        first_sentence = description.split(". ", 1)[0].rstrip(".").strip()
+        if first_sentence:
+            return first_sentence
+
+    if embedded_title:
+        return embedded_title
+
+    filename = Path(filepath).stem.replace("_", " ").replace("-", " ").strip()
+    return filename.title() or "Plot"
+
 
 class HEASARCExplorerView(BaseView):
     default_view = "explorer_home"
@@ -196,6 +367,19 @@ class HEASARCExplorerView(BaseView):
             
             # For large files, don't load them
             if file_size > 10 * 1024 * 1024:  # 10MB limit
+                if content_type == "image":
+                    metadata = get_image_metadata(abs_path)
+                    return jsonify({
+                        "content_type": "image_metadata",
+                        "size": file_size,
+                        "mime_type": mime_type or "application/octet-stream",
+                        "preview_title": get_plot_preview_title(abs_path, metadata),
+                        "caption": (
+                            metadata.get("Description")
+                            or metadata.get("Caption")
+                        ),
+                        "metadata": metadata,
+                    })
                 return jsonify({
                     "content_type": "binary",
                     "size": file_size,
@@ -206,11 +390,16 @@ class HEASARCExplorerView(BaseView):
                 # Load image as base64
                 with open(abs_path, 'rb') as f:
                     content = base64.b64encode(f.read()).decode('utf-8')
+                metadata = get_image_metadata(abs_path)
+                caption = metadata.get("Description") or metadata.get("Caption")
                 return jsonify({
                     "content_type": "image",
                     "content": content,
                     "mime_type": mime_type or "application/octet-stream",
-                    "size": file_size
+                    "size": file_size,
+                    "preview_title": get_plot_preview_title(abs_path, metadata),
+                    "caption": caption,
+                    "metadata": metadata,
                 })
             
             elif content_type == "text":
@@ -254,8 +443,10 @@ class heasarcExplorerPlugin(AirflowPlugin):
     flask_blueprints = [heasarc_explorer_bp]
     appbuilder_views = [
         {
-            "name": "heasarc Browser",
-            "category": "Results Browser",
+            # The name of the view, which will be displayed in the menu
+            "name": "HEASARC Explorer",
+            # Which Category to put the link in, if you don't want one, set to an empty string
+            "category": "",
             "view": HEASARCExplorerView()
         }
     ]

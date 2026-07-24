@@ -101,7 +101,7 @@ class RefreshDagsPlugin(AirflowPlugin):
     appbuilder_views = [
         {
             "name": "Refresh DAGs List",
-            "category": "Develop tools",
+            "category": "Develop Tools",
             "view": RefreshDagsView()
         }
     ]

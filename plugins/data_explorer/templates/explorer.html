@@ -139,6 +139,57 @@
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
 
+    .preview-caption {
+        margin-top: 16px;
+        padding: 14px;
+        border-left: 4px solid #3498db;
+        background-color: #f4f8fb;
+        color: #2c3e50;
+        line-height: 1.5;
+    }
+
+    .preview-caption-title {
+        display: block;
+        margin-bottom: 6px;
+    }
+
+    .preview-metadata {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border: 1px solid #e1e8ed;
+        border-radius: 4px;
+        background-color: #fafafa;
+        font-size: 0.88em;
+    }
+
+    .preview-metadata dl {
+        display: grid;
+        grid-template-columns: minmax(100px, auto) 1fr;
+        gap: 5px 12px;
+        margin: 0;
+    }
+
+    .preview-metadata dt {
+        font-weight: bold;
+        color: #566573;
+    }
+
+    .preview-metadata dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+    }
+
+    body[data-color-scheme="dark"] .preview-caption,
+    body[data-color-scheme="dark"] .preview-metadata {
+        background-color: #252525;
+        border-color: #4a4a4a;
+        color: #e0e0e0;
+    }
+
+    body[data-color-scheme="dark"] .preview-metadata dt {
+        color: #b8c7d1;
+    }
+
     /* Text preview styling */
     .preview-text {
         background-color: #f8f9fa;
@@ -379,7 +430,7 @@
         <!-- Right column: File preview panel -->
         <div class="preview-panel">
             <div class="preview-header">
-                <h3 class="preview-title">File Preview</h3>
+                <h3 class="preview-title">Select a plot</h3>
                 <p class="preview-filename">Click on a file to preview its contents</p>
             </div>
             <div class="preview-content">
@@ -451,6 +502,7 @@
         function closePreview() {
             const previewContent = document.querySelector('.preview-content');
             const previewFilename = document.querySelector('.preview-filename');
+            const previewTitle = document.querySelector('.preview-title');
             
             if (previewContent) {
                 previewContent.innerHTML = `
@@ -466,6 +518,10 @@
             if (previewFilename) {
                 previewFilename.textContent = 'Click on a file to preview its contents';
             }
+
+            if (previewTitle) {
+                previewTitle.textContent = 'Select a plot';
+            }
         }
     });
 
@@ -473,6 +529,7 @@
         console.log('Loading preview for:', filepath, filename);
         const previewContent = document.querySelector('.preview-content');
         const previewFilename = document.querySelector('.preview-filename');
+        const previewTitle = document.querySelector('.preview-title');
         
         if (!previewContent) {
             console.error('Preview content element not found!');
@@ -482,6 +539,10 @@
         // Update header
         if (previewFilename) {
             previewFilename.textContent = filename;
+        }
+
+        if (previewTitle) {
+            previewTitle.textContent = 'Loading plot...';
         }
         
         // Show loading state
@@ -516,9 +577,12 @@
 
     function displayPreview(data, filename) {
         const previewContent = document.querySelector('.preview-content');
-        const fileExtension = filename.split('.').pop().toLowerCase();
+        const previewTitle = document.querySelector('.preview-title');
         
         if (data.error) {
+            if (previewTitle) {
+                previewTitle.textContent = 'Preview unavailable';
+            }
             previewContent.innerHTML = `
                 <div class="preview-error">
                     <p>${data.error}</p>
@@ -529,16 +593,37 @@
         
         // Determine content type and display accordingly
         if (data.content_type === 'image') {
+            if (previewTitle) {
+                previewTitle.textContent = data.preview_title || 'Plot';
+            }
             previewContent.innerHTML = `
                 <img src="data:${data.mime_type};base64,${data.content}" 
                      class="preview-image" 
-                     alt="${filename}">
+                     alt="${escapeHtml(filename)}">
+                ${renderImageMetadata(data)}
+            `;
+        } else if (data.content_type === 'image_metadata') {
+            if (previewTitle) {
+                previewTitle.textContent = data.preview_title || 'Plot';
+            }
+            previewContent.innerHTML = `
+                <div class="preview-error">
+                    <p>The image is too large for an inline preview.</p>
+                    <p>File size: ${data.size} bytes</p>
+                </div>
+                ${renderImageMetadata(data)}
             `;
         } else if (data.content_type === 'text') {
+            if (previewTitle) {
+                previewTitle.textContent = 'File contents';
+            }
             previewContent.innerHTML = `
                 <div class="preview-text">${escapeHtml(data.content)}</div>
             `;
         } else if (data.content_type === 'binary') {
+            if (previewTitle) {
+                previewTitle.textContent = 'Preview unavailable';
+            }
             previewContent.innerHTML = `
                 <div class="preview-error">
                     <p>Binary file preview not supported</p>
@@ -546,12 +631,42 @@
                 </div>
             `;
         } else {
+            if (previewTitle) {
+                previewTitle.textContent = 'Preview unavailable';
+            }
             previewContent.innerHTML = `
                 <div class="preview-error">
                     <p>Preview not available for this file type</p>
                 </div>
             `;
         }
+    }
+
+    function renderImageMetadata(data) {
+        const caption = data.caption
+            ? `
+                <div class="preview-caption">
+                    <strong class="preview-caption-title">Figure caption</strong>
+                    ${escapeHtml(data.caption)}
+                </div>
+            `
+            : '';
+        const hiddenCaptionKeys = new Set(['Description', 'Caption']);
+        const metadataEntries = Object.entries(data.metadata || {})
+            .filter(([key]) => !hiddenCaptionKeys.has(key));
+        const metadata = metadataEntries.length
+            ? `
+                <div class="preview-metadata">
+                    <dl>
+                        ${metadataEntries.map(([key, value]) => `
+                            <dt>${escapeHtml(key)}</dt>
+                            <dd>${escapeHtml(String(value))}</dd>
+                        `).join('')}
+                    </dl>
+                </div>
+            `
+            : '';
+        return `${caption}${metadata}`;
     }
 
     function escapeHtml(text) {

@@ -116,7 +116,7 @@ class ResetCosidagPlugin(AirflowPlugin):
     appbuilder_views = [
         {
             "name": "Reset Cosidag",
-            "category": "Develop tools",
+            "category": "Develop Tools",
             "view": ResetCosidagView()
         }
     ]

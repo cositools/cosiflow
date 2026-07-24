@@ -1000,8 +1000,10 @@ class ExploreNoticesPlugin(AirflowPlugin):
     flask_blueprints = [explore_notices_bp]
     appbuilder_views = [
         {
-            "name": "Explore Notices",
-            "category": "Results Browser",
+            # The name of the view, which will be displayed in the menu
+            "name": "GCN Notices Explorer",
+            # Which Category to put the link in, if you don't want one, set to an empty string
+            "category": "",
             "view": ExploreNoticesView(),
         }
     ]

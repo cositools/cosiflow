@@ -17,7 +17,7 @@ class MailhogViewPlugin(AirflowPlugin):
     appbuilder_views = [
         {
             "name": "Mailhog",
-            "category": "Develop tools",
+            "category": "Develop Tools",
             "view": MailhogView()
         }
     ]
