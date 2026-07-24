@@ -23,6 +23,9 @@ x-common-env: &common-env
   # Base workspace path on the *Docker daemon host* (used by DockerOperator bind mounts).
   # Auto default: run `docker compose` from `cosiflow/env` so ${PWD}/../.. resolves to workspace root.
   HOST_WORKSPACE_PATH: ${HOST_WORKSPACE_PATH:-${PWD}/../..}
+  # Host counterpart of /home/gamma/workspace/data. DockerOperator containers
+  # must mount the same data root as Airflow (see the data volume below).
+  HOST_DATA_PATH: ${HOST_DATA_PATH:-${PWD}/../data/heasarc}
   #-------- SMTP Settings for MailHog
   # HOST_IP: Define once here, use everywhere
   HOST_IP: *host-ip                                   # TOEDIT: set x-host-ip above
