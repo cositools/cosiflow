@@ -7,16 +7,19 @@ from flask_appbuilder import BaseView, expose
 from airflow.plugins_manager import AirflowPlugin
 from airflow.models import Variable, DagModel
 from airflow.utils.session import provide_session
+from shared_ui import add_shared_templates
 
 # Define the absolute path to the plugin folder
 plugin_folder = os.path.dirname(os.path.abspath(__file__))
 
 # Blueprint to register templates and route
-reset_cosidag_bp = Blueprint(
-    "reset_cosidag_bp",
-    __name__,
-    template_folder=os.path.join(plugin_folder, "templates"),
-    url_prefix="/reset_cosidag"
+reset_cosidag_bp = add_shared_templates(
+    Blueprint(
+        "reset_cosidag_bp",
+        __name__,
+        template_folder=os.path.join(plugin_folder, "templates"),
+        url_prefix="/reset_cosidag"
+    )
 )
 
 @provide_session

@@ -1,9 +1,8 @@
 {% extends "appbuilder/base.html" %}
 
 {% block content %}
+{% include "cosiflow_ui/styles.html" %}
 <style>
-  .notice-wrap { padding: 18px 24px; }
-  .notice-title-row { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
   .refresh-actions { align-items: center; display: flex; gap: 8px; position: relative; }
   .refresh-actions .material-icons { font-size: 18px; line-height: 1; vertical-align: middle; }
   .refresh-actions .switch-label {
@@ -272,11 +271,11 @@
   .notice-error-cell { max-width: 300px; white-space: pre-wrap; word-break: break-word; }
 </style>
 
-<div class="notice-wrap">
-  <div class="notice-title-row">
+<div class="cosiflow-page notice-wrap">
+  <div class="cosiflow-title-row notice-title-row">
     <div>
-      <h2>Explore Notices</h2>
-      <p class="notice-muted">GCN client inbox/outbox stored in MySQL. Last update: {{ now }}</p>
+      <h2 class="cosiflow-page-title">Explore Notices</h2>
+      <p class="cosiflow-muted notice-muted">GCN client inbox/outbox stored in MySQL. Last update: {{ now }}</p>
     </div>
     <div class="refresh-actions" data-refresh-bar>
       <span class="loading-dots refresh-loading" id="loading-dots" style="display: none;">
@@ -312,7 +311,6 @@
 
   {% if filters.tab == 'inbox' %}
     <div class="notice-summary">
-      <p><strong>Inbox</strong> shows the notices received by the GCN consumer and normalized in <code>gcn_inbound_notices</code>.</p>
       <p><strong>Inbox</strong> shows the notices received by the GCN consumer and normalized in <code>gcn_inbound_notices</code>.</p>
       <p>Use it to verify incoming topics, parsing, validation, and metadata derived from JSON payload, VOEvent, or classic text.</p>
     </div>

@@ -11,6 +11,7 @@ from flask import Blueprint, render_template, send_from_directory, redirect, url
 from flask_appbuilder import BaseView, expose
 from jinja2 import Environment
 from flask_login import login_required, current_user
+from shared_ui import add_shared_templates
 
 # Get from the env variable COSI_DATA_DIR the path to the data directory if it is not set, use the default path
 DL0_FOLDER = os.environ.get("COSI_DATA_DIR", "/home/gamma/workspace/data")
@@ -20,12 +21,14 @@ plugin_folder = os.path.dirname(os.path.abspath(__file__))
 
 # Blueprint con percorso assoluto a templates e static
 # Usato solo per registrare il path dei template
-heasarc_explorer_bp = Blueprint(
-    "heasarc_explorer_bp",
-    __name__,
-    template_folder=os.path.join(plugin_folder, "templates"),
-    static_folder=os.path.join(plugin_folder, "static"),
-    url_prefix='/heasarcbrowser'
+heasarc_explorer_bp = add_shared_templates(
+    Blueprint(
+        "heasarc_explorer_bp",
+        __name__,
+        template_folder=os.path.join(plugin_folder, "templates"),
+        static_folder=os.path.join(plugin_folder, "static"),
+        url_prefix='/heasarcbrowser'
+    )
 )
 
 

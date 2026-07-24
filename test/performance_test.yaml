@@ -32,14 +32,14 @@ cleanup:
   dry_run: false
   verbose: false
   roots:
-    - path: data/tdrss/2026_06/260630002
+    - path: data/tdrss/2026_07/260722001
       keep_files:
         - DC4_final_530km_3_month_with_slew_1sbins_GalacticEarth_SAA.fits
         - GRB_bn090424592_3months_unbinned_data_filtered_with_SAAcut.fits
         - ResponseContinuum.o3.e100_10000.b10log.s10396905069491.m2284.filtered.nonsparse.binnedimaging.imagingresponse.h5
         - Total_DC4_BG_3months_unbinned_data_filtered_with_SAAcut_withSAAbck_window.fits
         - Total_DC4_BG_3months_unbinned_data_filtered_with_SAAcut_withSAAbck.fits
-    - path: data/tdrss/2026_06/260630001
+    - path: data/tdrss/2026_07/260722002
       keep_files:
         - bn240810880light_curve.npz
         - DC4_final_530km_3_month_with_slew_1sbins_GalacticEarth_SAA.fits
@@ -53,12 +53,12 @@ dags:
     reset_cosidag_variable: true
     trigger: true
     conf:
-      performance_test_dataset: data/tdrss/2026_06/260630001/products
+      performance_test_dataset: data/tdrss/2026_07/260722002/products
   - dag_id: cosidag_GeD
     reset_cosidag_variable: true
     trigger: true
     conf:
-      performance_test_dataset: data/tdrss/2026_06/260630002/products
+      performance_test_dataset: data/tdrss/2026_07/260722001/products
 
 resources:
   docker_stats: true

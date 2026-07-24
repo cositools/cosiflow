@@ -3,8 +3,9 @@
 {% block title %}Reset COSIDAG - Airflow{% endblock %}
 
 {% block content %}
-<div class="container">
-    <h2>Reset COSIDAG Processed State</h2>
+{% include "cosiflow_ui/styles.html" %}
+<div class="cosiflow-page cosiflow-page--contained">
+    <h2 class="cosiflow-page-title">Reset COSIDAG Processed State</h2>
     <p>
         This tool resets the <code>COSIDAG_PROCESSED::{dag_id}</code> variable for a specific COSIDAG.<br>
         This variable tracks processed paths across runs to avoid reprocessing. Folder-driven COSIDAGs store folder paths; file-driven COSIDAGs store file paths.

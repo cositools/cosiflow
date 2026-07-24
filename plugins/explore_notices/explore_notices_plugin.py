@@ -17,15 +17,18 @@ from airflow.plugins_manager import AirflowPlugin
 from flask import Blueprint, flash, redirect, request, url_for
 from flask_appbuilder import BaseView, expose
 from flask_login import current_user, login_required
+from shared_ui import add_shared_templates
 
 
 plugin_folder = os.path.dirname(os.path.abspath(__file__))
 
-explore_notices_bp = Blueprint(
-    "explore_notices_bp",
-    __name__,
-    template_folder=os.path.join(plugin_folder, "templates"),
-    url_prefix="/explore-notices",
+explore_notices_bp = add_shared_templates(
+    Blueprint(
+        "explore_notices_bp",
+        __name__,
+        template_folder=os.path.join(plugin_folder, "templates"),
+        url_prefix="/explore-notices",
+    )
 )
 
 

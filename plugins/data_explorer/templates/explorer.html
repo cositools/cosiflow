@@ -4,6 +4,7 @@
 
 {% block head_css %}
 {{ super() }}
+{% include "cosiflow_ui/styles.html" %}
 <style>
     /* Main body styling with clean, modern appearance */
     /* Note: body margin is handled by Airflow layout */
@@ -11,7 +12,6 @@
     /* Page title styling */
     h1 {
         color: #2c3e50;
-        margin-top: 0;
     }
 
     /* Navigation buttons container */
@@ -333,9 +333,9 @@
 {% endblock %}
 
 {% block content %}
-<div class="container">
+<div class="cosiflow-page cosiflow-page--contained">
     <!-- Main page header -->
-    <h1>Data File Browser</h1>
+    <h1 class="cosiflow-page-title">Data File Browser</h1>
 
     <!-- Navigation buttons for easy access to other pages -->
     <div class="nav-buttons">
