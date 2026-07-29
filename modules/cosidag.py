@@ -35,6 +35,7 @@ import re
 import time
 from datetime import datetime
 from typing import Callable, Iterable, Optional, Sequence
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from airflow import DAG
 from airflow.models import Variable
@@ -374,6 +375,55 @@ def _normalize_optional_int(value, field_name: str) -> Optional[int]:
     if parsed < 0:
         raise ValueError(f"{field_name} must be blank or a non-negative integer, got {value!r}")
     return parsed
+
+
+def _build_data_explorer_url(
+    homepage: str,
+    detected_path: str,
+    policy: str,
+    data_root: str,
+) -> Optional[str]:
+    """Build a URL to the detected folder in the Data Explorer."""
+    if not homepage or not detected_path or not data_root:
+        return None
+
+    link_path = (
+        os.path.dirname(detected_path)
+        if policy == "file-driven"
+        else detected_path
+    )
+    root_path = os.path.abspath(os.path.expanduser(data_root))
+    if not os.path.isabs(link_path):
+        link_path = os.path.join(root_path, link_path)
+    link_path = os.path.abspath(os.path.expanduser(link_path))
+
+    try:
+        if os.path.commonpath([root_path, link_path]) != root_path:
+            return None
+    except ValueError:
+        return None
+
+    relative_path = os.path.relpath(link_path, root_path)
+    parsed_homepage = urlsplit(homepage)
+    explorer_path = parsed_homepage.path.rstrip("/")
+    if not explorer_path.endswith("/heasarcbrowser"):
+        explorer_path = f"{explorer_path}/heasarcbrowser"
+
+    if relative_path == ".":
+        target_path = f"{explorer_path}/"
+    else:
+        url_path = quote(relative_path.replace(os.sep, "/"), safe="/")
+        target_path = f"{explorer_path}/folder/{url_path}"
+
+    return urlunsplit(
+        (
+            parsed_homepage.scheme,
+            parsed_homepage.netloc,
+            target_path,
+            parsed_homepage.query,
+            parsed_homepage.fragment,
+        )
+    )
 
 
 
@@ -962,11 +1012,22 @@ class COSIDAG(DAG):
 
             url = None
             if homepage:
-                # ⚠️ Adapt this base path to your filesystem layout
-                DATA_ROOT = "/home/gamma/workspace/data"
-                link_path = os.path.dirname(detected) if policy_value == "file-driven" else detected
-                rel = link_path.replace(DATA_ROOT, "").lstrip("/")
-                url = f"{homepage.rstrip('/')}/folder/{rel}"
+                data_root = os.environ.get(
+                    "COSI_DATA_DIR",
+                    "/home/gamma/workspace/data",
+                )
+                url = _build_data_explorer_url(
+                    homepage=homepage,
+                    detected_path=detected,
+                    policy=policy_value,
+                    data_root=data_root,
+                )
+                if not url:
+                    print(
+                        "[COSIDAG] Cannot build Data Explorer URL: "
+                        f"detected path {detected!r} is outside "
+                        f"COSI_DATA_DIR {data_root!r}"
+                    )
 
             # -------------------------------------------------
             # 3) Push structured result to XCom (canonical output)

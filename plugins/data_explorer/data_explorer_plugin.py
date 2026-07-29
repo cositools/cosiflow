@@ -4,14 +4,16 @@ import base64
 import mimetypes
 import struct
 import zlib
+from functools import wraps
 from pathlib import Path
 from airflow.plugins_manager import AirflowPlugin
 from airflow.models import BaseOperator
-from flask import Blueprint, render_template, send_from_directory, redirect, url_for, session, jsonify, abort
+from flask import Blueprint, render_template, send_from_directory, redirect, url_for, session, jsonify, abort, request
 from flask_appbuilder import BaseView, expose
 from jinja2 import Environment
-from flask_login import login_required, current_user
+from flask_login import current_user
 from shared_ui import add_shared_templates
+from werkzeug.exceptions import HTTPException
 
 # Get from the env variable COSI_DATA_DIR the path to the data directory if it is not set, use the default path
 DL0_FOLDER = os.environ.get("COSI_DATA_DIR", "/home/gamma/workspace/data")
@@ -268,14 +270,36 @@ def get_plot_preview_title(filepath, metadata):
     return filename.title() or "Plot"
 
 
+def _resolve_data_path(filepath):
+    """Resolve a browser path and reject traversal or symlinks outside the data root."""
+    data_root = Path(DL0_FOLDER).resolve()
+    candidate = (data_root / filepath).resolve()
+    try:
+        candidate.relative_to(data_root)
+    except ValueError:
+        abort(403)
+    return candidate
+
+
+def _airflow_login_required(view_function):
+    """Redirect anonymous users through Airflow's actual FAB login endpoint."""
+    @wraps(view_function)
+    def decorated_view(*args, **kwargs):
+        if not current_user.is_authenticated:
+            next_url = request.full_path.rstrip("?")
+            return redirect(url_for("AuthDBView.login", next=next_url))
+        return view_function(*args, **kwargs)
+
+    return decorated_view
+
+
 class HEASARCExplorerView(BaseView):
     default_view = "explorer_home"
     route_base = "/heasarcbrowser"
 
     @expose('/')
+    @_airflow_login_required
     def explorer_home(self):
-        if not current_user.is_authenticated:
-            return redirect('/login/?next=/heasarcbrowser/')
         try:
             folders = sorted([f for f in os.listdir(DL0_FOLDER) if os.path.isdir(os.path.join(DL0_FOLDER, f))])
             # Use self.render_template instead of flask.render_template
@@ -290,14 +314,10 @@ class HEASARCExplorerView(BaseView):
             return f"Error loading folders: {e}\n\nTraceback:\n{error_traceback}", 500
 
     @expose('/folder/<path:foldername>')
-    @login_required
+    @_airflow_login_required
     def explorer_folder(self, foldername):
         try:
-            folder_path = os.path.join(DL0_FOLDER, foldername)
-            
-            # Check if the folder path is within the allowed directory
-            if not os.path.commonpath([DL0_FOLDER, folder_path]).startswith(DL0_FOLDER):
-                abort(403)
+            folder_path = _resolve_data_path(foldername)
             
             # Check if the directory exists
             if not os.path.exists(folder_path):
@@ -332,27 +352,52 @@ class HEASARCExplorerView(BaseView):
             return self.render_template("explorer.html", folders=folders, files=files, foldername=foldername, current_path=folder_path, get_file_icon=get_file_icon)
         except PermissionError:
             abort(403)
+        except HTTPException:
+            raise
         except Exception as e:
             error_traceback = traceback.format_exc()
             return f"Error loading files: {e}\n\nTraceback:\n{error_traceback}", 500
 
     @expose('/download/<path:filepath>')
-    @login_required
+    @_airflow_login_required
     def download_file(self, filepath):
-        abs_path = os.path.join(DL0_FOLDER, filepath)
-        folder, filename = os.path.split(abs_path)
-        return send_from_directory(folder, filename, as_attachment=True)
+        abs_path = _resolve_data_path(filepath)
+        return send_from_directory(
+            os.fspath(abs_path.parent),
+            abs_path.name,
+            as_attachment=True,
+        )
+
+    @expose('/image/<path:filepath>')
+    @_airflow_login_required
+    def image_file(self, filepath):
+        """Serve an image inline for the full-size preview in a separate tab."""
+        abs_path = _resolve_data_path(filepath)
+        if not abs_path.is_file():
+            abort(404)
+
+        mime_type, _ = mimetypes.guess_type(os.fspath(abs_path))
+        if get_content_type(os.fspath(abs_path), mime_type) != "image":
+            abort(415)
+
+        response = send_from_directory(
+            os.fspath(abs_path.parent),
+            abs_path.name,
+            as_attachment=False,
+            conditional=True,
+        )
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
 
     @expose('/preview/<path:filepath>')
-    @login_required
+    @_airflow_login_required
     def preview_file(self, filepath):
         print(f"Preview request for: {filepath}")  # Debug logging
         try:
-            abs_path = os.path.join(DL0_FOLDER, filepath)
-            
-            # Security check - ensure path is within allowed directory
-            if not os.path.commonpath([DL0_FOLDER, abs_path]).startswith(DL0_FOLDER):
-                return jsonify({"error": "Access denied"}), 403
+            abs_path = _resolve_data_path(filepath)
             
             # Check if file exists
             if not os.path.exists(abs_path):
@@ -376,6 +421,10 @@ class HEASARCExplorerView(BaseView):
                         "content_type": "image_metadata",
                         "size": file_size,
                         "mime_type": mime_type or "application/octet-stream",
+                        "image_url": url_for(
+                            "HEASARCExplorerView.image_file",
+                            filepath=filepath,
+                        ),
                         "preview_title": get_plot_preview_title(abs_path, metadata),
                         "caption": (
                             metadata.get("Description")
@@ -400,6 +449,10 @@ class HEASARCExplorerView(BaseView):
                     "content": content,
                     "mime_type": mime_type or "application/octet-stream",
                     "size": file_size,
+                    "image_url": url_for(
+                        "HEASARCExplorerView.image_file",
+                        filepath=filepath,
+                    ),
                     "preview_title": get_plot_preview_title(abs_path, metadata),
                     "caption": caption,
                     "metadata": metadata,
@@ -433,6 +486,8 @@ class HEASARCExplorerView(BaseView):
                     "mime_type": mime_type or "application/octet-stream"
                 })
         
+        except HTTPException:
+            raise
         except Exception as e:
             return jsonify({"error": f"Error loading file: {str(e)}"}), 500
 

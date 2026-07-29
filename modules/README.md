@@ -252,6 +252,8 @@ show_results.cosidag_result
 
 The dictionary contains `path`, `folder`, `file`, `policy`, and `url`. The URL is
 available when `COSIFLOW_HOME_URL` (or the configured `home_env_var`) is present.
+It points to the detected folder in Data Explorer, uses `COSI_DATA_DIR` as the
+filesystem root, and safely URL-encodes folder names.
 
 ## Failures and MailHog
 

@@ -132,11 +132,94 @@
     }
 
     /* Image preview styling */
-    .preview-image {
-        max-width: 100%;
-        max-height: 400px;
+    .preview-image-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+    }
+
+    .preview-image-toolbar button,
+    .preview-image-toolbar a {
+        min-width: 36px;
+        padding: 6px 10px;
+        border: 1px solid #bdc3c7;
         border-radius: 4px;
+        background: #ffffff;
+        color: #2c3e50;
+        cursor: pointer;
+        text-decoration: none;
+        text-align: center;
+    }
+
+    .preview-image-toolbar button:hover,
+    .preview-image-toolbar a:hover {
+        border-color: #3498db;
+        color: #2980b9;
+        text-decoration: none;
+    }
+
+    .preview-image-toolbar button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+    }
+
+    .preview-zoom-level {
+        min-width: 52px;
+        color: #566573;
+        font-variant-numeric: tabular-nums;
+        text-align: center;
+    }
+
+    .preview-open-image {
+        margin-left: auto;
+    }
+
+    .preview-image-viewport {
+        width: 100%;
+        max-height: 55vh;
+        overflow: auto;
+        border: 1px solid #e1e8ed;
+        border-radius: 4px;
+        background:
+            linear-gradient(45deg, #f2f2f2 25%, transparent 25%),
+            linear-gradient(-45deg, #f2f2f2 25%, transparent 25%),
+            linear-gradient(45deg, transparent 75%, #f2f2f2 75%),
+            linear-gradient(-45deg, transparent 75%, #f2f2f2 75%);
+        background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+        background-size: 16px 16px;
+    }
+
+    .preview-image {
+        display: block;
+        width: 100%;
+        max-width: none;
+        height: auto;
+        margin: 0 auto;
+        cursor: zoom-in;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: width 0.12s ease;
+        user-select: none;
+        -webkit-user-drag: none;
+    }
+
+    .preview-image-help {
+        margin: 8px 0 0;
+        color: #7f8c8d;
+        font-size: 0.82em;
+        text-align: center;
+    }
+
+    body[data-color-scheme="dark"] .preview-image-toolbar button,
+    body[data-color-scheme="dark"] .preview-image-toolbar a {
+        background: #2c2c2c;
+        border-color: #555;
+        color: #e0e0e0;
+    }
+
+    body[data-color-scheme="dark"] .preview-zoom-level {
+        color: #c7c7c7;
     }
 
     .preview-caption {
@@ -549,7 +632,15 @@
         previewContent.innerHTML = '<div class="preview-loading">Loading preview...</div>';
         
         // Update to match new route structure
-        const previewUrl = `{{ url_for('HEASARCExplorerView.preview_file', filepath='') }}${encodeURIComponent(filepath)}`;
+        const previewUrlTemplate = {{ url_for(
+            'HEASARCExplorerView.preview_file',
+            filepath='__FILEPATH__'
+        ) | tojson }};
+        const encodedFilepath = filepath
+            .split('/')
+            .map(segment => encodeURIComponent(segment))
+            .join('/');
+        const previewUrl = previewUrlTemplate.replace('__FILEPATH__', encodedFilepath);
         console.log('Making request to:', previewUrl);
         
         // Make AJAX request to preview endpoint
@@ -596,12 +687,27 @@
             if (previewTitle) {
                 previewTitle.textContent = data.preview_title || 'Plot';
             }
+            const imageUrl = escapeHtml(data.image_url);
             previewContent.innerHTML = `
-                <img src="data:${data.mime_type};base64,${data.content}" 
-                     class="preview-image" 
-                     alt="${escapeHtml(filename)}">
+                <div class="preview-image-toolbar" role="toolbar" aria-label="Image zoom controls">
+                    <button type="button" class="preview-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
+                    <span class="preview-zoom-level" aria-live="polite">100%</span>
+                    <button type="button" class="preview-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+                    <button type="button" class="preview-zoom-reset" title="Fit image to preview">Fit</button>
+                    <a class="preview-open-image" href="${imageUrl}" target="_blank" rel="noopener"
+                       title="Open the full-size image in a new tab">Open full image ↗</a>
+                </div>
+                <div class="preview-image-viewport">
+                    <img src="data:${data.mime_type};base64,${data.content}"
+                         class="preview-image"
+                         data-full-image-url="${imageUrl}"
+                         alt="${escapeHtml(filename)}"
+                         title="Double-click to open the full-size image in a new tab">
+                </div>
+                <p class="preview-image-help">Use − / + to zoom. Double-click the image to open it full-size.</p>
                 ${renderImageMetadata(data)}
             `;
+            initializeImagePreview();
         } else if (data.content_type === 'image_metadata') {
             if (previewTitle) {
                 previewTitle.textContent = data.preview_title || 'Plot';
@@ -610,6 +716,11 @@
                 <div class="preview-error">
                     <p>The image is too large for an inline preview.</p>
                     <p>File size: ${data.size} bytes</p>
+                    <p>
+                        <a href="${escapeHtml(data.image_url)}" target="_blank" rel="noopener">
+                            Open the full-size image in a new tab ↗
+                        </a>
+                    </p>
                 </div>
                 ${renderImageMetadata(data)}
             `;
@@ -640,6 +751,54 @@
                 </div>
             `;
         }
+    }
+
+    function initializeImagePreview() {
+        const viewport = document.querySelector('.preview-image-viewport');
+        const image = viewport && viewport.querySelector('.preview-image');
+        const zoomOut = document.querySelector('.preview-zoom-out');
+        const zoomIn = document.querySelector('.preview-zoom-in');
+        const zoomReset = document.querySelector('.preview-zoom-reset');
+        const zoomLabel = document.querySelector('.preview-zoom-level');
+        if (!viewport || !image || !zoomOut || !zoomIn || !zoomReset || !zoomLabel) {
+            return;
+        }
+
+        const minimumZoom = 0.25;
+        const maximumZoom = 4;
+        const zoomStep = 0.25;
+        let zoom = 1;
+
+        function applyZoom(nextZoom) {
+            zoom = Math.min(maximumZoom, Math.max(minimumZoom, nextZoom));
+            image.style.width = `${zoom * 100}%`;
+            zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+            zoomOut.disabled = zoom <= minimumZoom;
+            zoomIn.disabled = zoom >= maximumZoom;
+            image.style.cursor = zoom < maximumZoom ? 'zoom-in' : 'default';
+        }
+
+        zoomOut.addEventListener('click', () => applyZoom(zoom - zoomStep));
+        zoomIn.addEventListener('click', () => applyZoom(zoom + zoomStep));
+        zoomReset.addEventListener('click', () => {
+            applyZoom(1);
+            viewport.scrollTo({ top: 0, left: 0 });
+        });
+
+        viewport.addEventListener('wheel', event => {
+            if (!event.ctrlKey && !event.metaKey) {
+                return;
+            }
+            event.preventDefault();
+            applyZoom(zoom + (event.deltaY < 0 ? zoomStep : -zoomStep));
+        }, { passive: false });
+
+        image.addEventListener('dblclick', event => {
+            event.preventDefault();
+            window.open(image.dataset.fullImageUrl, '_blank', 'noopener,noreferrer');
+        });
+
+        applyZoom(1);
     }
 
     function renderImageMetadata(data) {
