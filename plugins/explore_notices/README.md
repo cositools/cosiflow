@@ -2,12 +2,15 @@
 
 The Explore Notices plugin adds an Airflow AppBuilder page for inspecting GCN notices stored by the COSIflow GCN client in MySQL.
 
-It is registered under `Results Browser > Explore Notices` and exposes two views:
+It is registered as the authenticated top-level menu item
+**GCN Notices Explorer** and exposes inbox/outbox list and detail routes:
 
 - `/explore-notices/?tab=inbox`: paginated notice inbox with filters and client heartbeat status.
 - `/explore-notices/?tab=outbox`: paginated outbound notice outbox with delivery status and attempt summary.
 - `/explore-notices/notice/<id>`: full inbox notice detail view with raw payload, JSON payload, validation errors, and derived summary fields.
 - `/explore-notices/outbox/<id>`: full outbound notice detail view with payload JSON, validation errors, source DAG metadata, and delivery attempts.
+
+All exposed routes require an authenticated Airflow session.
 
 ## Data Source
 

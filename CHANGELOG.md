@@ -4,13 +4,10 @@ This document records the significant changes to COSIflow.
 
 The dates shown are the dates of the annotated tags. The history before
 `v0.1.0`, which started in 2024 but did not contain version tags, is consolidated
-into the first release. The **Unreleased** section describes commits currently
-available on the `dev` branch after `v0.2.0`; these changes are not part of a
-release yet.
+into the first release. The **Unreleased** section describes the current `dev`
+branch after `v0.2.0`; these changes are not part of a release yet.
 
 ## [Unreleased]
-
-Changes after `v0.2.0`, up to commit `f7ebb17` dated July 20, 2026.
 
 ### Added
 
@@ -18,6 +15,9 @@ Changes after `v0.2.0`, up to commit `f7ebb17` dated July 20, 2026.
   image. A dedicated Docker build stage performs a sparse checkout of the
   `cositools/gcn-schema` repository at a pinned revision, removing the need to
   manually mount an external schema repository.
+- Added shared Jinja/CSS resources used by the Airflow plugins for consistent
+  page layout and styling.
+- Added Graphviz to the Airflow image for optional benchmark DAG graph exports.
 
 ### Changed
 
@@ -26,19 +26,30 @@ Changes after `v0.2.0`, up to commit `f7ebb17` dated July 20, 2026.
   reuse stale editable checkouts or outdated dependencies and produce an
   installation that is consistent with the module's current requirements.
 - The Docker Compose configuration now exposes `HOST_IP` and the GCN MySQL port
-  as YAML anchors that can be edited in one place; the shared PostgreSQL
-  password must now be provided explicitly.
+  as YAML anchors that can be edited in one place; local database passwords can
+  be supplied through the ignored `.env` file.
 - The Airflow data volume now points to `data/heasarc`, while persistent logs
   are stored separately under `data/logs`.
 - The default benchmark configuration no longer generates Airflow graphs,
   reducing additional work during performance measurements. Graph generation
   remains available in the test runner.
+- Plugin menu labels and ordering now consistently expose **HEASARC Explorer**,
+  **GCN Notices Explorer**, and **Develop Tools**.
+- The Compose configuration now exposes `HOST_DATA_PATH` for DockerOperator
+  mounts and publishes the Airflow and MailHog UIs through their configured host
+  port variables.
+- Local passwords and GCN Kafka credentials are documented as `.env` values;
+  tracked Compose files retain only non-personal defaults.
+- Reworked the main, module-development, and COSIDAG guides against the current
+  implementation, including the exact glob/regex and runtime-override contracts.
 
 ### Fixed
 
 - The final COSIDAG `show_results` task now uses `ALL_SUCCESS`. It runs only
   when all upstream dependencies have succeeded and no longer presents a
   pipeline containing failed tasks as completed.
+- The MailHog redirect and DAG refresh plugin routes now explicitly require an
+  authenticated Airflow session.
 
 ## [v0.2.0] - 2026-07-14
 

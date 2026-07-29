@@ -4,10 +4,10 @@ This plugin adds an Airflow UI page for browsing files under the configured COSI
 
 ## Menu Entry
 
-The plugin registers the following Airflow menu item:
+The plugin registers this top-level Airflow menu item:
 
 ```text
-Results Browser -> heasarc Browser
+HEASARC Explorer
 ```
 
 The view is served from:
@@ -33,7 +33,7 @@ If the environment variable is not set, it falls back to:
 ## Features
 
 * Lists folders and files under the data root.
-* Lets authenticated users navigate subdirectories.
+* Requires an authenticated Airflow session for browsing, preview, and download.
 * Supports file download.
 * Supports preview metadata and content handling for common text, image, FITS, HDF5, CSV, YAML, JSON, and archive extensions.
 * Prevents navigation outside the configured data root.

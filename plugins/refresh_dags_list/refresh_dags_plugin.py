@@ -2,6 +2,7 @@ import os
 import subprocess
 from flask import redirect, flash
 from flask_appbuilder import BaseView, expose
+from flask_login import login_required
 from airflow.plugins_manager import AirflowPlugin
 from airflow.models import DagBag
 from airflow.utils.session import provide_session
@@ -14,6 +15,7 @@ class RefreshDagsView(BaseView):
     route_base = "/refresh_dags"
 
     @expose("/")
+    @login_required
     def refresh_dags(self):
         """Execute 'airflow dags list' command and refresh DAG bag, then redirect to home"""
         try:

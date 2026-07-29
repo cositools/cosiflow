@@ -1,237 +1,205 @@
-# Cosiflow
+# COSIflow
 
-Cosiflow provides an Airflow-based orchestration environment for managing and monitoring scientific pipelines for COSI.
+COSIflow is an Apache Airflow environment for orchestrating and monitoring COSI
+scientific pipelines. This repository provides the core runtime, the `COSIDAG`
+framework, callbacks, UI plugins, and the GCN inbox/outbox client. Scientific
+pipelines are installed as adjacent modules, such as
+`fast-transient-analysis-pipeline` (FasTP).
 
----
+For a faster COSIflow setup, or for an example that automates the installation
+of both COSIflow and the FasTP module, follow the
+[FasTP installation guide](https://github.com/cositools/fast-transient-analysis-pipeline/tree/dev#installation).
 
-## Quick Start Overview
+## Quick start
 
-There are two main steps to using Cosiflow:
+### Prerequisites
 
-1. **Set up and run the core Cosiflow environment** (this README):
-   - Configure `env/docker-compose.yaml` (UID/GID, Airflow admin password, ports, etc.).
-   - Build and start the Docker Compose stack.
-   - Access the Airflow Web UI.
+* Install Docker Engine or Docker Desktop with Docker Compose v2
+* Clone this repository into your home directory that can also contain pipeline modules:
 
-2. **(Optional) Install one or more pipeline modules** (e.g. analysis pipelines):
-   - Each module lives alongside `cosiflow/` (for example `fast-transient-analysis-pipeline/`).
-   - Modules provide DAGs and pipeline scripts that are plugged into the running Cosiflow instance.
-   - To install a module into Cosiflow, follow the guide in `env/README.md`.
-
-If you only want to bring up a plain Cosiflow environment to explore Airflow and the COSIDAG framework, step 1 is sufficient.  
-If you want to run a specific scientific pipeline (e.g. the Fast Transient Analysis Pipeline), you must also complete step 2.
-
----
-
-### 1. REQUIREMENTS
-
-#### CONFIGURE ENVIRONMENT VARIABLES (NO `.env` FILE)
-
-All configuration is now done directly in `env/docker-compose.yaml` (there is **no** `.env` file anymore).
-
-1. Move into the `env` folder:
-   ```bash
-   cd env
-   ```
-
-2. Find your local user and group IDs:
-
-   ```bash
-   id -u   # YOUR_USER_ID
-   id -g   # YOUR_GROUP_ID
-   ```
-
-3. Open `docker-compose.yaml` and locate the `x-common-env` block at the top.  
-   Replace the default values with your IDs:
-
-   ```yaml
-   UID: ${UID:-<YOUR_USER_ID>}  # TOEDIT
-   GID: ${GID:-<YOUR_GROUP_ID>} # TOEDIT
-   ```
-
-4. In the same `x-common-env` block, set a secure password for the Airflow Web UI:
-
-   ```yaml
-   AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-<YOUR_AIRFLOW_PASSWORD>}  # TOEDIT
-   ```
-
-5. (Optional, but recommended to review)  
-   Still in `x-common-env`, check the variables marked with `# TOEDIT` comments  
-   (e.g. `HOST_IP`, `MAILHOG_WEBUI_PORT`, `AIRFLOW_WEBUI_PORT`) and adjust them
-   if the defaults are not suitable for your setup.
-
-#### PREPARE THE FOLDER FOR STORING POSTGRESS DATA
-```bash
-cd ..
-mkdir -p data/postgres_data
+```text
+~/cosi/
+├── cosiflow/
+└── fast-transient-analysis-pipeline/   # optional module
 ```
 
----
+Run all Compose commands from `cosiflow/env`.
 
-### 2. BUILD THE COMPOSE
+### 1. Configure the host identity and public endpoints
 
-Build all containers defined in `docker-compose.yml`:
+Edit `env/docker-compose.yaml`.
+
+Set the build arguments under `x-build-args` to the UID and GID returned by:
+
+```bash
+id -u
+id -g
+```
+
+For example:
+
+```yaml
+x-build-args: &build-args
+  UID: ${UID:-501}
+  GID: ${GID:-20}
+```
+
+Review these endpoint values:
+
+```yaml
+x-host-ip: &host-ip "127.0.0.1"
+
+x-common-env: &common-env
+  MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}
+  AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}
+```
+
+`AIRFLOW_WEBUI_PORT` and `MAILHOG_WEBUI_PORT` control the host-side Docker port
+mapping as well as the URLs displayed by COSIflow. The services continue to
+listen on ports 8080 and 8025 inside their containers.
+
+### 2. Store secrets in `.env`
+
+Non-sensitive defaults live in `docker-compose.yaml`. Put local passwords and
+GCN Kafka credentials in `cosiflow/env/.env`, which is excluded by `.gitignore`:
+
+```dotenv
+AIRFLOW_ADMIN_PASSWORD=<airflow-admin-password>
+POSTGRES_PASSWORD=<airflow-database-password>
+GCN_DB_PASSWORD=<gcn-database-password>
+GCN_MYSQL_ROOT_PASSWORD=<gcn-root-password>
+
+# Optional: required only for authenticated GCN Kafka consumption.
+GCN_CLIENT_ID=<your-gcn-client-id>
+GCN_CLIENT_SECRET=<your-gcn-client-secret>
+```
+
+Restrict access to the file:
+
+```bash
+cd cosiflow/env
+chmod 600 .env
+```
+
+Never commit `.env` or copy credentials into `docker-compose.yaml`. Without GCN
+credentials, the local database, manual injection, and dry-run outbox remain
+usable; the Kafka receiver stays idle.
+
+### 3. Prepare persistent directories
+
+From the `cosiflow` directory:
+
+```bash
+mkdir -p data/postgres_data data/gcn_mysql_data data/heasarc data/logs
+```
+
+These are bind-mounted host directories. They remain on disk after containers
+are stopped or removed.
+
+### 4. Build and start COSIflow
 
 ```bash
 cd env
 docker compose build
-```
-
-⏱ Estimated build time: **~490 seconds**
-
----
-
-### 3. RUN THE CONTAINER
-
-To run with logs visible:
-
-```bash
-docker compose up
-```
-
-To run in detached mode (no logs):
-
-```bash
 docker compose up -d
+docker compose ps
 ```
 
----
+Follow the Airflow logs with:
 
-### 4. ENTER THE CONTAINER
+```bash
+docker compose logs -f airflow
+```
 
-To open a terminal inside the running Airflow container:
+Open:
+
+- Airflow: `http://<HOST_IP>:<AIRFLOW_WEBUI_PORT>/home`
+- MailHog: `http://<HOST_IP>:<MAILHOG_WEBUI_PORT>`
+
+The default Airflow username is `admin`; the password is the value of
+`AIRFLOW_ADMIN_PASSWORD`.
+
+Open a shell in the Airflow container with:
 
 ```bash
 docker compose exec airflow bash
 ```
 
----
+### 5. Stop the stack
 
-### 5. CONNECT TO THE AIRFLOW WEB UI
-
-1. Open your web browser and go to:
-
-   [http://localhost:8080/home](http://localhost:8080/home)
-
-2. Insert the user credentials:
-   ```text
-   user:     admin
-   password: <YOUR_AIRFLOW_PASSWORD>
-   ```
-
----
-
-### 6. STOP THE CONTAINER
-
-To stop and remove all running containers, networks, and volumes:
+Stop and remove containers and the Compose network:
 
 ```bash
-docker compose down -v
+docker compose down
 ```
 
----
+`docker compose down -v` also removes Compose-managed named volumes, but it does
+not delete the bind-mounted directories under `cosiflow/data`.
 
-### 7. CONFIGURATIONS
+## Main configuration
 
-Below is the list of the main environment variables configured in `env/docker-compose.yaml`
-inside the `x-common-env` block (and related sections), with their purpose:
+| Variable or anchor | Purpose |
+| --- | --- |
+| `UID`, `GID` | Identity used to build the non-root `gamma` user |
+| `x-host-ip` / `HOST_IP` | Host address used for published service URLs |
+| `AIRFLOW_ADMIN_USERNAME`, `AIRFLOW_ADMIN_EMAIL`, `AIRFLOW_ADMIN_PASSWORD` | Initial Airflow administrator |
+| `AIRFLOW_WEBUI_PORT` | Host port published for the Airflow UI |
+| `MAILHOG_WEBUI_PORT` | Host port published for the MailHog UI |
+| `POSTGRES_USER`, `POSTGRES_DB`, `POSTGRES_PASSWORD` | Airflow metadata database |
+| `HOST_WORKSPACE_PATH` | Host workspace mounted into `DockerOperator` containers |
+| `HOST_DATA_PATH` | Host equivalent of the shared COSI data root |
+| `COSI_DATA_DIR`, `COSI_INPUT_DIR`, `COSI_LOG_DIR` | Main container data paths |
+| `COSI_OBS_DIR`, `COSI_TRANSIENT_DIR`, `COSI_TRIGGER_DIR`, `COSI_MAPS_DIR`, `COSI_SOURCE_DIR` | Canonical COSI data domains |
+| `GCN_DB_*` | MySQL connection for the GCN inbox/outbox |
+| `GCN_CLIENT_ID`, `GCN_CLIENT_SECRET`, `GCN_CONSUMER_*` | GCN Kafka consumer |
+| `GCN_PRODUCER_ENABLED`, `GCN_DRY_RUN`, `GCN_TOPIC_ALLOWLIST` | Outbound safety controls |
 
-| Variable | Description |
-|-----------|--------------|
-| **UID** | User ID used inside containers (must match your local user) |
-| **GID** | Group ID used inside containers (must match your local group) |
-| **DISPLAY** | Display variable for X11 forwarding (optional) |
-| **AIRFLOW_ADMIN_USERNAME** | Default Airflow Web UI username |
-| **AIRFLOW_ADMIN_EMAIL** | Email associated with Airflow admin user |
-| **AIRFLOW_ADMIN_PASSWORD** | Secure password for Airflow Web UI (must be set by you) |
-| **HOST_IP** | Host IP used to construct service URLs (e.g. Web UIs) |
-| **MAILHOG_WEBUI_PORT** | Port for the MailHog Web UI |
-| **AIRFLOW_WEBUI_PORT** | Port for the Airflow Web UI |
-| **POSTGRES_USER** | Username for the Airflow PostgreSQL database |
-| **POSTGRES_DB** | Database name for the Airflow PostgreSQL database |
-| **POSTGRES_PASSWORD** | Password for the Airflow PostgreSQL database |
-| **ALERT_USERS_LIST_PATH** | Path to YAML file containing user alert configurations |
-| **ALERT_SMTP_SERVER** | SMTP server used for alert notifications |
-| **ALERT_EMAIL_SENDER** | Email address used as sender for system alerts |
-| **ALERT_LOG_PATH** | Path to Airflow log file monitored by alert system |
-| **AIRFLOW__SMTP__SMTP_STARTTLS** | Enables/disables STARTTLS (default: False) |
-| **AIRFLOW__SMTP__SMTP_SSL** | Enables/disables SMTP over SSL (default: False) |
-| **COSI_DATA_DIR** | Root directory for COSI data |
-| **COSI_INPUT_DIR** | Directory for COSI input data |
-| **COSI_LOG_DIR** | Directory for COSI log files |
-| **COSI_OBS_DIR** | Directory for observation data |
-| **COSI_TRANSIENT_DIR** | Directory for transient event data |
-| **COSI_TRIGGER_DIR** | Directory for TDRSS trigger event data |
-| **COSI_MAPS_DIR** | Directory for map data products |
-| **COSI_SOURCE_DIR** | Directory for source-level data products |
+The checked-in producer defaults are deliberately conservative:
+`GCN_PRODUCER_ENABLED=false`, `GCN_DRY_RUN=true`, and test topics only.
 
----
+## Installing scientific modules
 
-### NOTES
+Modules live beside `cosiflow/` and are linked into the running Airflow
+container by `env/hot_load_module.sh`:
 
-- Configuration is done directly in `env/docker-compose.yaml`; there is no `.env` file.
-- Variables that are important to customize are explicitly marked with `# TOEDIT` comments in `docker-compose.yaml`.
-- To inspect container logs, use:
-  ```bash
-  docker compose logs -f airflow
-  ```
+```bash
+cd cosiflow/env
+./hot_load_module.sh <module-directory> install
+```
 
-- For details on how to install and manage modules (pipelines) within Cosiflow, see `env/README.md`.
+Use `update` after changing dependencies or runtime configuration and `remove`
+to unload a module. The complete module format and lifecycle are documented in
+[env/README.md](env/README.md).
 
----
+## COSIDAG
 
-**Cosiflow environment ready for use.**
+`COSIDAG` is an Airflow `DAG` subclass for filesystem-driven scientific
+workflows. It can monitor new folders or files, reject already processed paths,
+resolve input files, run a custom task graph, retrigger itself, and publish a
+final result link.
 
----
+The implementation and developer contract are documented in
+[modules/README.md](modules/README.md).
 
-## What is COSIDAG
+## DAGs
 
-A **COSIDAG** (COSI DAG) is a structured abstraction built on top of Apache Airflow DAGs.
+The core repository keeps `dags/` as the Airflow mount point but does not ship
+production scientific DAG Python files. Installed modules expose their DAG
+directories there through `.cfmodule` symlinks.
 
-It provides a **standardized workflow layout** for scientific pipelines, reducing boilerplate and enforcing consistent patterns across different analyses.
+See [dags/README.md](dags/README.md) for the core contract and the module's own
+DAG catalog for its current workflow IDs.
 
-In particular, a COSIDAG:
+## GCN client
 
-* defines a common execution skeleton (input resolution, optional monitoring, result handling)
-* encapsulates best practices for:
+The `gcn-client` and `gcn-mysql` services provide a durable inbound notice
+database and outbound queue. Airflow tasks interact with MySQL rather than
+opening Kafka connections directly.
 
-  * file discovery
-  * parameter propagation
-  * XCom-based communication
-* allows developers to focus only on **scientific tasks**, while orchestration logic is handled automatically
+Architecture, schema, commands, dry-run behavior, and local test procedures are
+documented in [gcn-client/README.md](gcn-client/README.md).
 
-COSIDAGs are used for all production scientific pipelines (e.g. Light Curve, TS Map), while standard DAGs are reserved for orchestration, testing, or utilities.
+## Tests
 
-**How to write and customize a COSIDAG** is explained in detail in the [COSIDAG developer guide](modules/README.md).
-
----
-
-## Tutorials and developer guide
-
-A complete, step-by-step guide on how to:
-
-* understand the COSIDAG execution model
-* write new COSIDAGs
-* add custom tasks
-* use XCom correctly
-* integrate external Python environments
-
-is available in:
-
-[COSIDAG developer guide](modules/README.md).
-
-This is the **recommended starting point for developers**.
-
----
-
-## Available DAGs and COSIDAGs
-
-The core `cosiflow` repository provides the Airflow environment, the COSIDAG framework, callbacks, and UI plugins.
-It does **not** ship production scientific DAG Python files directly.
-
-Scientific DAGs and COSIDAGs are supplied by modules installed alongside `cosiflow/`, for example:
-
-* `fast-transient-analysis-pipeline/src/dags/`
-
-The core repository reference is available in [dags/README.md](dags/README.md).
-Module-specific DAG catalogs should live in the module repository, next to the DAG files they describe.
+The configurable COSIDAG benchmark and chart generator are documented in
+[test/README.md](test/README.md).

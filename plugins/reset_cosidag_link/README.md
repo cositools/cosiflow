@@ -1,6 +1,7 @@
 # Reset Cosidag Plugin
 
-This plugin adds an Airflow UI page under **Develop tools -> Reset Cosidag** for managing the processed state of COSIDAG pipelines.
+This plugin adds an authenticated Airflow UI page under
+**Develop Tools → Reset Cosidag** for managing COSIDAG processed state.
 
 ## What It Manages
 
@@ -29,7 +30,7 @@ The content depends on the COSIDAG monitoring policy:
 ## Usage
 
 1. Open the Airflow web UI.
-2. Navigate to **Develop tools -> Reset Cosidag**.
+2. Navigate to **Develop Tools → Reset Cosidag**.
 3. Select a COSIDAG ID.
 4. Use **Reset Variable** to clear the whole history, or select specific rows and click the trash button to remove only those paths.
 

@@ -118,16 +118,18 @@ Configuration is read from environment variables in
   `GCN_DB_PASSWORD`: MySQL connection;
 - `GCN_SCHEMA_ROOT`, `GCN_COSI_ALERT_SCHEMA`: local schema validation.
 
-For an authenticated test, create `cosiflow/env/.env` with only placeholders
-replaced by your own credentials:
+For an authenticated test, add your own credentials to
+`cosiflow/env/.env`:
 
 ```dotenv
 GCN_CLIENT_ID=<your-gcn-client-id>
 GCN_CLIENT_SECRET=<your-gcn-client-secret>
 ```
 
-Never commit this file or paste the secret into documentation or logs. See
-[`../env/README.md`](../env/README.md) for the credential setup procedure.
+The same file normally contains the local Airflow and database passwords; do
+not replace its other entries. Never commit it or paste the secret into
+documentation or logs. See the [main setup guide](../README.md#2-store-secrets-in-env)
+for the complete local-secret configuration.
 
 ## Run the prototype
 

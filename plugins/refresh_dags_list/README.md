@@ -1,12 +1,14 @@
 # Refresh DAGs List Plugin
 
-This plugin adds a menu item under "Develop tools" that executes the `airflow dags list` command and refreshes the DAG bag to update the DAGs list in the Airflow UI.
+This plugin adds an authenticated menu action under **Develop Tools**. It runs
+`airflow dags list`, rebuilds the DAG bag, and synchronizes parsed DAGs with the
+Airflow metadata database.
 
 ## Features
 
 - Executes the `airflow dags list` command
 - Forces a refresh of the DAG bag to update the list in the UI
-- Adds a menu item under "Develop tools" dropdown menu
+- Adds **Develop Tools → Refresh DAGs List** to the Airflow menu
 
 ## Installation
 
@@ -15,8 +17,7 @@ The plugin is automatically loaded by Airflow when placed in the `plugins/` fold
 ## Usage
 
 1. Navigate to the Airflow web UI
-2. Click on "Develop tools" in the top navigation bar
-3. Click on "Refresh DAGs List"
+2. Open **Develop Tools → Refresh DAGs List**
 4. The command will execute and you will be redirected to the home page with a success message
 5. The DAGs list will be automatically refreshed
 
@@ -39,7 +40,7 @@ refresh_dags_list/
 
 ## Notes
 
-- The plugin requires the user to be authenticated
+- The route is protected with `login_required`
 - The `airflow dags list` command is executed in the context of the Airflow container
 - The DAG bag refresh may take a few seconds to complete
 - If there are any errors, they will be displayed as a warning message

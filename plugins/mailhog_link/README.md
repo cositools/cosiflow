@@ -7,7 +7,7 @@ This plugin adds a direct Airflow UI link to the MailHog web interface used by t
 The plugin registers the following Airflow menu item:
 
 ```text
-Develop tools -> Mailhog
+Develop Tools -> Mailhog
 ```
 
 The local Airflow route is:
@@ -41,4 +41,6 @@ mailhog_link/
 
 ## Notes
 
-This plugin only exposes a convenient UI link. Mail delivery and SMTP capture are configured in the Cosiflow Airflow environment.
+The view requires an authenticated Airflow session. This plugin only exposes a
+convenient UI redirect; it does not add links to individual failed tasks.
+Mail delivery and SMTP capture are configured in the COSIflow environment.
