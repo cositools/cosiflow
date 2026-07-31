@@ -1,0 +1,117 @@
+# =============================================================================
+#  Dockerfile.airflow — Native Python (venv), OracleLinux 8 base
+#  Base: OracleLinux 8 | Works on amd64 and arm64
+# =============================================================================
+
+FROM oraclelinux:8 AS oracle8
+
+# ------------------------------ Base dependencies ------------------------------
+RUN set -eux; \
+  dnf install -y oracle-epel-release-el8; \
+  dnf config-manager --enable ol8_codeready_builder; \
+  # Abilitiamo il modulo 3.9 (standard per OL8)
+  dnf module enable -y python39; \
+  # Installiamo sia il 3.9 che il 3.11
+  dnf install -y \
+    python39 python39-devel python39-pip \
+    python3.11 python3.11-devel python3.11-pip \
+    python3.12 python3.12-devel python3.12-pip \
+    wget curl ca-certificates gnupg2 tar bzip2 xz unzip which rsync \
+    git cmake3 gcc-c++ gcc make binutils \
+    compat-openssl10 openssl-devel \
+    libX11-devel libXpm-devel libXft-devel libXext-devel \
+    gsl-devel bzip2-devel libffi-devel xz-devel sqlite-devel \
+    ncurses ncurses-devel xz libzstd libzstd-devel \
+    nmap-ncat chrony \
+    hdf5 hdf5-devel libpq-devel \
+    graphviz; \
+  dnf clean all; rm -rf /var/cache/dnf/*
+
+# # Aggiorna il sistema e installa i pacchetti necessari per la compilazione
+# RUN dnf -y update && \
+#     dnf -y groupinstall "Development Tools" && \
+#     dnf -y install wget tar gzip gcc openssl-devel bzip2-devel libffi-devel zlib-devel sqlite-devel make
+# # Scarica i sorgenti di Python 3.10.x (es. 3.10.14)
+# ARG PYTHON_310_VERSION=3.10.14
+# RUN wget -O Python-${PYTHON_310_VERSION}.tgz \
+#       https://www.python.org/ftp/python/${PYTHON_310_VERSION}/Python-${PYTHON_310_VERSION}.tgz && \
+#     tar xzf Python-${PYTHON_310_VERSION}.tgz
+# # Configura, compila e installa Python nel sistema
+# RUN cd Python-${PYTHON_310_VERSION} && \
+#     ./configure --enable-optimizations --with-system-ffi --with-computed-gotos && \
+#     make -j $(nproc) && \
+#     make altinstall
+# # Pulisce i file non necessari per ridurre le dimensioni dell'immagine
+# RUN rm -rf Python-${PYTHON_310_VERSION}.tgz Python-${PYTHON_310_VERSION} && \
+#     dnf clean all
+# # Imposta il comando di default
+# CMD ["python3.10"]
+
+# # Set python3.9 as default python
+# RUN alternatives --set python3 /usr/bin/python3.11 && \
+#     ln -sf /usr/bin/python3.11 /usr/bin/python
+
+# ------------------------------ Non-root user ------------------------------
+# UID and GID are passed from docker-compose.yaml build args
+# Defaults match docker-compose.yaml defaults for consistency
+ARG UID=
+ARG GID=
+RUN set -eux; \
+    if getent group "${GID}" >/dev/null; then \
+      GN="$(getent group "${GID}" | cut -d: -f1)"; \
+    else \
+      groupadd -g "${GID}" gamma; GN=gamma; \
+    fi; \
+    if id -u gamma >/dev/null 2>&1; then \
+      usermod -u "${UID}" -g "${GID}" gamma; \
+    else \
+      useradd -m -u "${UID}" -g "${GID}" -s /bin/bash gamma; \
+    fi; \
+    mkdir -p /home/gamma && chown -R "${UID}:${GID}" /home/gamma
+
+ENV HOME=/home/gamma
+WORKDIR /home/gamma
+
+# ------------------------------ Copy Configuration ------------------------------
+RUN mkdir -p /home/gamma/env
+COPY environment.yml /home/gamma/env/
+COPY requirements.txt /home/gamma/env/
+COPY alert_users.yaml /home/gamma/env/
+COPY entrypoint-airflow.sh /home/gamma/entrypoint-airflow.sh
+
+# Fix ownership
+RUN chown -R "${UID}:${GID}" /home/gamma
+
+# ------------------------------ Install Airflow (venv) ------------------------------
+USER gamma
+
+# Create virtual environment
+RUN python3.9 -m venv /home/gamma/venv
+
+# Activate venv for subsequent commands (simulated by updating PATH)
+ENV VIRTUAL_ENV=/home/gamma/venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Install Airflow
+ENV AIRFLOW_VERSION=2.10.3
+ENV PYTHON_VERSION=3.9
+ENV CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt"
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINT_URL}" && \
+    pip install --no-cache-dir apache-airflow-providers-docker apache-airflow-providers-postgres psycopg2-binary \
+    jupyter pandas plotly scikit-learn tensorboard tensorflow inotify_simple PyMySQL graphviz
+
+# ------------------------------ Final Setup ------------------------------
+RUN mkdir -p ${HOME}/airflow
+ENV AIRFLOW_HOME=${HOME}/airflow
+
+# Make entrypoint executable (switch to root briefly)
+USER root
+RUN chmod +x /home/gamma/entrypoint-airflow.sh
+USER gamma
+
+WORKDIR /home/gamma/workspace
+
+# Default entrypoint
+# ENTRYPOINT ["/home/gamma/entrypoint-airflow.sh"]

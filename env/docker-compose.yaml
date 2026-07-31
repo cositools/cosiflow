@@ -1,0 +1,314 @@
+# Docker Compose file version (obsolete in newer versions, but kept for compatibility)
+# version: "3.9"
+
+# Build arguments for Dockerfile (UID and GID)
+x-build-args: &build-args
+  UID: ${UID:-}                                                # TOEDIT: set the UID of the user in the container (default: 501)
+  GID: ${GID:-}                                                 # TOEDIT: set the GID of the user in the container (default: 20)
+
+# Host values defined directly in this file (no .env required).
+x-host-ip: &host-ip "127.0.0.1"
+x-gcn-mysql-host-port: &gcn-mysql-host-port 3307
+
+x-common-env: &common-env
+  #-------- BOOTSTRAP ID user for container (can be overridden via .env)
+  DISPLAY: ${DISPLAY:-}
+  #-------- AIRFLOW Environment Variables
+  AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
+  AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@localhost}
+  # Write here the secure password for airflow Web UI
+  AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-}      # TOEDIT: set the password for the Airflow Web UI (default: cosipass)
+  #-------- Airflow home directory
+  AIRFLOW_HOME: /home/gamma/airflow
+  # Base workspace path on the *Docker daemon host* (used by DockerOperator bind mounts).
+  # Auto default: run `docker compose` from `cosiflow/env` so ${PWD}/../.. resolves to workspace root.
+  HOST_WORKSPACE_PATH: ${HOST_WORKSPACE_PATH:-${PWD}/../..}
+  # Host counterpart of /home/gamma/workspace/data. DockerOperator containers
+  # must mount the same data root as Airflow (see the data volume below).
+  HOST_DATA_PATH: ${HOST_DATA_PATH:-${PWD}/../data/heasarc}
+  #-------- SMTP Settings for MailHog
+  # HOST_IP: Define once here, use everywhere
+  HOST_IP: *host-ip                                   # TOEDIT: set x-host-ip above
+  MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}                 # TOEDIT: set the port for the MailHog Web UI (default: 8025)
+  AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}                 # TOEDIT: set the port for the Airflow Web UI (default: 8080)
+  # URLs will be constructed in entrypoint-airflow.sh as:
+  # MAILHOG_WEBUI_URL=http://${HOST_IP}:${MAILHOG_WEBUI_PORT}
+  # COSIFLOW_HOME_URL=http://${HOST_IP}:${AIRFLOW_WEBUI_PORT}/heasarcbrowser
+###################################
+###### POSTGRES CONFIGURATION ######
+###################################
+#-------- Username for Airflow DB
+  POSTGRES_USER: ${POSTGRES_USER:-airflow_user}         
+#-------- Database name for Airflow
+  POSTGRES_DB: ${POSTGRES_DB:-airflow_db}            
+#-------- Password for Airflow DB
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}  # Password for Airflow DB
+###################################
+###### MAILHOG CONFIGURATION ######
+###################################
+  #-------- AIRFLOW Alert Settings
+  AIRFLOW__SMTP__SMTP_HOST: mailhog
+  AIRFLOW__SMTP__SMTP_PORT: 1025
+  AIRFLOW__SMTP__SMTP_MAIL_FROM: donotreply@cosiflow.alert.errors.it
+  AIRFLOW__SMTP__SMTP_STARTTLS: "False"
+  AIRFLOW__SMTP__SMTP_SSL: "False"
+########################################
+###### DOCKER PROXY CONFIGURATION ######
+########################################
+  #-------- Docker Socket Proxy
+  # Note: These are used in docker-proxy service. Defaults are applied inline.
+  DOCKER_PROXY_PORT: ${DOCKER_PROXY_PORT:-2375}
+  DOCKER_HOST: tcp://docker-proxy:${DOCKER_PROXY_PORT:-2375}
+  DOCKER_CONTAINERS: ${DOCKER_CONTAINERS:-1}  # Allow listing/starting containers
+  DOCKER_IMAGES: ${DOCKER_IMAGES:-1}      # Allow image pulling
+  DOCKER_POST: ${DOCKER_POST:-1}        # Allow POST requests (create/start/stop)
+  DOCKER_NETWORKS: ${DOCKER_NETWORKS:-1}    # Allow network operations
+  DOCKER_VOLUMES: ${DOCKER_VOLUMES:-1}    # Allow volume operations
+######################################
+###### COSI Directory Structure ######
+######################################
+  #-------- Base directories
+  COSI_DATA_DIR: ${COSI_DATA_DIR:-/home/gamma/workspace/data}
+  COSI_INPUT_DIR: ${COSI_INPUT_DIR:-/home/gamma/workspace/data/input}
+  COSI_LOG_DIR: ${COSI_LOG_DIR:-/home/gamma/workspace/log}
+  #-------- Main data type directories
+  COSI_OBS_DIR: ${COSI_OBS_DIR:-/home/gamma/workspace/data/obs}
+  COSI_TRANSIENT_DIR: ${COSI_TRANSIENT_DIR:-/home/gamma/workspace/data/transient}
+  COSI_TRIGGER_DIR: ${COSI_TRIGGER_DIR:-/home/gamma/workspace/data/tdrss}
+  COSI_MAPS_DIR: ${COSI_MAPS_DIR:-/home/gamma/workspace/data/maps}
+  COSI_SOURCE_DIR: ${COSI_SOURCE_DIR:-/home/gamma/workspace/data/source}
+###################################
+###### GCN CLIENT CONFIGURATION ######
+###################################
+  # Dedicated MySQL DB for GCN notices; keep separate from Airflow Postgres.
+  GCN_DB_HOST: ${GCN_DB_HOST:-gcn-mysql}
+  GCN_DB_PORT: ${GCN_DB_PORT:-3306}
+  GCN_MYSQL_HOST_PORT: *gcn-mysql-host-port           # TOEDIT: set x-gcn-mysql-host-port above
+  GCN_DB_NAME: ${GCN_DB_NAME:-gcn}
+  GCN_DB_USER: ${GCN_DB_USER:-gcn_user}
+  GCN_DB_PASSWORD: ${GCN_DB_PASSWORD:-gcn_password}
+  GCN_DB_CONNECT_TIMEOUT: ${GCN_DB_CONNECT_TIMEOUT:-10}
+  # GCN Kafka credentials. Leave empty for local DB/dry-run tests.
+  GCN_CLIENT_ID: ${GCN_CLIENT_ID:-}
+  GCN_CLIENT_SECRET: ${GCN_CLIENT_SECRET:-}
+  GCN_DOMAIN: ${GCN_DOMAIN:-gcn.nasa.gov}
+  GCN_CONSUMER_GROUP_ID: ${GCN_CONSUMER_GROUP_ID:-cosiflow-gcn-client}
+  GCN_CONSUMER_TOPICS: ${GCN_CONSUMER_TOPICS:-gcn.classic.text.FERMI_GBM_FIN_POS,gcn.classic.text.FERMI_GBM_FLT_POS,gcn.classic.text.FERMI_GBM_GND_POS,gcn.classic.text.FERMI_GBM_POS_TEST,gcn.classic.text.FERMI_GBM_SUBTHRESH,gcn.classic.text.SWIFT_BAT_GRB_LC,gcn.classic.text.SWIFT_BAT_GRB_POS_ACK,gcn.classic.text.SWIFT_BAT_GRB_POS_TEST,gcn.classic.text.SWIFT_BAT_QL_POS,gcn.classic.text.SWIFT_BAT_SCALEDMAP}
+  GCN_CONSUMER_ENABLED: ${GCN_CONSUMER_ENABLED:-true}
+  GCN_CONSUMER_POLL_TIMEOUT: ${GCN_CONSUMER_POLL_TIMEOUT:-1.0}
+  GCN_CONSUMER_COMMIT: ${GCN_CONSUMER_COMMIT:-true}
+  # Producer safety defaults: dry-run and test allowlist only.
+  GCN_PRODUCER_ENABLED: ${GCN_PRODUCER_ENABLED:-false}
+  GCN_DRY_RUN: ${GCN_DRY_RUN:-true}
+  GCN_REQUIRE_TEST_TOPICS: ${GCN_REQUIRE_TEST_TOPICS:-true}
+  GCN_OUTBOUND_TOPIC_DEFAULT: ${GCN_OUTBOUND_TOPIC_DEFAULT:-gcn.notices.cosi.test.alert}
+  GCN_BGO_OUTBOUND_TOPIC: ${GCN_BGO_OUTBOUND_TOPIC:-gcn.notices.cosi.bgo.test.alert}
+  GCN_GED_OUTBOUND_TOPIC: ${GCN_GED_OUTBOUND_TOPIC:-gcn.notices.cosi.ged.test.alert}
+  GCN_TOPIC_ALLOWLIST: ${GCN_TOPIC_ALLOWLIST:-gcn.notices.cosi.test.alert,gcn.notices.cosi.bgo.test.alert,gcn.notices.cosi.ged.test.alert}
+  GCN_PUBLISH_POLL_SECONDS: ${GCN_PUBLISH_POLL_SECONDS:-5}
+  GCN_PUBLISH_BATCH_SIZE: ${GCN_PUBLISH_BATCH_SIZE:-10}
+  GCN_MAX_ATTEMPTS: ${GCN_MAX_ATTEMPTS:-3}
+  GCN_PRODUCER_CLIENT_LABEL: ${GCN_PRODUCER_CLIENT_LABEL:-cosiflow-gcn-client}
+  GCN_OUTBOUND_ALERT_TENSE: ${GCN_OUTBOUND_ALERT_TENSE:-test}
+  GCN_OUTBOUND_ALERT_TYPE: ${GCN_OUTBOUND_ALERT_TYPE:-initial}
+  GCN_OUTBOUND_RECORD_NUMBER: ${GCN_OUTBOUND_RECORD_NUMBER:-1}
+  GCN_OUTBOUND_PRIORITY: ${GCN_OUTBOUND_PRIORITY:-0}
+  # Schema paths as seen by gcn-client; schema URL is embedded in outbound notices.
+  GCN_SCHEMA_ROOT: ${GCN_SCHEMA_ROOT:-/app/gcn-schema}
+  GCN_COSI_ALERT_SCHEMA: ${GCN_COSI_ALERT_SCHEMA:-/app/gcn-schema/gcn/notices/cosi/alert.schema.json}
+  GCN_COSI_ALERT_SCHEMA_URL: ${GCN_COSI_ALERT_SCHEMA_URL:-https://gcn.nasa.gov/schema/main/gcn/notices/cosi/alert.schema.json}
+  GCN_INIT_DB_ON_START: ${GCN_INIT_DB_ON_START:-true}
+  GCN_LOG_LEVEL: ${GCN_LOG_LEVEL:-INFO}
+
+
+services:
+  # ---------------------------------------------------------------------------
+  # GCN MYSQL SERVICE
+  # ---------------------------------------------------------------------------
+  gcn-mysql:
+    image: mysql:8.4
+    container_name: cosi_gcn_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${GCN_MYSQL_ROOT_PASSWORD:-gcn_root_password}
+      MYSQL_DATABASE: ${GCN_DB_NAME:-gcn}
+      MYSQL_USER: ${GCN_DB_USER:-gcn_user}
+      MYSQL_PASSWORD: ${GCN_DB_PASSWORD:-gcn_password}
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - ../data/gcn_mysql_data:/var/lib/mysql
+    ports:
+      - name: gcn-mysql
+        target: 3306
+        published: *gcn-mysql-host-port
+        host_ip: *host-ip
+        protocol: tcp
+
+  # ---------------------------------------------------------------------------
+  # GCN CLIENT SERVICE
+  # ---------------------------------------------------------------------------
+  gcn-client:
+    image: cosiflow-gcn-client:prototype
+    build:
+      context: ../gcn-client
+      dockerfile: Dockerfile
+    container_name: cosi_gcn_client
+    environment:
+      <<: *common-env
+    depends_on:
+      gcn-mysql:
+        condition: service_healthy
+    command: ["python", "-m", "app.main", "run"]
+
+  # ---------------------------------------------------------------------------
+  # POSTGRES DATABASE SERVICE
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15
+    container_name: cosi_postgres
+    # The default Postgres image runs as user "postgres".
+    # You usually should NOT override this with your local UID/GID.
+    # user: "${UID}:${GID}"
+
+    environment:
+      # These values initialize the PostgreSQL database cluster.
+      # The first initialization only happens if the data volume is empty.
+      # Values come from x-common-env anchor (with defaults if .env not present)
+      #- UID=${UID:-501}
+      #- GID=${GID:-20}
+      - POSTGRES_USER=${POSTGRES_USER:-airflow_user}
+      - POSTGRES_DB=${POSTGRES_DB:-airflow_db}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secure_password}
+
+    # Health check to verify that PostgreSQL is accepting connections
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s      # Run every 5 seconds
+      timeout: 5s       # Fail if command takes longer than 5 seconds
+      retries: 10       # Mark container as unhealthy after 10 failed checks
+
+    volumes:
+      # Local directory that persists the database files
+      # Commented line for a user-level data directory:
+      # - ${HOME}/postgres_data:/var/lib/postgresql/data
+      - ../data/postgres_data:/var/lib/postgresql/data
+
+    # restart: always   # Uncomment for auto-restart on failure
+
+  # ---------------------------------------------------------------------------
+  # AIRFLOW SERVICE
+  # ---------------------------------------------------------------------------
+  airflow:
+    image: cosiflow-airflow:native
+    build:
+      context: .                    # Build context for Dockerfile
+      dockerfile: Dockerfile.airflow
+      args:
+        <<: *build-args             # Use UID and GID from x-build-args anchor
+    container_name: cosi_airflow
+
+    # Run the container as the "gamma" user created inside the image.
+    # This matches the user configured in your Dockerfile.
+    user: "gamma"
+
+    environment:
+      <<: *common-env
+      # DISPLAY is included in common-env, but explicitly listed here for clarity
+      # All variables from x-common-env are inherited via the anchor
+
+    volumes:
+      # Environment variables directory
+      - ../../envs:/home/gamma/envs
+      # DAGs, plugins, and pipeline directories are mounted so you can edit
+      # them live without rebuilding the image.
+      - ../dags:/home/gamma/airflow/dags
+      
+      # [Shared Storage] Pool of all COSI modules (mounted from workspace root)
+      # This allows hot-plugging new modules via symlinks without restarting.
+      - ../../:/home/gamma/airflow/modules_pool
+      
+      # [Docker] Socket mount removed -> We use TCP proxy now.
+      - ../plugins:/home/gamma/airflow/plugins
+      - ../pipeline:/home/gamma/airflow/pipeline
+      - ../callbacks:/home/gamma/airflow/callbacks
+      - ../modules:/home/gamma/airflow/modules
+
+      # Mount the PostgreSQL-specific Airflow configuration
+      - ./airflow.cfg:/home/gamma/airflow/airflow.cfg
+
+      # X11 socket for graphical display forwarding (if needed)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+
+      # Shared directory between host and container
+      - ..:/shared_dir
+
+      # Data workspace directory for processing large files
+      - ../data/heasarc:/home/gamma/workspace/data
+
+      # Logs directory for Airflow (can be overridden via .env)
+      - ../data/logs:/home/gamma/airflow/logs
+    ports:
+      - "8080:8080"   # Airflow Web UI
+      - "28888:28888" # Jupyter Notebook (if enabled)
+
+    depends_on:
+      postgres:
+        # Wait until the Postgres healthcheck passes before starting Airflow
+        condition: service_healthy
+      mailhog:
+        # Wait until the Mailhog service is started before starting Airflow
+        condition: service_started
+      gcn-mysql:
+        # Keep the Explore Notices UI backed by an initialized GCN DB.
+        condition: service_healthy
+
+    # restart: always   # Uncomment if you want automatic restarts
+
+    # Custom entrypoint script that initializes Airflow DB and starts services
+    entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh"]
+    # Alternative entrypoint for debugging:
+    # entrypoint: ["tail", "-f", "/dev/null"]
+
+  # ---------------------------------------------------------------------------
+  # DOCKER SOCKET PROXY (Sidecar for secure Docker access)
+  # ---------------------------------------------------------------------------
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: cosi_docker_proxy
+    # platform: linux/amd64 # Uncomment if needed on ARM, but usually multi-arch
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Read-only mount for security!
+    environment:
+      # Use values from x-common-env anchor with defaults
+      - CONTAINERS=${DOCKER_CONTAINERS:-1} # Allow listing/starting containers
+      - IMAGES=${DOCKER_IMAGES:-1}     # Allow image pulling
+      - POST=${DOCKER_POST:-1}       # Allow POST requests (create/start/stop)
+      - NETWORKS=${DOCKER_NETWORKS:-1}   # Allow network operations
+      - VOLUMES=${DOCKER_VOLUMES:-1}    # Allow volume operations
+    ports:
+      # Expose Docker proxy port (default: 2375)
+      # Note: Using hardcoded port 2375 for compatibility. 
+      # The proxy always listens on port 2375 inside the container.
+      # To change the host port, set DOCKER_PROXY_PORT env var and update this mapping.
+      - "127.0.0.1:2375:2375" # Expose only to localhost for security
+    # No 'user' set, it runs as root internally to access the socket, but acts as a proxy.
+
+  # ---------------------------------------------------------------------------
+  # MAILHOG SERVICE (Fake SMTP server for local testing)
+  # ---------------------------------------------------------------------------
+  mailhog:
+    image: mailhog/mailhog
+    platform: linux/amd64  # Explicitly use AMD64 emulation on ARM Macs to silence warning
+    container_name: cosi_mailhog
+    ports:
+      - "1025:1025"   # SMTP port for Airflow alerts
+      - "8025:8025"   # Web UI → http://localhost:8025 (or use HOST_IP from .env)
+
+# ---------------------------------------------------------------------------
+# NAMED VOLUMES (Optional - not used directly since host paths are mounted)
+# ---------------------------------------------------------------------------
+volumes:
+  postgres_data:

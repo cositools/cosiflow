@@ -1,0 +1,237 @@
+{% extends "airflow/main.html" %}
+
+{% block title %}Reset COSIDAG - Airflow{% endblock %}
+
+{% block content %}
+{% include "cosiflow_ui/styles.html" %}
+<div class="cosiflow-page cosiflow-page--contained">
+    <h2 class="cosiflow-page-title">Reset COSIDAG Processed State</h2>
+    <p>
+        This tool resets the <code>COSIDAG_PROCESSED::{dag_id}</code> variable for a specific COSIDAG.<br>
+        This variable tracks processed paths across runs to avoid reprocessing. Folder-driven COSIDAGs store folder paths; file-driven COSIDAGs store file paths.
+    </p>
+    
+    <hr>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category if category != 'error' else 'danger' }}">
+            {{ message }}
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <div class="panel panel-default">
+        <div class="panel-heading">Reset Variable</div>
+        <div class="panel-body">
+            <form method="post" action="{{ url_for('ResetCosidagView.reset_cosidag') }}">
+                {% if csrf_token %}
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                {% endif %}
+                <div class="form-group">
+                    <label for="dag_id">Select COSIDAG ID:</label>
+                    <select class="form-control" id="dag_id" name="dag_id" required onchange="loadProcessedFolders(this.value)">
+                        <option value="" disabled selected>Select a DAG...</option>
+                        {% for dag_id in dag_ids %}
+                        <option value="{{ dag_id }}">{{ dag_id }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to reset the processed state for this DAG? This action cannot be undone.');">
+                    <span class="glyphicon glyphicon-refresh" aria-hidden="true"></span> Reset Variable
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div class="panel panel-default" id="folders-panel" style="display: none;">
+        <div class="panel-heading">
+            Processed Paths <span id="folder-count" class="badge"></span>
+            <button type="button" class="btn btn-danger btn-xs pull-right" id="delete-selected-btn" onclick="deleteSelectedPaths()" disabled title="Delete selected paths">
+                <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
+            </button>
+        </div>
+        <div class="panel-body">
+            <div id="folders-loading" style="display: none; text-align: center; color: #777;">
+                <span class="glyphicon glyphicon-refresh" aria-hidden="true"></span> Loading...
+            </div>
+            <div id="folders-error" class="alert alert-danger" style="display: none;"></div>
+            <div id="folders-success" class="alert alert-success" style="display: none;"></div>
+            <table class="table table-striped table-hover" id="folders-table">
+                <thead>
+                    <tr>
+                        <th style="width: 36px;">
+                            <input type="checkbox" id="select-all-paths" onclick="toggleAllPaths(this)">
+                        </th>
+                        <th>Path</th>
+                    </tr>
+                </thead>
+                <tbody id="folders-tbody">
+                </tbody>
+            </table>
+            <div id="folders-empty" style="display: none; text-align: center; font-style: italic; color: #777; padding: 10px;">
+                No processed paths found for this DAG.
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function loadProcessedFolders(dagId) {
+        if (!dagId) return;
+
+        const panel = document.getElementById('folders-panel');
+        const loading = document.getElementById('folders-loading');
+        const errorDiv = document.getElementById('folders-error');
+        const successDiv = document.getElementById('folders-success');
+        const tbody = document.getElementById('folders-tbody');
+        const table = document.getElementById('folders-table');
+        const emptyMsg = document.getElementById('folders-empty');
+        const badge = document.getElementById('folder-count');
+        const selectAll = document.getElementById('select-all-paths');
+        const deleteButton = document.getElementById('delete-selected-btn');
+
+        // Reset UI
+        panel.style.display = 'block';
+        loading.style.display = 'block';
+        errorDiv.style.display = 'none';
+        successDiv.style.display = 'none';
+        tbody.innerHTML = '';
+        table.style.display = 'none';
+        emptyMsg.style.display = 'none';
+        badge.innerText = '';
+        selectAll.checked = false;
+        selectAll.indeterminate = false;
+        deleteButton.disabled = true;
+
+        const url = `/reset_cosidag/get_processed_folders/${dagId}`;
+
+        fetch(url)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                loading.style.display = 'none';
+                
+                if (data.error) {
+                    errorDiv.innerText = 'Error: ' + data.error;
+                    errorDiv.style.display = 'block';
+                    return;
+                }
+
+                const folders = data.paths || data.folders || [];
+                badge.innerText = folders.length;
+
+                if (folders.length === 0) {
+                    emptyMsg.style.display = 'block';
+                } else {
+                    table.style.display = 'table';
+                    folders.forEach(folder => {
+                        const row = document.createElement('tr');
+                        const checkCell = document.createElement('td');
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.className = 'processed-path-checkbox';
+                        checkbox.value = folder;
+                        checkbox.addEventListener('change', updateDeleteControls);
+                        checkCell.appendChild(checkbox);
+                        const cell = document.createElement('td');
+                        cell.innerText = folder;
+                        // Optional: make it monospace for paths
+                        cell.style.fontFamily = 'monospace';
+                        row.appendChild(checkCell);
+                        row.appendChild(cell);
+                        tbody.appendChild(row);
+                    });
+                    updateDeleteControls();
+                }
+            })
+            .catch(error => {
+                loading.style.display = 'none';
+                errorDiv.innerText = 'Error fetching data: ' + error.message;
+                errorDiv.style.display = 'block';
+            });
+    }
+
+    function getSelectedPathCheckboxes() {
+        return Array.from(document.querySelectorAll('.processed-path-checkbox:checked'));
+    }
+
+    function getAllPathCheckboxes() {
+        return Array.from(document.querySelectorAll('.processed-path-checkbox'));
+    }
+
+    function updateDeleteControls() {
+        const selected = getSelectedPathCheckboxes();
+        const all = getAllPathCheckboxes();
+        const deleteButton = document.getElementById('delete-selected-btn');
+        const selectAll = document.getElementById('select-all-paths');
+
+        deleteButton.disabled = selected.length === 0;
+        selectAll.checked = all.length > 0 && selected.length === all.length;
+        selectAll.indeterminate = selected.length > 0 && selected.length < all.length;
+    }
+
+    function toggleAllPaths(source) {
+        getAllPathCheckboxes().forEach(checkbox => {
+            checkbox.checked = source.checked;
+        });
+        updateDeleteControls();
+    }
+
+    function getCsrfToken() {
+        const csrfInput = document.querySelector('input[name="csrf_token"]');
+        return csrfInput ? csrfInput.value : '';
+    }
+
+    function deleteSelectedPaths() {
+        const dagSelect = document.getElementById('dag_id');
+        const dagId = dagSelect.value;
+        const selectedPaths = getSelectedPathCheckboxes().map(checkbox => checkbox.value);
+        const errorDiv = document.getElementById('folders-error');
+        const successDiv = document.getElementById('folders-success');
+        const deleteButton = document.getElementById('delete-selected-btn');
+
+        errorDiv.style.display = 'none';
+        successDiv.style.display = 'none';
+
+        if (!dagId || selectedPaths.length === 0) {
+            return;
+        }
+
+        if (!confirm(`Delete ${selectedPaths.length} selected processed path(s)? This action cannot be undone.`)) {
+            return;
+        }
+
+        deleteButton.disabled = true;
+
+        fetch(`/reset_cosidag/delete_processed_paths/${dagId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCsrfToken()
+            },
+            body: JSON.stringify({paths: selectedPaths})
+        })
+            .then(response => response.json().then(data => ({ok: response.ok, data})))
+            .then(({ok, data}) => {
+                if (!ok || data.error) {
+                    throw new Error(data.error || 'Unable to delete selected paths');
+                }
+                successDiv.innerText = `Deleted ${data.removed_count} processed path(s).`;
+                successDiv.style.display = 'block';
+                loadProcessedFolders(dagId);
+            })
+            .catch(error => {
+                errorDiv.innerText = 'Error deleting paths: ' + error.message;
+                errorDiv.style.display = 'block';
+                updateDeleteControls();
+            });
+    }
+</script>
+{% endblock %}

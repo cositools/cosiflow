@@ -1,0 +1,20 @@
+groups:
+  pipeline_dev:
+    description: Pipeline developers team
+    emails:
+      - riccardo.falco@inaf.it
+      - admin@localhost
+      # - dev2@cosi.it
+
+  qa_team:
+    description: Quality Assurance
+    emails:
+      - riccardo.falco@inaf.it
+      # - qa@cosi.it
+
+rules:
+  - pattern: "ALERT_FAIL"
+    notify: ["pipeline_dev"]
+
+  - pattern: "TriggerDagRunOperator"
+    notify: ["qa_team"]

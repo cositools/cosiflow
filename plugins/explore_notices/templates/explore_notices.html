@@ -1,0 +1,864 @@
+{% extends "appbuilder/base.html" %}
+
+{% block content %}
+{% include "cosiflow_ui/styles.html" %}
+<style>
+  .refresh-actions { align-items: center; display: flex; gap: 8px; position: relative; }
+  .refresh-actions .material-icons { font-size: 18px; line-height: 1; vertical-align: middle; }
+  .refresh-actions .switch-label {
+    align-items: center;
+    display: inline-flex;
+    gap: 6px;
+    margin: 0;
+  }
+  .switch-input { height: 1px; opacity: 0; position: absolute; width: 1px; }
+  .switch {
+    background: #c7c7c7;
+    border-radius: 999px;
+    display: inline-block;
+    height: 20px;
+    position: relative;
+    transition: background 0.15s ease;
+    width: 36px;
+  }
+  .switch:before {
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    content: "";
+    height: 16px;
+    left: 2px;
+    position: absolute;
+    top: 2px;
+    transition: transform 0.15s ease;
+    width: 16px;
+  }
+  .switch-input:checked + .switch { background: #1a73e8; }
+  .switch-input:checked + .switch:before { transform: translateX(16px); }
+  .loading-dots { align-items: center; display: inline-flex; gap: 3px; }
+  .loading-dot {
+    animation: notice-dot-pulse 1s infinite ease-in-out;
+    background: #777;
+    border-radius: 50%;
+    display: inline-block;
+    height: 5px;
+    width: 5px;
+  }
+  .loading-dot:nth-child(2) { animation-delay: 0.15s; }
+  .loading-dot:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes notice-dot-pulse {
+    0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
+    40% { opacity: 1; transform: translateY(-2px); }
+  }
+  .refresh-settings-menu {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+    display: none;
+    padding: 10px;
+    position: absolute;
+    right: 0;
+    top: 36px;
+    z-index: 60;
+  }
+  .refresh-settings-menu.is-open { display: block; }
+  .refresh-settings-menu label { display: grid; gap: 4px; min-width: 180px; }
+  .refresh-settings-menu input { padding: 5px 8px; }
+  .notice-tabs { border-bottom: 1px solid #ddd; display: flex; gap: 4px; margin: 16px 0; }
+  .notice-tab {
+    border: 1px solid transparent;
+    border-radius: 4px 4px 0 0;
+    color: #337ab7;
+    display: inline-block;
+    font-weight: 600;
+    margin-bottom: -1px;
+    padding: 9px 14px;
+    text-decoration: none;
+  }
+  .notice-tab.is-active {
+    background: #fff;
+    border-color: #ddd;
+    border-bottom-color: #fff;
+    color: #333;
+  }
+  .notice-summary {
+    background: #f8fbfd;
+    border: 1px solid #d9e7f2;
+    border-radius: 4px;
+    color: #2b4c60;
+    margin-bottom: 16px;
+    padding: 11px 13px;
+  }
+  .notice-summary p { margin: 0 0 7px; }
+  .notice-summary p:last-child { margin-bottom: 0; }
+  .notice-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 18px; }
+  .notice-toolbar label { display: grid; gap: 4px; font-weight: 600; }
+  .notice-toolbar input, .notice-toolbar select { min-width: 160px; padding: 5px 8px; }
+  .notice-toolbar button { padding: 6px 14px; }
+  .notice-topic-filter { display: grid; gap: 4px; min-width: min(460px, 100%); font-weight: 600; position: relative; }
+  .notice-chip-box {
+    align-items: center;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    min-height: 34px;
+    padding: 3px 6px;
+  }
+  .notice-chip-box:focus-within { border-color: #1a73e8; box-shadow: 0 0 0 1px #1a73e8; }
+  .notice-topic-input {
+    border: 0;
+    flex: 1 1 180px;
+    min-width: 150px;
+    outline: 0;
+    padding: 4px 2px;
+  }
+  .notice-toolbar .notice-topic-input { min-width: 150px; }
+  .notice-topic-chip {
+    align-items: center;
+    background: #d6f2f4;
+    border-radius: 4px;
+    color: #2f5f67;
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 700;
+    gap: 4px;
+    line-height: 1.4;
+    max-width: 100%;
+    padding: 3px 7px;
+  }
+  .notice-topic-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .notice-topic-chip button {
+    background: transparent;
+    border: 0;
+    color: #42636a;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+  }
+  .notice-topic-options {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 0 0 4px 4px;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+    display: none;
+    font-weight: 400;
+    left: 0;
+    max-height: 260px;
+    min-width: 100%;
+    overflow-y: auto;
+    position: absolute;
+    top: calc(100% - 1px);
+    z-index: 50;
+  }
+  .notice-topic-options.is-open { display: block; }
+  .notice-topic-option {
+    background: #fff;
+    border: 0;
+    cursor: pointer;
+    display: block;
+    padding: 7px 9px;
+    text-align: left;
+    width: 100%;
+  }
+  .notice-topic-option:hover,
+  .notice-topic-option.is-active { background: #5897fb; color: #fff; }
+  .notice-topic-count { color: #666; font-size: 11px; margin-left: 6px; }
+  .notice-topic-option:hover .notice-topic-count,
+  .notice-topic-option.is-active .notice-topic-count { color: #fff; }
+  .notice-topic-empty { color: #666; padding: 8px 9px; }
+  .notice-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  .notice-table-wrap { width: 100%; }
+  .notice-table-body { overflow-x: auto; }
+  .notice-table { font-size: 13px; margin-bottom: 0; }
+  .notice-table th,
+  .notice-table td { vertical-align: top; }
+  .notice-table th { white-space: nowrap; }
+  .notice-table .notice-table-primary { font-weight: 700; }
+  .notice-table .notice-topic-cell { max-width: 360px; word-break: break-word; }
+  .notice-table tr.notice-row-injected > td {
+    background: #eaf4ff;
+    border-top-color: #c9e2ff;
+    border-bottom-color: #c9e2ff;
+  }
+  .notice-table tr.notice-row-injected > td:first-child {
+    border-left: 4px solid #017cee;
+  }
+  .notice-table.table-hover tr.notice-row-injected:hover > td {
+    background: #dceeff;
+  }
+  .notice-muted { color: #666; }
+  .notice-error { background: #fff0f0; border: 1px solid #e0a0a0; padding: 10px; margin-bottom: 12px; }
+  .notice-status { display: inline-block; padding: 2px 7px; border-radius: 4px; background: #eef2f7; }
+  .notice-status.running { background: #dff5df; color: #1f6b2b; }
+  .notice-status.warning { background: #fff1c7; color: #8a5a00; }
+  .notice-status.off { background: #ffe2df; color: #9b2f26; }
+  .notice-status.unknown { background: #eef2f7; color: #555; }
+  .notice-heartbeats { margin-bottom: 20px; }
+  .notice-heartbeats pre { max-width: 520px; white-space: pre-wrap; }
+  .notice-service-bar {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .notice-service-state { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+  .notice-injection-panel {
+    border: 1px solid #d9e0e6;
+    border-radius: 4px;
+    margin: 0 0 18px;
+  }
+  .notice-injection-heading {
+    align-items: center;
+    background: #f6f8fa;
+    border-bottom: 1px solid #d9e0e6;
+    cursor: pointer;
+    display: flex;
+    font-weight: 700;
+    justify-content: space-between;
+    padding: 9px 12px;
+  }
+  .notice-injection-heading::-webkit-details-marker { display: none; }
+  .notice-injection-panel:not([open]) .notice-injection-heading { border-bottom: 0; }
+  .notice-injection-caret { color: #666; font-size: 16px; }
+  .notice-injection-panel[open] .notice-injection-caret { transform: rotate(90deg); }
+  .notice-injection-body { padding: 12px; }
+  .notice-injection-form { display: grid; gap: 10px; }
+  .notice-injection-row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .notice-injection-form label { display: grid; flex: 1 1 240px; gap: 4px; font-weight: 600; }
+  .notice-injection-form input,
+  .notice-injection-form select,
+  .notice-injection-form textarea {
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 6px 8px;
+    width: 100%;
+  }
+  .notice-injection-form textarea {
+    font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+    min-height: 170px;
+    resize: vertical;
+  }
+  .notice-injection-actions { display: flex; justify-content: flex-start; }
+  .notice-injection-actions button { padding: 6px 14px; }
+  .notice-component-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+  .notice-component-actions form { display: inline; }
+  .notice-component-actions button { padding: 4px 8px; }
+  .notice-pager-row { align-items: center; display: flex; justify-content: space-between; margin-top: 14px; }
+  .notice-pager { display: inline-flex; }
+  .notice-pager a,
+  .notice-pager span {
+    border: 1px solid #ddd;
+    color: #337ab7;
+    line-height: 1.4;
+    margin-left: -1px;
+    min-width: 34px;
+    padding: 6px 10px;
+    text-align: center;
+    text-decoration: none;
+  }
+  .notice-pager .is-active { background: #337ab7; border-color: #337ab7; color: #fff; }
+  .notice-pager .is-disabled { color: #aaa; cursor: not-allowed; }
+  .notice-count { color: #555; }
+  .notice-hash { display: inline-block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .notice-error-cell { max-width: 300px; white-space: pre-wrap; word-break: break-word; }
+</style>
+
+<div class="cosiflow-page notice-wrap">
+  <div class="cosiflow-title-row notice-title-row">
+    <div>
+      <h2 class="cosiflow-page-title">Explore Notices</h2>
+      <p class="cosiflow-muted notice-muted">GCN client inbox/outbox stored in MySQL. Last update: {{ now }}</p>
+    </div>
+    <div class="refresh-actions" data-refresh-bar>
+      <span class="loading-dots refresh-loading" id="loading-dots" style="display: none;">
+        <span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span>
+      </span>
+      <label class="switch-label">
+        <input class="switch-input" id="auto_refresh" type="checkbox" data-refresh-toggle>
+        <span class="switch" aria-hidden="true"></span>
+        Auto-refresh
+      </label>
+      <button class="btn btn-default btn-sm" id="refresh_button" type="button" data-refresh-now>
+        <span class="material-icons" aria-hidden="true">refresh</span>
+      </button>
+      <button class="btn btn-default btn-sm" id="refresh_settings_button" type="button" data-refresh-settings aria-label="Refresh settings">
+        <span class="material-icons" aria-hidden="true">more_horiz</span>
+      </button>
+      <div class="refresh-settings-menu" data-refresh-menu>
+        <label>Seconds
+          <input type="number" min="3" max="3600" step="1" value="30" data-refresh-seconds>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div class="notice-tabs">
+    <a class="notice-tab {% if filters.tab == 'inbox' %}is-active{% endif %}" href="{{ url_for('ExploreNoticesView.index', tab='inbox') }}">Inbox</a>
+    <a class="notice-tab {% if filters.tab == 'outbox' %}is-active{% endif %}" href="{{ url_for('ExploreNoticesView.index', tab='outbox') }}">Outbox</a>
+  </div>
+
+  {% if error %}
+    <div class="notice-error">{{ error }}</div>
+  {% endif %}
+
+  {% if filters.tab == 'inbox' %}
+    <div class="notice-summary">
+      <p><strong>Inbox</strong> shows the notices received by the GCN consumer and normalized in <code>gcn_inbound_notices</code>.</p>
+      <p>Use it to verify incoming topics, parsing, validation, and metadata derived from JSON payload, VOEvent, or classic text.</p>
+    </div>
+  {% else %}
+    <div class="notice-summary">
+      <p><strong>Outbox</strong> shows the notices created by the COSIflow DAGs and queued in <code>gcn_outbound_notices</code>.</p>
+      <p><code>dry_run_published</code> means that the publisher has validated the notice and simulated the submission; <code>published</code> indicates a real submission. <code>last_error</code> should remain empty for a successful test.</p>
+    </div>
+  {% endif %}
+
+  {% if filters.tab == 'inbox' %}
+    <details class="notice-injection-panel">
+      <summary class="notice-injection-heading">
+        <span>Manual Inbox Injection</span>
+        <span class="notice-injection-caret">&rsaquo;</span>
+      </summary>
+      <div class="notice-injection-body">
+        <form class="notice-injection-form" method="post" action="{{ url_for('ExploreNoticesView.inject_inbox') }}">
+          {% if csrf_token %}
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          {% endif %}
+          <div class="notice-injection-row">
+            <label>Topic
+              <select name="topic" required>
+                <option value="" disabled {% if not filters.topics %}selected{% endif %}>Select subscribed topic</option>
+                {% for topic in subscribed_topics %}
+                  <option value="{{ topic }}" {% if filters.topics and filters.topics[0] == topic %}selected{% endif %}>{{ topic }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Source
+              <input type="text" name="source" value="manual" required>
+            </label>
+          </div>
+          <label>Payload
+            <textarea name="payload" placeholder='{"$schema":"https://gcn.nasa.gov/schema/main/gcn/notices/cosi/alert.schema.json","mission":"COSI"}' required></textarea>
+          </label>
+          <div class="notice-injection-actions">
+            <button type="submit">Inject Inbox Notice</button>
+          </div>
+        </form>
+      </div>
+    </details>
+  {% else %}
+    <details class="notice-injection-panel">
+      <summary class="notice-injection-heading">
+        <span>Manual Outbox Injection</span>
+        <span class="notice-injection-caret">&rsaquo;</span>
+      </summary>
+      <div class="notice-injection-body">
+        <form class="notice-injection-form" method="post" action="{{ url_for('ExploreNoticesView.inject_outbox') }}">
+          {% if csrf_token %}
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          {% endif %}
+          <div class="notice-injection-row">
+            <label>Topic
+              <input type="text" name="topic" value="{{ filters.outbox_topic or 'gcn.notices.cosi.test.alert' }}" required>
+            </label>
+            <label>Idempotency Key
+              <input type="text" name="idempotency_key" placeholder="Optional">
+            </label>
+          </div>
+          <label>Payload JSON
+            <textarea name="payload" placeholder='{"$schema":"https://gcn.nasa.gov/schema/main/gcn/notices/cosi/alert.schema.json","alert_tense":"test","alert_type":"initial","mission":"COSI","classification":{"Uncertain":1.0}}' required></textarea>
+          </label>
+          <div class="notice-injection-actions">
+            <button type="submit">Queue Outbox Notice</button>
+          </div>
+        </form>
+      </div>
+    </details>
+  {% endif %}
+
+  <div class="notice-heartbeats">
+    <h4>Client Status</h4>
+    <div class="notice-service-bar">
+      <div class="notice-service-state">
+        <strong>GCN Client Service</strong>
+        <span class="notice-status {{ service_status.status_class }}">{{ service_status.status }}</span>
+        <span class="notice-muted">{{ service_status.raw_status }}</span>
+      </div>
+      <div class="notice-component-actions">
+        {% for action in ["restart", "stop", "start"] %}
+          <form method="post" action="{{ url_for('ExploreNoticesView.control_component') }}">
+            {% if csrf_token %}
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            {% endif %}
+            <input type="hidden" name="component" value="gcn-client">
+            <input type="hidden" name="action" value="{{ action }}">
+            <input type="hidden" name="tab" value="{{ filters.tab }}">
+            <button type="submit">{{ action }}</button>
+          </form>
+        {% endfor %}
+      </div>
+    </div>
+    {% if heartbeats %}
+      <div class="dags-table-wrap notice-table-wrap">
+        <div class="dags-table-body notice-table-body">
+          <table class="table table-striped table-bordered table-hover notice-table">
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Status</th>
+                <th>Updated</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for hb in heartbeats %}
+                <tr>
+                  <td class="notice-table-primary">{{ hb.component }}</td>
+                  <td><span class="notice-status {{ hb.status_class }}">{{ hb.status }}</span></td>
+                  <td class="text-nowrap">{{ hb.updated_at }}</td>
+                  <td><pre>{{ hb.details_pretty }}</pre></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% else %}
+      <p class="notice-muted">No heartbeat rows yet.</p>
+    {% endif %}
+  </div>
+
+  {% if filters.tab == 'inbox' %}
+    <form class="notice-toolbar" method="get">
+      <input type="hidden" name="tab" value="inbox">
+      {# The chip selector stores selected topics as hidden repeated topic inputs. #}
+      <div class="notice-topic-filter" data-topic-filter>
+        <span>Topic</span>
+        <div class="notice-chip-box" data-chip-box>
+          <input
+            class="notice-topic-input"
+            type="text"
+            autocomplete="off"
+            placeholder="Filter topics by tag"
+            data-topic-input
+          >
+        </div>
+        <div class="notice-topic-options" data-topic-options></div>
+      </div>
+      <label>Validation
+        <select name="validation_status">
+          <option value="">Any</option>
+          {% for value in ["valid", "invalid", "not_applicable", "not_checked"] %}
+            <option value="{{ value }}" {% if filters.validation_status == value %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Content
+        <select name="content_type">
+          <option value="">Any</option>
+          {% for value in ["json", "voevent_xml", "text", "unknown"] %}
+            <option value="{{ value }}" {% if filters.content_type == value %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Limit
+        <input type="number" min="1" max="500" name="limit" value="{{ filters.limit }}">
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+  {% else %}
+    <form class="notice-toolbar" method="get">
+      <input type="hidden" name="tab" value="outbox">
+      <label>Status
+        <select name="outbox_status">
+          <option value="">Any</option>
+          {% for value in ["queued", "locked", "dry_run_published", "published", "failed", "invalid", "cancelled"] %}
+            <option value="{{ value }}" {% if filters.outbox_status == value %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>DAG
+        <select name="dag_id">
+          <option value="">Any</option>
+          {% for row in outbound_dags %}
+            <option value="{{ row.dag_id }}" {% if filters.dag_id == row.dag_id %}selected{% endif %}>
+              {{ row.dag_id }} ({{ row.notice_count }})
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Task
+        <input type="text" name="task_id" value="{{ filters.task_id }}" placeholder="GCN_GeD">
+      </label>
+      <label>Topic
+        <select name="outbox_topic">
+          <option value="">Any</option>
+          {% for row in outbound_topics %}
+            <option value="{{ row.topic }}" {% if filters.outbox_topic == row.topic %}selected{% endif %}>
+              {{ row.topic }} ({{ row.notice_count }})
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Limit
+        <input type="number" min="1" max="500" name="limit" value="{{ filters.limit }}">
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+  {% endif %}
+
+  <div class="notice-grid">
+    {% if filters.tab == 'inbox' %}
+      <div class="dags-table-wrap notice-table-wrap">
+        <div class="dags-table-body notice-table-body">
+          <table class="table table-striped table-bordered table-hover notice-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Received</th>
+                <th>Topic</th>
+                <th>Offset</th>
+                <th>Type</th>
+                <th>Validation</th>
+                <th>Mission</th>
+                <th>Event / Trigger</th>
+                <th>Time</th>
+                <th>Position</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for notice in notices %}
+                <tr class="{% if notice.source == 'injection' or notice.alert_tense == 'injection' %}notice-row-injected{% endif %}">
+                  <td class="notice-table-primary"><a href="{{ url_for('ExploreNoticesView.notice_detail', notice_id=notice.id) }}">{{ notice.id }}</a></td>
+                  <td class="text-nowrap">{{ notice.received_at }}</td>
+                  <td class="notice-topic-cell">{{ notice.topic }}</td>
+                  <td>{{ notice.kafka_offset }}</td>
+                  <td>{{ notice.content_type }}<br><span class="notice-muted">{{ notice.parse_status }}</span></td>
+                  <td><span class="notice-status">{{ notice.validation_status }}</span></td>
+                  <td>{{ notice.mission or "" }}<br><span class="notice-muted">{{ notice.instrument or "" }}</span></td>
+                  <td>{{ notice.event_display }}</td>
+                  <td class="text-nowrap">{{ notice.time_display }}</td>
+                  <td>{{ notice.position_display }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="10" class="notice-muted">No notices found.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% else %}
+      <div class="dags-table-wrap notice-table-wrap">
+        <div class="dags-table-body notice-table-body">
+          <table class="table table-striped table-bordered table-hover notice-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Topic</th>
+                <th>Attempts</th>
+                <th>Last Error</th>
+                <th>Published</th>
+                <th>DAG Run</th>
+                <th>Payload</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for notice in outbound_notices %}
+                <tr>
+                  <td class="notice-table-primary"><a href="{{ url_for('ExploreNoticesView.outbox_detail', notice_id=notice.id) }}">{{ notice.id }}</a></td>
+                  <td>
+                    <span class="notice-status">{{ notice.status }}</span><br>
+                    <span class="notice-muted">{{ notice.validation_status }}</span>
+                  </td>
+                  <td class="notice-topic-cell">{{ notice.topic }}<br><span class="notice-muted">{{ notice.topic_kind }}</span></td>
+                  <td>{{ notice.attempts_count }} / {{ notice.max_attempts }}</td>
+                  <td class="notice-error-cell">{{ notice.last_error or "" }}</td>
+                  <td class="text-nowrap">{{ notice.published_at or "" }}</td>
+                  <td>
+                    {{ notice.dag_run_id or "" }}<br>
+                    <span class="notice-muted">{{ notice.created_by_dag_id or "" }} / {{ notice.task_id or "" }}</span>
+                  </td>
+                  <td>
+                    {{ notice.event_name or "" }}<br>
+                    <span class="notice-muted notice-hash">{{ notice.payload_sha256 }}</span>
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="8" class="notice-muted">No outbound notices found.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+    <div class="notice-pager-row">
+      <div class="notice-pager">
+        {% if pagination.has_prev %}
+          <a href="{{ pagination.first_url }}">&laquo;</a>
+          <a href="{{ pagination.prev_url }}">&lsaquo;</a>
+        {% else %}
+          <span class="is-disabled">&laquo;</span>
+          <span class="is-disabled">&lsaquo;</span>
+        {% endif %}
+        <span class="is-active">{{ pagination.page }}</span>
+        {% if pagination.has_next %}
+          <a href="{{ pagination.next_url }}">&rsaquo;</a>
+          <a href="{{ pagination.last_url }}">&raquo;</a>
+        {% else %}
+          <span class="is-disabled">&rsaquo;</span>
+          <span class="is-disabled">&raquo;</span>
+        {% endif %}
+      </div>
+      <div class="notice-count">
+        Showing {{ pagination.start }}-{{ pagination.end }} of {{ pagination.total_count }} {{ filters.tab }} notices
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var bar = document.querySelector("[data-refresh-bar]");
+    if (!bar) {
+      return;
+    }
+    var refreshNow = bar.querySelector("[data-refresh-now]");
+    var toggle = bar.querySelector("[data-refresh-toggle]");
+    var settings = bar.querySelector("[data-refresh-settings]");
+    var menu = bar.querySelector("[data-refresh-menu]");
+    var secondsInput = bar.querySelector("[data-refresh-seconds]");
+    var loadingDots = document.getElementById("loading-dots");
+    var enabledKey = "cosiflow.notice.autorefresh.enabled";
+    var secondsKey = "cosiflow.notice.autorefresh.seconds";
+    var timer = null;
+
+    function storedEnabled() {
+      return window.localStorage.getItem(enabledKey) === "true";
+    }
+
+    function storedSeconds() {
+      var raw = parseInt(window.localStorage.getItem(secondsKey) || "30", 10);
+      if (!raw || raw < 3) {
+        return 30;
+      }
+      return Math.min(raw, 3600);
+    }
+
+    function schedule() {
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+      if (!toggle.checked) {
+        return;
+      }
+      timer = window.setTimeout(function () {
+        window.location.reload();
+      }, storedSeconds() * 1000);
+    }
+
+    toggle.checked = storedEnabled();
+    secondsInput.value = storedSeconds();
+    schedule();
+
+    refreshNow.addEventListener("click", function () {
+      if (loadingDots) {
+        loadingDots.style.display = "inline-flex";
+      }
+      window.location.reload();
+    });
+    toggle.addEventListener("change", function () {
+      window.localStorage.setItem(enabledKey, toggle.checked ? "true" : "false");
+      schedule();
+    });
+    settings.addEventListener("click", function () {
+      menu.classList.toggle("is-open");
+      if (menu.classList.contains("is-open")) {
+        secondsInput.focus();
+      }
+    });
+    secondsInput.addEventListener("change", function () {
+      var value = parseInt(secondsInput.value || "30", 10);
+      value = Math.min(Math.max(value || 30, 3), 3600);
+      secondsInput.value = value;
+      window.localStorage.setItem(secondsKey, String(value));
+      schedule();
+    });
+    document.addEventListener("click", function (event) {
+      if (!bar.contains(event.target)) {
+        menu.classList.remove("is-open");
+      }
+    });
+  })();
+
+  (function () {
+    var topicRows = {{ available_topics|tojson }};
+    var selectedTopics = {{ filters.topics|tojson }};
+    var form = document.querySelector(".notice-toolbar");
+    var filter = document.querySelector("[data-topic-filter]");
+    var chipBox = document.querySelector("[data-chip-box]");
+    var input = document.querySelector("[data-topic-input]");
+    var options = document.querySelector("[data-topic-options]");
+    var activeIndex = -1;
+
+    if (!form || !filter || !chipBox || !input || !options) {
+      return;
+    }
+
+    function availableValues() {
+      var selectedSet = new Set(selectedTopics);
+      var term = input.value.trim().toLowerCase();
+      return topicRows.filter(function (row) {
+        var topic = row.topic || "";
+        return !selectedSet.has(topic) && (!term || topic.toLowerCase().indexOf(term) !== -1);
+      });
+    }
+
+    function syncHiddenInputs() {
+      // Flask receives selected topics as repeated topic query parameters.
+      form.querySelectorAll("input[data-topic-hidden]").forEach(function (node) {
+        node.remove();
+      });
+      selectedTopics.forEach(function (topic) {
+        var hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.name = "topic";
+        hidden.value = topic;
+        hidden.setAttribute("data-topic-hidden", "true");
+        form.appendChild(hidden);
+      });
+    }
+
+    function renderChips() {
+      chipBox.querySelectorAll("[data-topic-chip]").forEach(function (node) {
+        node.remove();
+      });
+      selectedTopics.forEach(function (topic) {
+        var chip = document.createElement("span");
+        chip.className = "notice-topic-chip";
+        chip.setAttribute("data-topic-chip", "true");
+
+        var text = document.createElement("span");
+        text.textContent = topic;
+        chip.appendChild(text);
+
+        var remove = document.createElement("button");
+        remove.type = "button";
+        remove.setAttribute("aria-label", "Remove topic " + topic);
+        remove.textContent = "x";
+        remove.addEventListener("click", function () {
+          selectedTopics = selectedTopics.filter(function (value) {
+            return value !== topic;
+          });
+          render();
+          input.focus();
+        });
+        chip.appendChild(remove);
+
+        chipBox.insertBefore(chip, input);
+      });
+    }
+
+    function renderOptions() {
+      // Keep the dropdown limited to topics that are not already selected.
+      var rows = availableValues();
+      activeIndex = rows.length ? Math.min(Math.max(activeIndex, 0), rows.length - 1) : -1;
+      options.innerHTML = "";
+
+      if (!topicRows.length) {
+        options.classList.remove("is-open");
+        return;
+      }
+
+      if (!rows.length) {
+        var empty = document.createElement("div");
+        empty.className = "notice-topic-empty";
+        empty.textContent = "No matching topics";
+        options.appendChild(empty);
+        options.classList.add("is-open");
+        return;
+      }
+
+      rows.forEach(function (row, index) {
+        var option = document.createElement("button");
+        option.type = "button";
+        option.className = "notice-topic-option" + (index === activeIndex ? " is-active" : "");
+        option.textContent = row.topic;
+
+        var count = document.createElement("span");
+        count.className = "notice-topic-count";
+        count.textContent = "(" + row.notice_count + ")";
+        option.appendChild(count);
+
+        option.addEventListener("mousedown", function (event) {
+          event.preventDefault();
+          addTopic(row.topic);
+        });
+        options.appendChild(option);
+      });
+      options.classList.add("is-open");
+    }
+
+    function render() {
+      renderChips();
+      syncHiddenInputs();
+      renderOptions();
+    }
+
+    function addTopic(topic) {
+      if (topic && selectedTopics.indexOf(topic) === -1) {
+        selectedTopics.push(topic);
+      }
+      input.value = "";
+      activeIndex = -1;
+      render();
+      input.focus();
+    }
+
+    input.addEventListener("focus", renderOptions);
+    input.addEventListener("input", function () {
+      activeIndex = -1;
+      renderOptions();
+    });
+    input.addEventListener("keydown", function (event) {
+      var rows = availableValues();
+      if (event.key === "ArrowDown" && rows.length) {
+        event.preventDefault();
+        activeIndex = (activeIndex + 1) % rows.length;
+        renderOptions();
+      } else if (event.key === "ArrowUp" && rows.length) {
+        event.preventDefault();
+        activeIndex = (activeIndex - 1 + rows.length) % rows.length;
+        renderOptions();
+      } else if ((event.key === "Enter" || event.key === ",") && rows.length) {
+        event.preventDefault();
+        addTopic(rows[Math.max(activeIndex, 0)].topic);
+      } else if (event.key === "Backspace" && !input.value && selectedTopics.length) {
+        selectedTopics.pop();
+        render();
+      } else if (event.key === "Escape") {
+        options.classList.remove("is-open");
+      }
+    });
+
+    document.addEventListener("click", function (event) {
+      if (!filter.contains(event.target)) {
+        options.classList.remove("is-open");
+      }
+    });
+
+    form.addEventListener("submit", syncHiddenInputs);
+
+    renderChips();
+    syncHiddenInputs();
+  })();
+</script>
+{% endblock %}
