@@ -86,7 +86,7 @@ creating duplicate logical notices.
 
 ## MySQL schema
 
-The schema in [`app/db/schema.sql`](app/db/schema.sql) contains **four tables**:
+The schema in [`app/db/schema.sql`](app/db/schema.sql) contains **five tables**:
 
 | Table | Role | Important data |
 | --- | --- | --- |
@@ -94,6 +94,7 @@ The schema in [`app/db/schema.sql`](app/db/schema.sql) contains **four tables**:
 | `gcn_outbound_notices` | Durable outbox for COSI alerts awaiting publication | Topic, payload, schema/validation state, DAG provenance, priority, retry state, idempotency key, publication result |
 | `gcn_delivery_attempts` | Audit trail for every outbox attempt | Attempt number, dry-run flag, Kafka metadata, error class/message, start and finish times |
 | `gcn_client_heartbeats` | Last-known worker health/status | Component name (`inbound` or `outbox`), status, update time, and JSON details |
+| `gcn_client_lifecycle_events` | Application lifecycle audit | Start, stopping, and component-failure events with timestamps |
 
 `gcn_inbound_notices` preserves `raw_payload` even if parsing fails and also
 stores indexed columns used by science queries. `gcn_outbound_notices` keeps
@@ -118,7 +119,7 @@ Configuration is read from environment variables in
   `GCN_DB_PASSWORD`: MySQL connection;
 - `GCN_SCHEMA_ROOT`, `GCN_COSI_ALERT_SCHEMA`: local schema validation.
 
-For an authenticated test, add your own credentials to
+Add your own required credentials to
 `cosiflow/env/.env`:
 
 ```dotenv
@@ -143,8 +144,14 @@ docker compose logs -f gcn-client
 ```
 
 The default configuration consumes the topics listed in
-`GCN_CONSUMER_TOPICS`. Without Kafka credentials, the receiver stays idle, but
-the database and dry-run outbox can still be tested locally.
+`GCN_CONSUMER_TOPICS`. Missing Kafka or database credentials are fatal before
+the client opens a connection. The container healthcheck uses application
+heartbeats and Compose applies a bounded restart policy. Airflow only displays
+this state; it has no lifecycle endpoint or Docker access.
+
+Use `../env/gcn-lifecycle.sh start|stop|restart|status` for audited local
+lifecycle operations. Shared deployments use the platform orchestrator and its
+native audit trail.
 
 ### Queue a sample COSI alert
 

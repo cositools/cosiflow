@@ -4,12 +4,8 @@ import hashlib
 import json
 import os
 import re
-import socket
 from datetime import datetime, timezone
 from urllib.parse import urlencode
-from urllib.parse import urlparse
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import pymysql
@@ -17,6 +13,7 @@ from airflow.plugins_manager import AirflowPlugin
 from flask import Blueprint, flash, redirect, request, url_for
 from flask_appbuilder import BaseView, expose
 from flask_login import current_user, login_required
+from explore_notices.heartbeat_status import aggregate_status, classify_heartbeat
 from shared_ui import add_shared_templates
 
 
@@ -33,12 +30,15 @@ explore_notices_bp = add_shared_templates(
 
 
 def _connect():
+    password = os.environ.get("GCN_DB_PASSWORD", "")
+    if not password:
+        raise RuntimeError("GCN_DB_PASSWORD is required")
     return pymysql.connect(
         host=os.environ.get("GCN_DB_HOST", "gcn-mysql"),
         port=int(os.environ.get("GCN_DB_PORT", "3306")),
         database=os.environ.get("GCN_DB_NAME", "gcn"),
         user=os.environ.get("GCN_DB_USER", "gcn_user"),
-        password=os.environ.get("GCN_DB_PASSWORD", "gcn_password"),
+        password=password,
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=int(os.environ.get("GCN_DB_CONNECT_TIMEOUT", "10")),
@@ -448,7 +448,7 @@ def _fetch_outbound_attempts(notice_id):
     return attempts
 
 
-def _fetch_heartbeats(service_status=None):
+def _fetch_heartbeats():
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -459,7 +459,6 @@ def _fetch_heartbeats(service_status=None):
                 """
             )
             rows = cur.fetchall()
-    service_status = service_status or _fetch_gcn_service_status()
     existing = {row.get("component") for row in rows}
     for component in ["inbound", "outbox"]:
         if component not in existing:
@@ -467,133 +466,47 @@ def _fetch_heartbeats(service_status=None):
                 {
                     "component": component,
                     "updated_at": None,
-                    "status": "off",
+                    "status": "starting",
                     "details_json": {"reason": "no heartbeat row"},
                 }
             )
+    now = datetime.now(timezone.utc)
     for row in rows:
-        if service_status.get("status_class") == "off":
-            row["status"] = "off"
-            details = row.get("details_json")
-            if isinstance(details, str):
-                try:
-                    details = json.loads(details)
-                except Exception:
-                    details = {"raw_details": details}
-            if not isinstance(details, dict):
-                details = {}
-            details["service_state"] = service_status.get("raw_status")
-            row["details_json"] = details
+        row["status"] = _classify_heartbeat(row, now)
         row["details_pretty"] = _json_pretty(row.get("details_json"))
         row["status_class"] = _heartbeat_status_class(row.get("status"))
     return rows
+
+
+def _classify_heartbeat(row, now=None):
+    degraded_after = float(os.environ.get("GCN_HEARTBEAT_DEGRADED_SECONDS", "30"))
+    offline_after = float(os.environ.get("GCN_HEARTBEAT_OFFLINE_SECONDS", "90"))
+    return classify_heartbeat(
+        row,
+        now=now,
+        degraded_after=degraded_after,
+        offline_after=offline_after,
+    )
 
 
 def _heartbeat_status_class(status):
     status = str(status or "").strip().lower()
     if status == "running":
         return "running"
-    if status in {"warning", "warn", "idle", "degraded", "starting", "locked"}:
+    if status in {"warning", "warn", "idle", "degraded", "starting", "starting/unknown", "locked"}:
         return "warning"
     if status in {"off", "offline", "stopped", "down", "failed", "error", "dead"}:
         return "off"
     return "unknown"
 
 
-def _docker_base_url():
-    docker_host = os.environ.get("DOCKER_HOST", "tcp://docker-proxy:2375")
-    parsed = urlparse(docker_host)
-    if parsed.scheme == "tcp":
-        return f"http://{parsed.netloc}"
-    if parsed.scheme in {"http", "https"}:
-        return docker_host.rstrip("/")
-    return "http://docker-proxy:2375"
-
-
-def _fetch_gcn_service_status():
-    container = os.environ.get("GCN_CLIENT_CONTAINER", "cosi_gcn_client")
-    url = f"{_docker_base_url()}/containers/{container}/json"
-    status = {
-        "name": container,
-        "status": "unknown",
-        "status_class": "unknown",
-        "raw_status": "unknown",
-        "started_at": None,
-        "finished_at": None,
-    }
-    request = Request(url, method="GET")
-    try:
-        with urlopen(request, timeout=5) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        if exc.code == 404:
-            status.update(
-                {
-                    "status": "off",
-                    "status_class": "off",
-                    "raw_status": "not_found",
-                }
-            )
-            return status
-        status.update(
-            {
-                "status": "warning",
-                "status_class": "warning",
-                "raw_status": f"docker_status_http_{exc.code}",
-            }
-        )
-        return status
-    except Exception as exc:
-        status.update(
-            {
-                "status": "warning",
-                "status_class": "warning",
-                "raw_status": f"docker_status_unavailable: {exc}",
-            }
-        )
-        return status
-
-    state = payload.get("State") or {}
-    running = bool(state.get("Running"))
-    raw_status = state.get("Status") or ("running" if running else "stopped")
-    status.update(
-        {
-            "status": "running" if running else "off",
-            "status_class": "running" if running else "off",
-            "raw_status": raw_status,
-            "started_at": state.get("StartedAt"),
-            "finished_at": state.get("FinishedAt"),
-        }
-    )
-    return status
-
-
-def _control_gcn_container(action, component):
-    allowed = {"start", "stop", "restart"}
-    action = str(action or "").strip().lower()
-    component = str(component or "gcn-client").strip() or "gcn-client"
-    if action not in allowed:
-        raise ValueError(f"Unsupported control action: {action}")
-    container = os.environ.get("GCN_CLIENT_CONTAINER", "cosi_gcn_client")
-    query = "?t=2" if action in {"stop", "restart"} else ""
-    url = f"{_docker_base_url()}/containers/{container}/{action}{query}"
-    request = Request(url, data=b"", method="POST", headers={"Content-Length": "0"})
-    timed_out = False
-    try:
-        with urlopen(request, timeout=45) as response:
-            response.read()
-    except HTTPError as exc:
-        if exc.code not in {204, 304}:
-            raise
-    except (TimeoutError, socket.timeout):
-        if action not in {"stop", "restart"}:
-            raise
-        timed_out = True
+def _fetch_gcn_service_status(heartbeats):
+    status = aggregate_status(heartbeats)
     return {
-        "action": action,
-        "component": component,
-        "container": container,
-        "timed_out": timed_out,
+        "name": "gcn-client",
+        "status": status,
+        "status_class": _heartbeat_status_class(status),
+        "raw_status": "heartbeat-derived",
     }
 
 
@@ -855,26 +768,6 @@ class ExploreNoticesView(BaseView):
             flash(f"Manual outbox injection failed: {exc}", "error")
         return redirect(url_for("ExploreNoticesView.index", tab="outbox"))
 
-    @expose("/control-component", methods=["POST"])
-    @login_required
-    def control_component(self):
-        if not current_user.is_authenticated:
-            return redirect("/login/?next=/explore-notices/")
-        tab = request.form.get("tab", "inbox")
-        try:
-            result = _control_gcn_container(
-                request.form.get("action", ""),
-                request.form.get("component", ""),
-            )
-            suffix = " The Docker API did not return before timeout, but the request was sent." if result.get("timed_out") else ""
-            flash(
-                f"Requested {result['action']} for {result['component']} via container {result['container']}.{suffix}",
-                "success",
-            )
-        except Exception as exc:
-            flash(f"Component control failed: {exc}", "error")
-        return redirect(url_for("ExploreNoticesView.index", tab=tab))
-
     @expose("/")
     @login_required
     def index(self):
@@ -911,7 +804,7 @@ class ExploreNoticesView(BaseView):
         outbound_topics = []
         outbound_dags = []
         subscribed_topics = _configured_consumer_topics()
-        service_status = _fetch_gcn_service_status()
+        service_status = _fetch_gcn_service_status([])
         pagination = _pagination(1, limit, 0, filters)
         try:
             if tab == "outbox":
@@ -931,8 +824,8 @@ class ExploreNoticesView(BaseView):
                 )
             else:
                 notices = _fetch_notices(limit, offset, topics, validation_status, content_type)
-            service_status = _fetch_gcn_service_status()
-            heartbeats = _fetch_heartbeats(service_status)
+            heartbeats = _fetch_heartbeats()
+            service_status = _fetch_gcn_service_status(heartbeats)
             subscribed_topics = _subscribed_topics(heartbeats)
             available_topics = _fetch_topics()
             outbound_topics = _fetch_outbound_topics()

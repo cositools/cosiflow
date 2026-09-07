@@ -25,7 +25,7 @@ of both COSIflow and the FasTP module, follow the
 
 Run all Compose commands from `cosiflow/env`.
 
-### 1. Configure the host identity and public endpoints
+### 1. Configure the host identity and local endpoints
 
 Edit `env/docker-compose.yaml`.
 
@@ -44,46 +44,33 @@ x-build-args: &build-args
   GID: ${GID:-20}
 ```
 
-Review these endpoint values:
+Optional local port overrides belong in `env/.env`. Every published development
+port is bound to `127.0.0.1`; the databases have no host publication.
 
-```yaml
-x-host-ip: &host-ip "127.0.0.1"
-
-x-common-env: &common-env
-  MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}
-  AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}
-```
-
-`AIRFLOW_WEBUI_PORT` and `MAILHOG_WEBUI_PORT` control the host-side Docker port
-mapping as well as the URLs displayed by COSIflow. The services continue to
-listen on ports 8080 and 8025 inside their containers.
+`AIRFLOW_WEBUI_PORT` and `MAILHOG_WEBUI_PORT` change only the loopback host
+ports. Shared deployments must expose an HTTPS reverse proxy, not Airflow.
 
 ### 2. Store secrets in `.env`
 
-Non-sensitive defaults live in `docker-compose.yaml`. Put local passwords and
-GCN Kafka credentials in `cosiflow/env/.env`, which is excluded by `.gitignore`:
+Copy the non-sensitive template and generate distinct local keys/passwords:
+
+```bash
+cd cosiflow/env
+cp .env.example .env
+python3 bootstrap-secrets.py
+chmod 600 .env
+```
+
+Then set the required GCN credentials without printing them:
 
 ```dotenv
-AIRFLOW_ADMIN_PASSWORD=<airflow-admin-password>
-POSTGRES_PASSWORD=<airflow-database-password>
-GCN_DB_PASSWORD=<gcn-database-password>
-GCN_MYSQL_ROOT_PASSWORD=<gcn-root-password>
-
-# Optional: required only for authenticated GCN Kafka consumption.
 GCN_CLIENT_ID=<your-gcn-client-id>
 GCN_CLIENT_SECRET=<your-gcn-client-secret>
 ```
 
-Restrict access to the file:
-
-```bash
-cd cosiflow/env
-chmod 600 .env
-```
-
-Never commit `.env` or copy credentials into `docker-compose.yaml`. Without GCN
-credentials, the local database, manual injection, and dry-run outbox remain
-usable; the Kafka receiver stays idle.
+Never commit `.env` or copy credentials into Compose. Startup fails before
+container creation if any required secret is absent. See
+[SECURITY_ISSUE_5.md](SECURITY_ISSUE_5.md) before rotating an existing database.
 
 ### 3. Prepare persistent directories
 
@@ -113,8 +100,8 @@ docker compose logs -f airflow
 
 Open:
 
-- Airflow: `http://<HOST_IP>:<AIRFLOW_WEBUI_PORT>/home`
-- MailHog: `http://<HOST_IP>:<MAILHOG_WEBUI_PORT>`
+- Airflow: `http://127.0.0.1:<AIRFLOW_WEBUI_PORT>/home`
+- MailHog: `http://127.0.0.1:<MAILHOG_WEBUI_PORT>`
 
 The default Airflow username is `admin`; the password is the value of
 `AIRFLOW_ADMIN_PASSWORD`.
@@ -141,13 +128,11 @@ not delete the bind-mounted directories under `cosiflow/data`.
 | Variable or anchor | Purpose |
 | --- | --- |
 | `UID`, `GID` | Identity used to build the non-root `gamma` user |
-| `x-host-ip` / `HOST_IP` | Host address used for published service URLs |
 | `AIRFLOW_ADMIN_USERNAME`, `AIRFLOW_ADMIN_EMAIL`, `AIRFLOW_ADMIN_PASSWORD` | Initial Airflow administrator |
+| `AIRFLOW__WEBSERVER__SECRET_KEY`, `AIRFLOW__CORE__INTERNAL_API_SECRET_KEY`, `AIRFLOW__CORE__FERNET_KEY` | Distinct required Airflow keys |
 | `AIRFLOW_WEBUI_PORT` | Host port published for the Airflow UI |
 | `MAILHOG_WEBUI_PORT` | Host port published for the MailHog UI |
 | `POSTGRES_USER`, `POSTGRES_DB`, `POSTGRES_PASSWORD` | Airflow metadata database |
-| `HOST_WORKSPACE_PATH` | Host workspace mounted into `DockerOperator` containers |
-| `HOST_DATA_PATH` | Host equivalent of the shared COSI data root |
 | `COSI_DATA_DIR`, `COSI_INPUT_DIR`, `COSI_LOG_DIR` | Main container data paths |
 | `COSI_OBS_DIR`, `COSI_TRANSIENT_DIR`, `COSI_TRIGGER_DIR`, `COSI_MAPS_DIR`, `COSI_SOURCE_DIR` | Canonical COSI data domains |
 | `GCN_DB_*` | MySQL connection for the GCN inbox/outbox |
@@ -203,3 +188,9 @@ documented in [gcn-client/README.md](gcn-client/README.md).
 
 The configurable COSIDAG benchmark and chart generator are documented in
 [test/README.md](test/README.md).
+
+The Issue 5 security acceptance tests run with:
+
+```bash
+python3 -m unittest discover -s tests/security -v
+```

@@ -13,8 +13,8 @@ Before managing modules:
    [`../README.md`](../README.md);
 2. keep every module directory beside `cosiflow/` in the same workspace;
 3. run `hot_load_module.sh` from the host, normally from `cosiflow/env`;
-4. keep local passwords and GCN credentials in `cosiflow/env/.env`, not in the
-   tracked Compose file.
+4. generate the required ignored `cosiflow/env/.env` as documented in the main
+   README; the stack intentionally fails when a credential is absent.
 
 For authenticated GCN Kafka consumption, `.env` needs:
 
@@ -226,8 +226,8 @@ COSIDAG development is documented in
 
 ## Module Dockerfile
 
-The module image is used by `DockerOperator` tasks. A minimal Debian/Python
-template is:
+Module images are built only for externally orchestrated runners. Airflow has
+no Docker daemon access. A minimal Debian/Python template is:
 
 ```dockerfile
 FROM python:3.12-slim
@@ -268,7 +268,7 @@ required.
 | --- | --- |
 | `PythonOperator` | dependencies already exist in the Airflow environment |
 | `ExternalPythonOperator` | the task needs a managed, isolated Python environment |
-| `DockerOperator` | the task needs a separate OS/runtime image or strong packaging isolation |
+| Dedicated external runner | the task needs a container image; never grant the Airflow webserver Docker access |
 
 Container images improve isolation, but reproducibility still depends on pinned
 base-image digests and dependency versions.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -312,6 +313,56 @@ class NoticeStore:
                       details_json = VALUES(details_json)
                     """,
                     (component, status, _json_or_none(details)),
+                )
+
+    def fetch_heartbeats(self) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT component, updated_at, status, details_json
+                    FROM gcn_client_heartbeats
+                    ORDER BY component
+                    """
+                )
+                return list(cur.fetchall())
+
+    def assert_healthy(self, degraded_after_seconds: float, offline_after_seconds: float) -> None:
+        rows = {row["component"]: row for row in self.fetch_heartbeats()}
+        now = datetime.now(timezone.utc)
+        failures: list[str] = []
+        for component in ("inbound", "outbox"):
+            row = rows.get(component)
+            if not row:
+                failures.append(f"{component}: no heartbeat")
+                continue
+            status = str(row.get("status") or "").lower()
+            if status in {"failed", "error", "dead", "offline"}:
+                failures.append(f"{component}: status={status}")
+                continue
+            updated_at = row.get("updated_at")
+            if updated_at is None:
+                failures.append(f"{component}: missing timestamp")
+                continue
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            age = (now - updated_at).total_seconds()
+            if age > offline_after_seconds:
+                failures.append(f"{component}: heartbeat age exceeds offline threshold")
+            elif age > degraded_after_seconds:
+                failures.append(f"{component}: heartbeat is degraded")
+        if failures:
+            raise RuntimeError("; ".join(failures))
+
+    def lifecycle_event(self, event: str, details: dict[str, Any] | None = None) -> None:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO gcn_client_lifecycle_events (event, details_json)
+                    VALUES (%s, %s)
+                    """,
+                    (event, _json_or_none(details)),
                 )
 
 

@@ -123,3 +123,13 @@ CREATE TABLE IF NOT EXISTS gcn_client_heartbeats (
   details_json JSON NULL,
   PRIMARY KEY (component)
 );
+
+CREATE TABLE IF NOT EXISTS gcn_client_lifecycle_events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  event VARCHAR(64) NOT NULL,
+  details_json JSON NULL,
+  PRIMARY KEY (id),
+  KEY idx_lifecycle_created_at (created_at),
+  KEY idx_lifecycle_event (event)
+);

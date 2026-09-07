@@ -1,107 +1,83 @@
 #!/bin/bash
-#set -euo pipefail
+set -euo pipefail
 
 cd /home/gamma
 
-# define a macro `log` for printing messages with color green
 log() {
-    echo -e "\033[32m$1\033[0m"
+    printf '\033[32m%s\033[0m\n' "$1"
 }
 
-# define a macro `error` for printing messages with color red
 error() {
-    echo -e "\033[31m$1\033[0m"
+    printf '\033[31m%s\033[0m\n' "$1" >&2
     exit 1
 }
 
-# define a macro `warning` for printing messages with color yellow
-warning() {
-    echo -e "\033[33m$1\033[0m"
+configure_runtime() {
+    python /home/gamma/validate_runtime_secrets.py
+    export AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="$(
+        python /home/gamma/validate_runtime_secrets.py --sqlalchemy-dsn
+    )"
+    export AIRFLOW__EMAIL__EMAIL_BACKEND=airflow.utils.email.send_email_smtp
+
+    if [ -n "${ALERT_EMAIL_SENDER:-}" ]; then
+        export AIRFLOW__SMTP__SMTP_MAIL_FROM="$ALERT_EMAIL_SENDER"
+    fi
+
+    export MAILHOG_WEBUI_URL="http://${HOST_IP:-127.0.0.1}:${MAILHOG_WEBUI_PORT:-8025}"
+    export COSIFLOW_HOME_URL="http://${HOST_IP:-127.0.0.1}:${AIRFLOW_WEBUI_PORT:-8080}/heasarcbrowser"
+    mkdir -p "${COSI_DATA_DIR:?COSI_DATA_DIR is required}"/{obs,transient,tdrss,maps,source}
 }
 
-if [ -n "${ALERT_EMAIL_SENDER:-}" ]; then
-  export AIRFLOW__SMTP__SMTP_MAIL_FROM="$ALERT_EMAIL_SENDER"
-fi
+admin_exists_exactly() {
+    airflow users list --output json | python -c '
+import json, sys
+username = sys.argv[1]
+rows = json.load(sys.stdin)
+raise SystemExit(0 if any(str(row.get("username", "")) == username for row in rows) else 1)
+' "$AIRFLOW_ADMIN_USERNAME"
+}
 
-# Always use this email backend
-export AIRFLOW__EMAIL__EMAIL_BACKEND=airflow.utils.email.send_email_smtp
+run_init() {
+    configure_runtime
+    log "Validated runtime secrets before database migration."
+    airflow db migrate
+    python /home/gamma/reencrypt_airflow_secrets.py
 
-# Construct URLs from HOST_IP and ports (defined once in docker-compose.yaml)
-# This allows changing HOST_IP in one place and having all URLs update automatically
-HOST_IP="${HOST_IP:-localhost}"
-MAILHOG_WEBUI_PORT="${MAILHOG_WEBUI_PORT:-8025}"
-AIRFLOW_WEBUI_PORT="${AIRFLOW_WEBUI_PORT:-8080}"
+    if admin_exists_exactly; then
+        airflow users reset-password \
+            --username "$AIRFLOW_ADMIN_USERNAME" \
+            --password "$AIRFLOW_ADMIN_PASSWORD"
+        log "Airflow administrator password synchronized with the external secret."
+    else
+        airflow users create \
+            --username "$AIRFLOW_ADMIN_USERNAME" \
+            --firstname COSI \
+            --lastname Admin \
+            --role Admin \
+            --email "$AIRFLOW_ADMIN_EMAIL" \
+            --password "$AIRFLOW_ADMIN_PASSWORD"
+        log "Airflow administrator created."
+    fi
+}
 
-# Build URLs dynamically
-export MAILHOG_WEBUI_URL="http://${HOST_IP}:${MAILHOG_WEBUI_PORT}"
-export COSIFLOW_HOME_URL="http://${HOST_IP}:${AIRFLOW_WEBUI_PORT}/heasarcbrowser"
+run_runtime() {
+    configure_runtime
+    log "Starting Airflow runtime after successful init."
+    airflow webserver --port 8080 &
+    webserver_pid=$!
+    trap 'kill -TERM "$webserver_pid" 2>/dev/null || true' EXIT INT TERM
+    airflow scheduler
+}
 
-log "URLs configured:"
-echo "   MAILHOG_WEBUI_URL=${MAILHOG_WEBUI_URL}"
-echo "   COSIFLOW_HOME_URL=${COSIFLOW_HOME_URL}"
-
-# Export COSI directory structure environment variables if present
-if [ -n "${COSI_DATA_DIR:-}" ]; then
-  export COSI_DATA_DIR="$COSI_DATA_DIR"
-fi
-
-if [ -n "${COSI_OBS_DIR:-}" ]; then
-  export COSI_OBS_DIR="$COSI_OBS_DIR"
-fi
-
-if [ -n "${COSI_TRANSIENT_DIR:-}" ]; then
-  export COSI_TRANSIENT_DIR="$COSI_TRANSIENT_DIR"
-fi
-
-if [ -n "${COSI_TRIGGER_DIR:-}" ]; then
-  export COSI_TRIGGER_DIR="$COSI_TRIGGER_DIR"
-fi
-
-if [ -n "${COSI_MAPS_DIR:-}" ]; then
-  export COSI_MAPS_DIR="$COSI_MAPS_DIR"
-fi
-
-if [ -n "${COSI_SOURCE_DIR:-}" ]; then
-  export COSI_SOURCE_DIR="$COSI_SOURCE_DIR"
-fi
-
-if [ -n "${COSI_INPUT_DIR:-}" ]; then
-  export COSI_INPUT_DIR="$COSI_INPUT_DIR"
-fi
-
-if [ -n "${COSI_LOG_DIR:-}" ]; then
-  export COSI_LOG_DIR="$COSI_LOG_DIR"
-fi
-
-# Create COSI directory structure if not present
-mkdir -p $COSI_DATA_DIR/{obs,transient,tdrss,maps,source}
-
-# Activate Python venv
-if [ -f "/home/gamma/venv/bin/activate" ]; then
-    source /home/gamma/venv/bin/activate
-    log "Virtual environment activated."
-else
-    warning "venv activate script not found, assuming PATH is correct."
-fi
-# export PATH="$PATH:~/.local/bin" # Not needed with venv in PATH
-
-# Initialize Airflow DB
-airflow db init
-
-# Create admin user if not present
-if ! airflow users list | grep -q "$AIRFLOW_ADMIN_USERNAME"; then
-  airflow users create \
-    --username "$AIRFLOW_ADMIN_USERNAME" \
-    --firstname COSI \
-    --lastname Admin \
-    --role Admin \
-    --email "$AIRFLOW_ADMIN_EMAIL" \
-    --password "$AIRFLOW_ADMIN_PASSWORD"
-  log "Admin user created."
-else
-  warning "Admin user already exists. Skipping creation."
-fi
-
-# Start webserver (in background) and scheduler
-airflow webserver --port 8080 &
-airflow scheduler
+case "${1:-}" in
+    init)
+        run_init
+        ;;
+    runtime)
+        run_runtime
+        ;;
+    *)
+        error "Usage: entrypoint-airflow.sh init|runtime"
+        ;;
+esac

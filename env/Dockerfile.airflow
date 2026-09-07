@@ -54,8 +54,8 @@ RUN set -eux; \
 # ------------------------------ Non-root user ------------------------------
 # UID and GID are passed from docker-compose.yaml build args
 # Defaults match docker-compose.yaml defaults for consistency
-ARG UID=
-ARG GID=
+ARG UID=501
+ARG GID=20
 RUN set -eux; \
     if getent group "${GID}" >/dev/null; then \
       GN="$(getent group "${GID}" | cut -d: -f1)"; \
@@ -78,6 +78,8 @@ COPY environment.yml /home/gamma/env/
 COPY requirements.txt /home/gamma/env/
 COPY alert_users.yaml /home/gamma/env/
 COPY entrypoint-airflow.sh /home/gamma/entrypoint-airflow.sh
+COPY validate_runtime_secrets.py /home/gamma/validate_runtime_secrets.py
+COPY reencrypt_airflow_secrets.py /home/gamma/reencrypt_airflow_secrets.py
 
 # Fix ownership
 RUN chown -R "${UID}:${GID}" /home/gamma
@@ -99,8 +101,8 @@ ENV CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINT_URL}" && \
-    pip install --no-cache-dir apache-airflow-providers-docker apache-airflow-providers-postgres psycopg2-binary \
-    jupyter pandas plotly scikit-learn tensorboard tensorflow inotify_simple PyMySQL graphviz
+    pip install --no-cache-dir apache-airflow-providers-postgres psycopg2-binary \
+    pandas plotly scikit-learn tensorflow inotify_simple PyMySQL graphviz
 
 # ------------------------------ Final Setup ------------------------------
 RUN mkdir -p ${HOME}/airflow

@@ -5,6 +5,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+class ConfigurationError(ValueError):
+    """Raised before any network operation when required configuration is absent."""
+
+
+def _required_env(name: str) -> str:
+    value = os.getenv(name, "")
+    if not value:
+        raise ConfigurationError(f"{name} is required and must not be empty")
+    return value
+
+
 def _bool_env(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -60,23 +71,32 @@ def load_settings() -> Settings:
         )
     )
 
+    consumer_enabled = _bool_env("GCN_CONSUMER_ENABLED", True)
+    producer_enabled = _bool_env("GCN_PRODUCER_ENABLED", False)
+    dry_run = _bool_env("GCN_DRY_RUN", True)
+    client_id = os.getenv("GCN_CLIENT_ID", "")
+    client_secret = os.getenv("GCN_CLIENT_SECRET", "")
+    if consumer_enabled or (producer_enabled and not dry_run):
+        client_id = _required_env("GCN_CLIENT_ID")
+        client_secret = _required_env("GCN_CLIENT_SECRET")
+
     return Settings(
         db_host=os.getenv("GCN_DB_HOST", "gcn-mysql"),
         db_port=int(os.getenv("GCN_DB_PORT", "3306")),
         db_name=os.getenv("GCN_DB_NAME", "gcn"),
         db_user=os.getenv("GCN_DB_USER", "gcn_user"),
-        db_password=os.getenv("GCN_DB_PASSWORD", "gcn_password"),
+        db_password=_required_env("GCN_DB_PASSWORD"),
         db_connect_timeout=int(os.getenv("GCN_DB_CONNECT_TIMEOUT", "10")),
-        client_id=os.getenv("GCN_CLIENT_ID", ""),
-        client_secret=os.getenv("GCN_CLIENT_SECRET", ""),
+        client_id=client_id,
+        client_secret=client_secret,
         gcn_domain=os.getenv("GCN_DOMAIN") or None,
         consumer_group_id=os.getenv("GCN_CONSUMER_GROUP_ID", "cosiflow-gcn-client"),
         consumer_topics=_csv_env("GCN_CONSUMER_TOPICS", ""),
-        consumer_enabled=_bool_env("GCN_CONSUMER_ENABLED", True),
+        consumer_enabled=consumer_enabled,
         consumer_poll_timeout=float(os.getenv("GCN_CONSUMER_POLL_TIMEOUT", "1.0")),
         consumer_commit=_bool_env("GCN_CONSUMER_COMMIT", True),
-        producer_enabled=_bool_env("GCN_PRODUCER_ENABLED", False),
-        dry_run=_bool_env("GCN_DRY_RUN", True),
+        producer_enabled=producer_enabled,
+        dry_run=dry_run,
         require_test_topics=_bool_env("GCN_REQUIRE_TEST_TOPICS", True),
         outbound_topic_default=os.getenv(
             "GCN_OUTBOUND_TOPIC_DEFAULT",

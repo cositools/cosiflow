@@ -392,19 +392,7 @@
         <span class="notice-status {{ service_status.status_class }}">{{ service_status.status }}</span>
         <span class="notice-muted">{{ service_status.raw_status }}</span>
       </div>
-      <div class="notice-component-actions">
-        {% for action in ["restart", "stop", "start"] %}
-          <form method="post" action="{{ url_for('ExploreNoticesView.control_component') }}">
-            {% if csrf_token %}
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            {% endif %}
-            <input type="hidden" name="component" value="gcn-client">
-            <input type="hidden" name="action" value="{{ action }}">
-            <input type="hidden" name="tab" value="{{ filters.tab }}">
-            <button type="submit">{{ action }}</button>
-          </form>
-        {% endfor %}
-      </div>
+      <span class="notice-muted">Lifecycle is managed and audited by the orchestrator.</span>
     </div>
     {% if heartbeats %}
       <div class="dags-table-wrap notice-table-wrap">
