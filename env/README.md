@@ -273,6 +273,44 @@ required.
 Container images improve isolation, but reproducibility still depends on pinned
 base-image digests and dependency versions.
 
+## Plugin RBAC provisioning
+
+During `airflow-init`, the entrypoint migrates the metastore, runs
+`airflow sync-perm`, synchronizes the Admin account, and then executes
+`/home/gamma/configure_rbac.py`. The configurator uses Flask-AppBuilder APIs,
+never metadata-table SQL, and fails init if the verified matrix differs.
+
+| Permission | Viewer | Scientist | Operator | Admin |
+| --- | :---: | :---: | :---: | :---: |
+| `can_read / COSIflow GCN Notices` | No | Yes | Yes | FAB Admin |
+| `can_create / COSIflow GCN Inbox` | No | No | Yes | FAB Admin |
+| `can_create / COSIflow GCN Outbox` | No | No | Yes | FAB Admin |
+| `can_read / COSIflow Scientific Data` | No | Yes | Yes | FAB Admin |
+| `can_read / COSIflow COSIDAG State` | No | Yes | Yes | FAB Admin |
+| `can_edit / COSIflow COSIDAG State` | No | No | Yes | FAB Admin |
+| `can_edit / COSIflow DAG Catalog` | No | No | Yes | FAB Admin |
+| `can_read / COSIflow Mail Sandbox` | No | No | Yes | FAB Admin |
+
+Scientist is extended from the current Viewer permission set and Operator from
+the current Op set. Default Airflow roles are not modified. Reruns add missing
+base or COSIflow permissions, remove only obsolete `COSIflow *` permissions and
+managed menu entries from the two managed roles, and preserve unrelated custom
+permissions.
+
+Run and verify twice after a rollout:
+
+```bash
+docker compose run --rm airflow-init
+docker compose run --rm airflow-init
+docker compose run --rm --entrypoint python airflow-init /home/gamma/configure_rbac.py --verify-only
+python3 -m unittest discover -s ../tests/security -v
+```
+
+Before assigning real users, confirm that Viewer has no `COSIflow *`
+permission. Assign read-only scientific users to Scientist and operational
+users to Operator. Keep Admin limited to administrators. The menu policy is
+defense in depth: direct requests remain protected by route permissions.
+
 ## Troubleshooting
 
 ### DAGs do not appear

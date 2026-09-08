@@ -4,14 +4,13 @@ import base64
 import mimetypes
 import struct
 import zlib
-from functools import wraps
 from pathlib import Path
 from airflow.plugins_manager import AirflowPlugin
 from airflow.models import BaseOperator
-from flask import Blueprint, render_template, send_from_directory, redirect, url_for, session, jsonify, abort, request
+from flask import Blueprint, send_from_directory, jsonify, abort, url_for
 from flask_appbuilder import BaseView, expose
 from jinja2 import Environment
-from flask_login import current_user
+from shared_auth import ACTION_READ, SCIENTIFIC_DATA, require_cosiflow_permission
 from shared_ui import add_shared_templates
 from werkzeug.exceptions import HTTPException
 
@@ -281,24 +280,12 @@ def _resolve_data_path(filepath):
     return candidate
 
 
-def _airflow_login_required(view_function):
-    """Redirect anonymous users through Airflow's actual FAB login endpoint."""
-    @wraps(view_function)
-    def decorated_view(*args, **kwargs):
-        if not current_user.is_authenticated:
-            next_url = request.full_path.rstrip("?")
-            return redirect(url_for("AuthDBView.login", next=next_url))
-        return view_function(*args, **kwargs)
-
-    return decorated_view
-
-
 class HEASARCExplorerView(BaseView):
     default_view = "explorer_home"
     route_base = "/heasarcbrowser"
 
     @expose('/')
-    @_airflow_login_required
+    @require_cosiflow_permission(ACTION_READ, SCIENTIFIC_DATA)
     def explorer_home(self):
         try:
             folders = sorted([f for f in os.listdir(DL0_FOLDER) if os.path.isdir(os.path.join(DL0_FOLDER, f))])
@@ -314,7 +301,7 @@ class HEASARCExplorerView(BaseView):
             return f"Error loading folders: {e}\n\nTraceback:\n{error_traceback}", 500
 
     @expose('/folder/<path:foldername>')
-    @_airflow_login_required
+    @require_cosiflow_permission(ACTION_READ, SCIENTIFIC_DATA)
     def explorer_folder(self, foldername):
         try:
             folder_path = _resolve_data_path(foldername)
@@ -359,7 +346,7 @@ class HEASARCExplorerView(BaseView):
             return f"Error loading files: {e}\n\nTraceback:\n{error_traceback}", 500
 
     @expose('/download/<path:filepath>')
-    @_airflow_login_required
+    @require_cosiflow_permission(ACTION_READ, SCIENTIFIC_DATA)
     def download_file(self, filepath):
         abs_path = _resolve_data_path(filepath)
         return send_from_directory(
@@ -369,7 +356,7 @@ class HEASARCExplorerView(BaseView):
         )
 
     @expose('/image/<path:filepath>')
-    @_airflow_login_required
+    @require_cosiflow_permission(ACTION_READ, SCIENTIFIC_DATA)
     def image_file(self, filepath):
         """Serve an image inline for the full-size preview in a separate tab."""
         abs_path = _resolve_data_path(filepath)
@@ -393,9 +380,8 @@ class HEASARCExplorerView(BaseView):
         return response
 
     @expose('/preview/<path:filepath>')
-    @_airflow_login_required
+    @require_cosiflow_permission(ACTION_READ, SCIENTIFIC_DATA)
     def preview_file(self, filepath):
-        print(f"Preview request for: {filepath}")  # Debug logging
         try:
             abs_path = _resolve_data_path(filepath)
             

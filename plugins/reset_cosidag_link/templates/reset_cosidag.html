@@ -26,7 +26,7 @@
     <div class="panel panel-default">
         <div class="panel-heading">Reset Variable</div>
         <div class="panel-body">
-            <form method="post" action="{{ url_for('ResetCosidagView.reset_cosidag') }}">
+            <form method="post" action="{{ url_for('ResetCosidagView.reset_all_processed_paths') }}">
                 {% if csrf_token %}
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 {% endif %}
@@ -39,9 +39,11 @@
                         {% endfor %}
                     </select>
                 </div>
+                {% if can_edit_state %}
                 <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to reset the processed state for this DAG? This action cannot be undone.');">
                     <span class="glyphicon glyphicon-refresh" aria-hidden="true"></span> Reset Variable
                 </button>
+                {% endif %}
             </form>
         </div>
     </div>
@@ -49,9 +51,9 @@
     <div class="panel panel-default" id="folders-panel" style="display: none;">
         <div class="panel-heading">
             Processed Paths <span id="folder-count" class="badge"></span>
-            <button type="button" class="btn btn-danger btn-xs pull-right" id="delete-selected-btn" onclick="deleteSelectedPaths()" disabled title="Delete selected paths">
+            {% if can_edit_state %}<button type="button" class="btn btn-danger btn-xs pull-right" id="delete-selected-btn" onclick="deleteSelectedPaths()" disabled title="Delete selected paths">
                 <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
-            </button>
+            </button>{% endif %}
         </div>
         <div class="panel-body">
             <div id="folders-loading" style="display: none; text-align: center; color: #777;">
@@ -62,9 +64,9 @@
             <table class="table table-striped table-hover" id="folders-table">
                 <thead>
                     <tr>
-                        <th style="width: 36px;">
+                        {% if can_edit_state %}<th style="width: 36px;">
                             <input type="checkbox" id="select-all-paths" onclick="toggleAllPaths(this)">
-                        </th>
+                        </th>{% endif %}
                         <th>Path</th>
                     </tr>
                 </thead>
@@ -102,9 +104,11 @@
         table.style.display = 'none';
         emptyMsg.style.display = 'none';
         badge.innerText = '';
-        selectAll.checked = false;
-        selectAll.indeterminate = false;
-        deleteButton.disabled = true;
+        if (selectAll) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+        }
+        if (deleteButton) deleteButton.disabled = true;
 
         const url = `/reset_cosidag/get_processed_folders/${dagId}`;
 
@@ -133,18 +137,18 @@
                     table.style.display = 'table';
                     folders.forEach(folder => {
                         const row = document.createElement('tr');
-                        const checkCell = document.createElement('td');
+                        {% if can_edit_state %}const checkCell = document.createElement('td');
                         const checkbox = document.createElement('input');
                         checkbox.type = 'checkbox';
                         checkbox.className = 'processed-path-checkbox';
                         checkbox.value = folder;
                         checkbox.addEventListener('change', updateDeleteControls);
-                        checkCell.appendChild(checkbox);
+                        checkCell.appendChild(checkbox);{% endif %}
                         const cell = document.createElement('td');
                         cell.innerText = folder;
                         // Optional: make it monospace for paths
                         cell.style.fontFamily = 'monospace';
-                        row.appendChild(checkCell);
+                        {% if can_edit_state %}row.appendChild(checkCell);{% endif %}
                         row.appendChild(cell);
                         tbody.appendChild(row);
                     });
@@ -172,9 +176,11 @@
         const deleteButton = document.getElementById('delete-selected-btn');
         const selectAll = document.getElementById('select-all-paths');
 
-        deleteButton.disabled = selected.length === 0;
-        selectAll.checked = all.length > 0 && selected.length === all.length;
-        selectAll.indeterminate = selected.length > 0 && selected.length < all.length;
+        if (deleteButton) deleteButton.disabled = selected.length === 0;
+        if (selectAll) {
+            selectAll.checked = all.length > 0 && selected.length === all.length;
+            selectAll.indeterminate = selected.length > 0 && selected.length < all.length;
+        }
     }
 
     function toggleAllPaths(source) {

@@ -322,6 +322,7 @@
   {% endif %}
 
   {% if filters.tab == 'inbox' %}
+    {% if can_inject_inbox %}
     <details class="notice-injection-panel">
       <summary class="notice-injection-heading">
         <span>Manual Inbox Injection</span>
@@ -354,7 +355,9 @@
         </form>
       </div>
     </details>
+    {% endif %}
   {% else %}
+    {% if can_inject_outbox %}
     <details class="notice-injection-panel">
       <summary class="notice-injection-heading">
         <span>Manual Outbox Injection</span>
@@ -382,6 +385,7 @@
         </form>
       </div>
     </details>
+    {% endif %}
   {% endif %}
 
   <div class="notice-heartbeats">

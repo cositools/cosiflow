@@ -43,6 +43,7 @@ run_init() {
     log "Validated runtime secrets before database migration."
     airflow db migrate
     python /home/gamma/reencrypt_airflow_secrets.py
+    airflow sync-perm
 
     if admin_exists_exactly; then
         airflow users reset-password \
@@ -59,6 +60,9 @@ run_init() {
             --password "$AIRFLOW_ADMIN_PASSWORD"
         log "Airflow administrator created."
     fi
+
+    python /home/gamma/configure_rbac.py
+    log "COSIflow roles and permissions reconciled and verified."
 }
 
 run_runtime() {

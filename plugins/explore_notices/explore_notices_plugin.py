@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -12,12 +13,22 @@ import pymysql
 from airflow.plugins_manager import AirflowPlugin
 from flask import Blueprint, flash, redirect, request, url_for
 from flask_appbuilder import BaseView, expose
-from flask_login import current_user, login_required
 from explore_notices.heartbeat_status import aggregate_status, classify_heartbeat
+from shared_auth import (
+    ACTION_CREATE,
+    ACTION_READ,
+    GCN_INBOX,
+    GCN_NOTICES,
+    GCN_OUTBOX,
+    current_airflow_username,
+    is_cosiflow_authorized,
+    require_cosiflow_permission,
+)
 from shared_ui import add_shared_templates
 
 
 plugin_folder = os.path.dirname(os.path.abspath(__file__))
+logger = logging.getLogger(__name__)
 
 explore_notices_bp = add_shared_templates(
     Blueprint(
@@ -737,42 +748,62 @@ class ExploreNoticesView(BaseView):
     route_base = "/explore-notices"
 
     @expose("/inject-inbox", methods=["POST"])
-    @login_required
+    @require_cosiflow_permission(ACTION_CREATE, GCN_INBOX)
     def inject_inbox(self):
-        if not current_user.is_authenticated:
-            return redirect("/login/?next=/explore-notices/")
+        topic = request.form.get("topic", "")
         try:
             notice_id = _inject_inbound_notice(
                 request.form.get("payload", ""),
-                request.form.get("topic", ""),
+                topic,
                 request.form.get("source", "manual"),
+            )
+            logger.info(
+                "cosiflow_mutation user=%s action=%s resource=%s result=success",
+                current_airflow_username(),
+                ACTION_CREATE,
+                GCN_INBOX,
             )
             flash(f"Manual inbox notice inserted with ID {notice_id}.", "success")
         except Exception as exc:
+            logger.warning(
+                "cosiflow_mutation user=%s action=%s resource=%s result=failure",
+                current_airflow_username(),
+                ACTION_CREATE,
+                GCN_INBOX,
+            )
             flash(f"Manual inbox injection failed: {exc}", "error")
-        return redirect(url_for("ExploreNoticesView.index", tab="inbox"))
+        return redirect(url_for("ExploreNoticesView.index", tab="inbox"), code=303)
 
     @expose("/inject-outbox", methods=["POST"])
-    @login_required
+    @require_cosiflow_permission(ACTION_CREATE, GCN_OUTBOX)
     def inject_outbox(self):
-        if not current_user.is_authenticated:
-            return redirect("/login/?next=/explore-notices/")
+        topic = request.form.get("topic", "")
         try:
             notice_id = _queue_manual_outbound_notice(
                 request.form.get("payload", ""),
-                request.form.get("topic", ""),
+                topic,
                 request.form.get("idempotency_key", ""),
+            )
+            logger.info(
+                "cosiflow_mutation user=%s action=%s resource=%s result=success",
+                current_airflow_username(),
+                ACTION_CREATE,
+                GCN_OUTBOX,
             )
             flash(f"Manual outbox notice queued with ID {notice_id}.", "success")
         except Exception as exc:
+            logger.warning(
+                "cosiflow_mutation user=%s action=%s resource=%s result=failure",
+                current_airflow_username(),
+                ACTION_CREATE,
+                GCN_OUTBOX,
+            )
             flash(f"Manual outbox injection failed: {exc}", "error")
-        return redirect(url_for("ExploreNoticesView.index", tab="outbox"))
+        return redirect(url_for("ExploreNoticesView.index", tab="outbox"), code=303)
 
     @expose("/")
-    @login_required
+    @require_cosiflow_permission(ACTION_READ, GCN_NOTICES)
     def index(self):
-        if not current_user.is_authenticated:
-            return redirect("/login/?next=/explore-notices/")
         tab = request.args.get("tab", "inbox").strip().lower()
         if tab not in {"inbox", "outbox"}:
             tab = "inbox"
@@ -846,10 +877,12 @@ class ExploreNoticesView(BaseView):
             error=error,
             filters=filters,
             now=datetime.utcnow(),
+            can_inject_inbox=is_cosiflow_authorized(ACTION_CREATE, GCN_INBOX),
+            can_inject_outbox=is_cosiflow_authorized(ACTION_CREATE, GCN_OUTBOX),
         )
 
     @expose("/notice/<int:notice_id>")
-    @login_required
+    @require_cosiflow_permission(ACTION_READ, GCN_NOTICES)
     def notice_detail(self, notice_id):
         error = None
         notice = None
@@ -869,7 +902,7 @@ class ExploreNoticesView(BaseView):
         )
 
     @expose("/outbox/<int:notice_id>")
-    @login_required
+    @require_cosiflow_permission(ACTION_READ, GCN_NOTICES)
     def outbox_detail(self, notice_id):
         error = None
         notice = None

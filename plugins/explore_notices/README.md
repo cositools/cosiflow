@@ -10,7 +10,16 @@ It is registered as the authenticated top-level menu item
 - `/explore-notices/notice/<id>`: full inbox notice detail view with raw payload, JSON payload, validation errors, and derived summary fields.
 - `/explore-notices/outbox/<id>`: full outbound notice detail view with payload JSON, validation errors, source DAG metadata, and delivery attempts.
 
-All exposed routes require an authenticated Airflow session.
+All routes enforce FAB permissions through the active Airflow Auth Manager.
+`can_read` on `COSIflow GCN Notices` protects lists and details;
+`can_create` on `COSIflow GCN Inbox` and `COSIflow GCN Outbox` protects the two
+manual injections. Scientist has the read permission only. Operator and Admin
+can read and inject. Viewer has no COSIflow permission. The forms are hidden
+when their capability is absent, but the server-side check remains authoritative.
+
+Mutation audit events include the Airflow user, permission, target topic and
+result. Payloads, cookies, CSRF tokens and database credentials are not logged.
+The plugin does not expose GCN container lifecycle controls.
 
 ## Data Source
 

@@ -1,40 +1,71 @@
 import os
+import logging
 import subprocess
-from flask import redirect, flash
+from flask import Blueprint, redirect, flash, url_for
 from flask_appbuilder import BaseView, expose
-from flask_login import login_required
 from airflow.plugins_manager import AirflowPlugin
 from airflow.models import DagBag
 from airflow.utils.session import provide_session
+from shared_auth import (
+    ACTION_EDIT,
+    DAG_CATALOG,
+    current_airflow_username,
+    require_cosiflow_permission,
+)
+from shared_ui import add_shared_templates
+
+
+plugin_folder = os.path.dirname(os.path.abspath(__file__))
+logger = logging.getLogger(__name__)
+refresh_dags_bp = add_shared_templates(
+    Blueprint(
+        "refresh_dags_bp",
+        __name__,
+        template_folder=os.path.join(plugin_folder, "templates"),
+    )
+)
 
 
 class RefreshDagsView(BaseView):
     """View that executes 'airflow dags list' command and refreshes the DAG bag"""
     
-    default_view = "refresh_dags"
+    default_view = "confirm_refresh"
     route_base = "/refresh_dags"
 
-    @expose("/")
-    @login_required
+    @expose("/confirm", methods=["GET"])
+    @require_cosiflow_permission(ACTION_EDIT, DAG_CATALOG)
+    def confirm_refresh(self):
+        return self.render_template("refresh_dags.html")
+
+    @expose("/", methods=["POST"])
+    @require_cosiflow_permission(ACTION_EDIT, DAG_CATALOG)
     def refresh_dags(self):
-        """Execute 'airflow dags list' command and refresh DAG bag, then redirect to home"""
+        """Execute ``airflow dags list`` and refresh the DAG bag."""
         try:
-            # Execute the command
             result = self._execute_dags_list()
-            
-            # Force refresh of the DAG bag
-            self._refresh_dagbag()
-            
-            # Show success message and redirect to home
-            if result.get('success', False):
+            dagbag_refreshed = self._refresh_dagbag()
+            success = result.get("success", False) and dagbag_refreshed
+            logger.info(
+                "cosiflow_mutation user=%s action=%s resource=%s mutation=refresh_dags result=%s command_returncode=%s",
+                current_airflow_username(),
+                ACTION_EDIT,
+                DAG_CATALOG,
+                "success" if success else "failure",
+                result.get("returncode"),
+            )
+            if success:
                 flash("DAGs list refreshed successfully!", "success")
             else:
-                flash(f"DAGs list refresh completed with warnings: {result.get('error', 'Unknown error')}", "warning")
-            
-            return redirect('/home')
-        except Exception as e:
-            flash(f"Error refreshing DAGs list: {str(e)}", "error")
-            return redirect('/home')
+                flash("DAG refresh completed with warnings. Check the Airflow logs.", "warning")
+        except Exception:
+            logger.exception(
+                "cosiflow_mutation user=%s action=%s resource=%s mutation=refresh_dags result=failure",
+                current_airflow_username(),
+                ACTION_EDIT,
+                DAG_CATALOG,
+            )
+            flash("Unable to refresh the DAG catalog.", "error")
+        return redirect(url_for("RefreshDagsView.confirm_refresh"), code=303)
 
     def _execute_dags_list(self):
         """Execute 'airflow dags list' command and return the output"""
@@ -53,20 +84,18 @@ class RefreshDagsView(BaseView):
             
             return {
                 'success': result.returncode == 0,
-                'output': result.stdout,
-                'error': result.stderr
+                'returncode': result.returncode,
             }
         except subprocess.TimeoutExpired:
             return {
                 'success': False,
-                'output': '',
-                'error': 'Timeout: command took too long'
+                'returncode': None,
             }
-        except Exception as e:
+        except Exception:
+            logger.exception("cosiflow_dag_list_command_failed")
             return {
                 'success': False,
-                'output': '',
-                'error': f'Error during execution: {str(e)}'
+                'returncode': None,
             }
 
     @provide_session
@@ -89,17 +118,14 @@ class RefreshDagsView(BaseView):
             dagbag.sync_to_db()
             
             return True
-        except Exception as e:
-            # Log the error but don't block execution
-            print(f"Warning: Error during DAG bag refresh: {str(e)}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
+            logger.exception("cosiflow_dagbag_refresh_failed")
             return False
 
 
 class RefreshDagsPlugin(AirflowPlugin):
     name = "refresh_dags_plugin"
-    
+    flask_blueprints = [refresh_dags_bp]
     appbuilder_views = [
         {
             "name": "Refresh DAGs List",
