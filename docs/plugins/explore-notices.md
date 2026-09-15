@@ -1,4 +1,4 @@
-# Explore Notices Airflow Plugin
+# Explore Notices Airflow plugin
 
 The Explore Notices plugin adds an Airflow AppBuilder page for inspecting GCN notices stored by the COSIflow GCN client in MySQL.
 

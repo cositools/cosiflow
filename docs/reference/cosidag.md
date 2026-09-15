@@ -1,7 +1,8 @@
 # COSIDAG developer guide
 
 `COSIDAG` is an Airflow `DAG` subclass for reactive, filesystem-driven
-scientific workflows. Its implementation is in `modules/cosidag.py`.
+scientific workflows. Its implementation is in
+[`modules/cosidag.py`](https://github.com/cositools/cosiflow/blob/dev-review/modules/cosidag.py).
 
 ## Workflow shape
 

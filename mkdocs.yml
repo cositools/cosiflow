@@ -1,0 +1,54 @@
+site_name: COSIflow
+site_description: Orchestration framework and operations documentation for COSI scientific pipelines
+repo_url: https://github.com/cositools/cosiflow
+repo_name: cositools/cosiflow
+edit_uri: edit/dev/docs/
+docs_dir: docs
+site_dir: site
+strict: true
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Configuration: getting-started/configuration.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Modules: architecture/modules.md
+  - Reference:
+      - COSIDAG: reference/cosidag.md
+      - Core DAGs: reference/dags.md
+      - GCN client: reference/gcn-client.md
+  - Plugins:
+      - Overview and RBAC: plugins/index.md
+      - Data Explorer: plugins/data-explorer.md
+      - Explore Notices: plugins/explore-notices.md
+      - MailHog link: plugins/mailhog.md
+      - Refresh DAGs: plugins/refresh-dags.md
+      - Reset COSIDAG: plugins/reset-cosidag.md
+      - Shared UI: plugins/shared-ui.md
+  - Development:
+      - Performance testing: development/performance-testing.md

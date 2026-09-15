@@ -1,6 +1,7 @@
-# MailHog Link Plugin
+# MailHog link plugin
 
-This plugin adds a direct Airflow UI link to the MailHog web interface used by the local Cosiflow stack.
+This plugin adds a direct Airflow UI link to the MailHog web interface used by
+the local COSIflow stack.
 
 ## Menu Entry
 
@@ -34,8 +35,7 @@ http://localhost:8025
 
 ```text
 mailhog_link/
-├── mailhog_link_view_plugin.py
-└── README.md
+└── mailhog_link_view_plugin.py
 ```
 
 ## Notes

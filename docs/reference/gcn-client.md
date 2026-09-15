@@ -41,11 +41,12 @@ Both workers run in the `gcn-client` service. `python -m app.main run` starts
 the receiver and outbox worker in separate threads. The MySQL server runs as the
 `gcn-mysql` service and is intentionally separate from Airflow's PostgreSQL
 database. Both services are defined in
-[`../env/docker-compose.yaml`](../env/docker-compose.yaml).
+[`env/docker-compose.yaml`](https://github.com/cositools/cosiflow/blob/dev-review/env/docker-compose.yaml).
 
 ### Kafka receiver
 
-The receiver in [`app/services/inbound_service.py`](app/services/inbound_service.py):
+The receiver in
+[`gcn-client/app/services/inbound_service.py`](https://github.com/cositools/cosiflow/blob/dev-review/gcn-client/app/services/inbound_service.py):
 
 1. creates a `gcn_kafka.Consumer` with `GCN_CLIENT_ID`,
    `GCN_CLIENT_SECRET`, and `GCN_CONSUMER_GROUP_ID`;
@@ -66,7 +67,8 @@ schema are validated; notices from other missions remain available with
 ### Kafka producer
 
 The producer path in
-[`app/services/outbox_service.py`](app/services/outbox_service.py) implements a
+[`gcn-client/app/services/outbox_service.py`](https://github.com/cositools/cosiflow/blob/dev-review/gcn-client/app/services/outbox_service.py)
+implements a
 transactional-outbox-style workflow:
 
 1. a pipeline or the prototype CLI inserts a notice into
@@ -86,7 +88,9 @@ creating duplicate logical notices.
 
 ## MySQL schema
 
-The schema in [`app/db/schema.sql`](app/db/schema.sql) contains **five tables**:
+The schema in
+[`gcn-client/app/db/schema.sql`](https://github.com/cositools/cosiflow/blob/dev-review/gcn-client/app/db/schema.sql)
+contains **five tables**:
 
 | Table | Role | Important data |
 | --- | --- | --- |
@@ -107,7 +111,8 @@ The client initializes these tables automatically when
 ## Configuration
 
 Configuration is read from environment variables in
-[`app/config.py`](app/config.py). The most important groups are:
+[`gcn-client/app/config.py`](https://github.com/cositools/cosiflow/blob/dev-review/gcn-client/app/config.py).
+The most important groups are:
 
 - `GCN_CLIENT_ID`, `GCN_CLIENT_SECRET`, `GCN_DOMAIN`: GCN Kafka
   authentication;
@@ -129,7 +134,8 @@ GCN_CLIENT_SECRET=<your-gcn-client-secret>
 
 The same file normally contains the local Airflow and database passwords; do
 not replace its other entries. Never commit it or paste the secret into
-documentation or logs. See the [main setup guide](../README.md#2-store-secrets-in-env)
+documentation or logs. See the
+[configuration guide](../getting-started/configuration.md#required-secrets)
 for the complete local-secret configuration.
 
 ## Run the prototype
@@ -149,13 +155,14 @@ the client opens a connection. The container healthcheck uses application
 heartbeats and Compose applies a bounded restart policy. Airflow only displays
 this state; it has no lifecycle endpoint or Docker access.
 
-Use `../env/gcn-lifecycle.sh start|stop|restart|status` for audited local
+Use `./gcn-lifecycle.sh start|stop|restart|status` from `cosiflow/env` for audited local
 lifecycle operations. Shared deployments use the platform orchestrator and its
 native audit trail.
 
 ### Queue a sample COSI alert
 
-[`examples/cosi-alert.test.json`](examples/cosi-alert.test.json) is an example
+[`gcn-client/examples/cosi-alert.test.json`](https://github.com/cositools/cosiflow/blob/dev-review/gcn-client/examples/cosi-alert.test.json)
+is an example
 initial COSI alert. It contains event timing, sky localization, classification,
 rate/fluence information, and the set of triggered BGO shields.
 
@@ -255,7 +262,7 @@ Run commands inside the `gcn-client` container with
 
 | Command | Purpose |
 | --- | --- |
-| `init-db` | Create or verify the four MySQL tables |
+| `init-db` | Create or verify the five MySQL tables |
 | `run` | Run the inbound and outbox workers |
 | `run-inbound` | Run only the Kafka receiver |
 | `run-outbox` | Run only the outbox worker |

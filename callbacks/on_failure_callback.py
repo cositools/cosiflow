@@ -35,7 +35,7 @@ def notify_email(context):
     run_id = task.run_id
     execution_date = context.get("execution_date")
 
-    # URL-encode i parametri per sicurezza
+    # URL-encode the parameters before adding them to the query string.
     base_url = "http://localhost:8080"
     query = urllib.parse.urlencode({
         "execution_date": execution_date.isoformat(),
@@ -45,15 +45,15 @@ def notify_email(context):
     })
     log_url = f"{base_url}/dags/{dag_id}/grid?{query}"
     
-    # Percorso log locale (personalizzabile)
+    # Local log path (deployment-specific).
     log_path = f"/home/gamma/airflow/logs/dag_id={dag_id}/run_id={run_id}/task_id={task_id}/attempt=1.log"
     if not os.path.exists(log_path):
         log_preview = "⚠️ Log file not found."
     else:
         with open(log_path, "r") as f:
-            lines = f.readlines()[-30:]  # Ultime 30 righe
+            lines = f.readlines()[-30:]  # Last 30 lines
             log_preview = "".join(lines)
-            log_preview = log_preview.replace("<", "&lt;").replace(">", "&gt;")  # Escaping HTML
+            log_preview = log_preview.replace("<", "&lt;").replace(">", "&gt;")  # Escape HTML
 
     recipients = get_recipients("ALERT_FAIL")
     if not recipients:

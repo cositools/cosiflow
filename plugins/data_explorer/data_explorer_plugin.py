@@ -14,14 +14,13 @@ from shared_auth import ACTION_READ, SCIENTIFIC_DATA, require_cosiflow_permissio
 from shared_ui import add_shared_templates
 from werkzeug.exceptions import HTTPException
 
-# Get from the env variable COSI_DATA_DIR the path to the data directory if it is not set, use the default path
+# Read the data directory from COSI_DATA_DIR, falling back to the container path.
 DL0_FOLDER = os.environ.get("COSI_DATA_DIR", "/home/gamma/workspace/data")
 
-# Definiamo il percorso assoluto alla cartella del plugin
+# Resolve the absolute plugin directory.
 plugin_folder = os.path.dirname(os.path.abspath(__file__))
 
-# Blueprint con percorso assoluto a templates e static
-# Usato solo per registrare il path dei template
+# Register the template and static directories with absolute paths.
 heasarc_explorer_bp = add_shared_templates(
     Blueprint(
         "heasarc_explorer_bp",

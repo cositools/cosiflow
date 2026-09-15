@@ -1,19 +1,21 @@
-# Core DAG Reference
+# Core DAG reference
 
 The core `cosiflow` repository does not currently ship production DAG Python files in `dags/`.
 This directory is kept as the Airflow DAG mount point and as the place where module DAG symlinks are exposed after installation.
 
-Scientific workflows are supplied by external Cosiflow modules, such as `fast-transient-analysis-pipeline`, and are hot-loaded into the running Airflow environment with `env/hot_load_module.sh`.
+Scientific workflows are supplied by external COSIflow modules, such as FasTP,
+and are hot-loaded into the running Airflow environment with
+`env/hot_load_module.sh`.
 
-## What Lives In Core Cosiflow
+## What lives in core COSIflow
 
 | Area | File or directory | Purpose |
 | --- | --- | --- |
-| COSIDAG framework | `modules/cosidag.py` | Reusable Airflow DAG subclass for filesystem-driven scientific workflows |
-| Date helpers | `modules/date_helper.py` | Date parsing and filtering support for COSIDAG monitoring |
-| Failure callback | `callbacks/on_failure_callback.py` | Shared callback support for task failures |
-| Airflow plugins | `plugins/` | UI helpers such as DAG refresh, data browsing, MailHog access, and COSIDAG reset |
-| Module loader | `env/hot_load_module.sh` | Installs, updates, and removes external modules |
+| COSIDAG framework | [`modules/cosidag.py`](https://github.com/cositools/cosiflow/blob/dev-review/modules/cosidag.py) | Reusable Airflow DAG subclass for filesystem-driven scientific workflows |
+| Date helpers | [`modules/date_helper.py`](https://github.com/cositools/cosiflow/blob/dev-review/modules/date_helper.py) | Date parsing and filtering support for COSIDAG monitoring |
+| Failure callback | [`callbacks/on_failure_callback.py`](https://github.com/cositools/cosiflow/blob/dev-review/callbacks/on_failure_callback.py) | Shared callback support for task failures |
+| Airflow plugins | [`plugins/`](https://github.com/cositools/cosiflow/tree/dev-review/plugins) | UI helpers such as DAG refresh, data browsing, MailHog access, and COSIDAG reset |
+| Module loader | [`env/hot_load_module.sh`](https://github.com/cositools/cosiflow/blob/dev-review/env/hot_load_module.sh) | Installs, updates, and removes external modules |
 
 ## COSIDAG Contract
 
@@ -39,10 +41,7 @@ The shared XCom contract is:
 
 Module DAG catalogs should be maintained in the module repository, next to the DAG files they describe.
 
-For the Fast Transient Analysis Pipeline, see:
-
-```text
-../fast-transient-analysis-pipeline/src/dags/README.md
-```
+For the Fast Transient Analysis Pipeline, see the
+[FasTP repository documentation](https://github.com/cositools/fast-transient-analysis-pipeline).
 
 This separation keeps the core framework documentation stable while allowing each scientific module to document its own DAG IDs, inputs, outputs, operators, and runtime assumptions.

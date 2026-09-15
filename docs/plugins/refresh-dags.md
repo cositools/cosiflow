@@ -1,4 +1,4 @@
-# Refresh DAGs List Plugin
+# Refresh DAGs List plugin
 
 This plugin adds an authorized menu action under **Develop Tools**. It runs
 `airflow dags list`, rebuilds the DAG bag, and synchronizes parsed DAGs with the
@@ -16,10 +16,10 @@ The plugin is automatically loaded by Airflow when placed in the `plugins/` fold
 
 ## Usage
 
-1. Navigate to the Airflow web UI
-2. Open **Develop Tools → Refresh DAGs List**
-4. Confirm the POST action on the displayed page.
-5. The DAG list is refreshed and the result appears after a 303 redirect.
+1. Navigate to the Airflow web UI.
+2. Open **Develop Tools → Refresh DAGs List**.
+3. Confirm the POST action on the displayed page.
+4. The DAG list is refreshed and the result appears after a 303 redirect.
 
 ## How It Works
 
@@ -35,8 +35,7 @@ When you confirm "Refresh DAGs List":
 ```
 refresh_dags_list/
 ├── refresh_dags_plugin.py    # Main plugin file
-├── templates/refresh_dags.html
-└── README.md                  # This file
+└── templates/refresh_dags.html
 ```
 
 ## Notes

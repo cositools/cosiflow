@@ -1,4 +1,4 @@
-# Creating and managing COSIflow modules
+# COSIflow modules
 
 A COSIflow module adds DAG definitions, pipeline code, managed Python
 environments, and optionally a Docker image to a running COSIflow instance.
@@ -9,9 +9,9 @@ source trees into this repository.
 
 Before managing modules:
 
-1. configure and start COSIflow as described in
-   [`../README.md`](../README.md);
-2. keep every module directory beside `cosiflow/` in the same workspace;
+1. configure and start COSIflow as described in the
+   [installation guide](../getting-started/installation.md);
+2. keep every module directory under the workspace root computed by the loader;
 3. run `hot_load_module.sh` from the host, normally from `cosiflow/env`;
 4. generate the required ignored `cosiflow/env/.env` as documented in the main
    README; the stack intentionally fails when a credential is absent.
@@ -48,7 +48,10 @@ your-module/
 Requirement filenames are arbitrary; the YAML configuration selects them.
 
 The current Fast Transient Analysis Pipeline is a concrete multi-environment
-example:
+example. Because the loader computes its workspace root as the parent of the
+COSIflow repository and accepts a module directory name, the current runtime
+requires the module checkout to be a sibling of `cosiflow/`. This is a loader
+constraint; documentation links never rely on that checkout layout.
 
 ```text
 fast-transient-analysis-pipeline/
@@ -221,8 +224,8 @@ Add at least:
 4. requirement files for external-Python tasks;
 5. a Dockerfile only if Docker tasks need a module image.
 
-COSIDAG development is documented in
-[`../modules/README.md`](../modules/README.md).
+COSIDAG development is documented in the
+[COSIDAG reference](../reference/cosidag.md).
 
 ## Module Dockerfile
 
@@ -303,7 +306,6 @@ Run and verify twice after a rollout:
 docker compose run --rm airflow-init
 docker compose run --rm airflow-init
 docker compose run --rm --entrypoint python airflow-init /home/gamma/configure_rbac.py --verify-only
-python3 -m unittest discover -s ../tests/security -v
 ```
 
 Before assigning real users, confirm that Viewer has no `COSIflow *`

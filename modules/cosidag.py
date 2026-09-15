@@ -1137,7 +1137,7 @@ class COSIDAG(DAG):
 # Put the following into your DAG file under the Airflow 'dags/' directory.
 #
 # from datetime import datetime
-# from cosiflow.cosidag import COSIDAG
+# from cosidag import COSIDAG
 # from airflow.operators.python import PythonOperator
 #
 # def build_custom(dag):

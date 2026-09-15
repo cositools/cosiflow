@@ -9,9 +9,9 @@ FROM oraclelinux:8 AS oracle8
 RUN set -eux; \
   dnf install -y oracle-epel-release-el8; \
   dnf config-manager --enable ol8_codeready_builder; \
-  # Abilitiamo il modulo 3.9 (standard per OL8)
+  # Enable the Python 3.9 module (the standard module on OL8)
   dnf module enable -y python39; \
-  # Installiamo sia il 3.9 che il 3.11
+  # Install the supported system Python versions
   dnf install -y \
     python39 python39-devel python39-pip \
     python3.11 python3.11-devel python3.11-pip \
@@ -27,24 +27,24 @@ RUN set -eux; \
     graphviz; \
   dnf clean all; rm -rf /var/cache/dnf/*
 
-# # Aggiorna il sistema e installa i pacchetti necessari per la compilazione
+# # Update the system and install the packages needed for compilation
 # RUN dnf -y update && \
 #     dnf -y groupinstall "Development Tools" && \
 #     dnf -y install wget tar gzip gcc openssl-devel bzip2-devel libffi-devel zlib-devel sqlite-devel make
-# # Scarica i sorgenti di Python 3.10.x (es. 3.10.14)
+# # Download the Python 3.10.x sources (for example, 3.10.14)
 # ARG PYTHON_310_VERSION=3.10.14
 # RUN wget -O Python-${PYTHON_310_VERSION}.tgz \
 #       https://www.python.org/ftp/python/${PYTHON_310_VERSION}/Python-${PYTHON_310_VERSION}.tgz && \
 #     tar xzf Python-${PYTHON_310_VERSION}.tgz
-# # Configura, compila e installa Python nel sistema
+# # Configure, compile, and install Python on the system
 # RUN cd Python-${PYTHON_310_VERSION} && \
 #     ./configure --enable-optimizations --with-system-ffi --with-computed-gotos && \
 #     make -j $(nproc) && \
 #     make altinstall
-# # Pulisce i file non necessari per ridurre le dimensioni dell'immagine
+# # Remove build files to reduce the image size
 # RUN rm -rf Python-${PYTHON_310_VERSION}.tgz Python-${PYTHON_310_VERSION} && \
 #     dnf clean all
-# # Imposta il comando di default
+# # Set the default command
 # CMD ["python3.10"]
 
 # # Set python3.9 as default python

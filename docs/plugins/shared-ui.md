@@ -1,4 +1,4 @@
-# Shared plugin UI
+# Shared plugin UI resources
 
 This directory contains Jinja and CSS resources shared by the COSIflow Airflow
 plugins.

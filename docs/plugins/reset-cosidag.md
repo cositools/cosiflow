@@ -1,4 +1,4 @@
-# Reset Cosidag Plugin
+# Reset Cosidag plugin
 
 This plugin adds an authorized Airflow UI page under
 **Develop Tools → Reset Cosidag** for managing COSIDAG processed state.
@@ -52,7 +52,6 @@ not include processed paths or Variable content.
 ```text
 reset_cosidag_link/
 ├── reset_cosidag_plugin.py
-├── templates/
-│   └── reset_cosidag.html
-└── README.md
+└── templates/
+    └── reset_cosidag.html
 ```

@@ -11,6 +11,9 @@ branch after `v0.2.0`; these changes are not part of a release yet.
 
 ### Added
 
+- Added a strict, independently buildable MkDocs site for the COSIflow
+  installation, architecture, COSIDAG, plugins, GCN client, and development
+  guides.
 - Bundled a reproducible copy of the COSI and Core schemas in the GCN client
   image. A dedicated Docker build stage performs a sparse checkout of the
   `cositools/gcn-schema` repository at a pinned revision, removing the need to
@@ -21,6 +24,9 @@ branch after `v0.2.0`; these changes are not part of a release yet.
 
 ### Changed
 
+- Consolidated the technical README content under `docs/`, corrected the
+  supported `from cosidag import COSIDAG` example, and standardized the scoped
+  operator-facing comments in English.
 - Python environment creation through `hot_load_module.sh` now always removes
   and recreates the target virtual environment. Updates therefore no longer
   reuse stale editable checkouts or outdated dependencies and produce an
@@ -50,6 +56,11 @@ branch after `v0.2.0`; these changes are not part of a release yet.
   pipeline containing failed tasks as completed.
 - The MailHog redirect and DAG refresh plugin routes now explicitly require an
   authenticated Airflow session.
+
+### Removed
+
+- Removed the unreferenced experimental `modules/paths.py` helper. COSIflow's
+  supported data paths remain the `COSI_*_DIR` values configured by Compose.
 
 ## [v0.2.0] - 2026-07-14
 

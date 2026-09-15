@@ -1,4 +1,4 @@
-# COSIDAG performance test
+# COSIDAG performance testing
 
 If Python is available on the host, run from the workspace root:
 

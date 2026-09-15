@@ -1,4 +1,4 @@
-# Data Explorer Plugin
+# Data Explorer plugin
 
 This plugin adds an Airflow UI page for browsing files under the configured COSI data directory.
 
@@ -51,9 +51,8 @@ then independently resolves symlinks and rejects traversal outside
 ```text
 data_explorer/
 ├── data_explorer_plugin.py
-├── templates/
-│   └── explorer.html
-└── README.md
+└── templates/
+    └── explorer.html
 ```
 
 ## Notes
