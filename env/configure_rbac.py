@@ -98,6 +98,11 @@ def verify(security_manager):
         errors.append("Admin role is missing; FAB Admin semantics cannot be applied")
     else:
         admin_pairs = role_pairs(admin)
+        missing_admin_permissions = set(PERMISSION_MANIFEST) - admin_pairs
+        if missing_admin_permissions:
+            errors.append(
+                f"Admin is missing {len(missing_admin_permissions)} COSIflow permissions"
+            )
         missing_admin_menus = {
             (ACTION_MENU_ACCESS, menu_name)
             for menu_name in MANAGED_MENUS
@@ -154,6 +159,13 @@ def configure(security_manager, verify_only=False):
         for menu_names in MENU_MANIFEST.values():
             for menu_name in menu_names:
                 ensure_permission(security_manager, ACTION_MENU_ACCESS, menu_name)
+        admin = security_manager.find_role("Admin")
+        if admin is None:
+            raise RuntimeError("Required Airflow Admin role is missing")
+        for pair in set(PERMISSION_MANIFEST) | {
+            (ACTION_MENU_ACCESS, menu_name) for menu_name in MANAGED_MENUS
+        }:
+            add_pair(security_manager, admin, pair)
         for role_name, (base_name, permissions) in MANAGED_ROLES.items():
             reconcile_role(security_manager, role_name, base_name, permissions)
     verify(security_manager)
