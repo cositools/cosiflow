@@ -51,4 +51,5 @@ nav:
       - Reset COSIDAG: plugins/reset-cosidag.md
       - Shared UI: plugins/shared-ui.md
   - Development:
+      - Regression testing: development/regression-testing.md
       - Performance testing: development/performance-testing.md
