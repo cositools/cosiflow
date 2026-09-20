@@ -1,7 +1,8 @@
 """
 COSIDAG — a convenience DAG subclass that wires a standard layout:
 
-  1) check_new_file  ->  2) automatic_retrig  ->  3) resolve_inputs  ->  4) [custom tasks]  ->  5) show_results
+  1) check_new_file -> 2) automatic_retrig -> 3) resolve_inputs ->
+  4) [custom tasks] -> 5) show_results -> 6) finalize_cosidag_state
 
 This implementation supports disabling optional steps:
 
@@ -14,11 +15,10 @@ Notes
 ------
 * Requires Airflow 2.x.
 * Environment: define COSIFLOW_HOME_URL (in your .env) to point to the web UI homepage.
-* State: a Variable named f"COSIDAG_PROCESSED::{dag_id}" is used to track processed
+* State: a transactional PostgreSQL table tracks claimed, failed, and successful
   paths across runs. In folder-driven mode it stores folder paths; in file-driven
-  mode it stores file paths.
-  * To clear the processed paths, delete the Variable, with the command:
-    airflow variables set COSIDAG_PROCESSED::{cosidag_id} []
+  mode it stores file paths. Legacy ``COSIDAG_PROCESSED::<dag_id>`` Variables are
+  imported during ``airflow-init`` and retained only as rollback evidence.
 * Date queries: use date_queries (e.g. '>=2025-11-01' or ['>=2025-11-01','<=2025-11-05']).
 * Only basename: if only_basename is provided, it only accepts candidate paths with the given basename.
 * Prefer deepest: if prefer_deepest is True, it prefers the deepest subfolder.
@@ -30,7 +30,6 @@ Notes
 from __future__ import annotations
 
 import os
-import json
 import re
 import time
 from datetime import datetime
@@ -38,6 +37,7 @@ from typing import Callable, Iterable, Optional, Sequence
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from airflow import DAG
+from airflow.exceptions import AirflowException, AirflowFailException, DagRunAlreadyExists
 from airflow.models import Variable
 from airflow.models.param import Param
 from airflow.operators.empty import EmptyOperator
@@ -62,6 +62,14 @@ sys.path.append(os.path.join(airflow_home, "modules"))
 from on_failure_callback import notify_email  # type: ignore
 
 from date_helper import _looks_like_date_folder, _parse_date_string, _apply_date_queries  # type: ignore
+from cosidag_runtime import automatic_retrigger_run_id, build_successor_conf, normalize_run_conf  # type: ignore
+from cosidag_state import (  # type: ignore
+    claim_path,
+    list_unavailable_paths,
+    mark_path_failed,
+    mark_path_succeeded,
+    release_orphaned_claims,
+)
 
 _BASE_DEFAULT_ARGS = {
     "owner": "cosiflow",
@@ -236,22 +244,6 @@ def _date_filter_ok(path: str, date_queries) -> bool:
     return _apply_date_queries(ref_date, date_queries)
 
 
-def _load_processed_set(dag_id: str) -> set:
-    """Load processed paths set from Airflow Variable."""
-    key = f"COSIDAG_PROCESSED::{dag_id}"
-    raw = Variable.get(key, default_var="[]")
-    try:
-        return set(json.loads(raw))
-    except Exception:
-        return set()
-
-
-def _save_processed_set(dag_id: str, processed: set) -> None:
-    """Save processed paths set to Airflow Variable."""
-    key = f"COSIDAG_PROCESSED::{dag_id}"
-    Variable.set(key, json.dumps(sorted(processed)))
-
-
 def _find_new_folder(
     monitoring_folders: Iterable[str],
     level: int,
@@ -259,6 +251,7 @@ def _find_new_folder(
     date_queries: Optional[str | list[str]] = None,
     only_basename: Optional[str] = None,
     prefer_deepest: bool = True,
+    owner_run_id: Optional[str] = None,
 ) -> Optional[str]:
     """Return the first new folder across roots (filtered & depth-limited)."""
     print(
@@ -271,8 +264,8 @@ def _find_new_folder(
         return None
 
     print(f"[COSIDAG] _find_new_folder: monitoring {len(roots)} root folder(s): {', '.join(roots)}")
-    processed = _load_processed_set(dag_id)
-    print(f"[COSIDAG] _find_new_folder: loaded {len(processed)} already processed folder(s)")
+    unavailable = list_unavailable_paths(dag_id, owner_run_id=owner_run_id)
+    print(f"[COSIDAG] _find_new_folder: loaded {len(unavailable)} unavailable folder(s)")
 
     candidates: list[str] = []
     for root in sorted(roots):
@@ -299,11 +292,11 @@ def _find_new_folder(
         print("[COSIDAG] _find_new_folder: sorted candidates alphabetically")
 
     for path in candidates:
-        if path not in processed:
+        if path not in unavailable:
             print(f"[COSIDAG] _find_new_folder: found new folder: {path}")
             return path
 
-    print(f"[COSIDAG] _find_new_folder: all {len(candidates)} candidate(s) already processed")
+    print(f"[COSIDAG] _find_new_folder: all {len(candidates)} candidate(s) unavailable")
     return None
 
 
@@ -312,6 +305,7 @@ def _find_new_file(
     dag_id: str,
     date_queries: Optional[str | list[str]] = None,
     only_basename: Optional[str] = None,
+    owner_run_id: Optional[str] = None,
 ) -> Optional[str]:
     """Return the first new direct child file across roots."""
     print(
@@ -324,8 +318,8 @@ def _find_new_file(
         return None
 
     print(f"[COSIDAG] _find_new_file: monitoring {len(roots)} root folder(s): {', '.join(roots)}")
-    processed = _load_processed_set(dag_id)
-    print(f"[COSIDAG] _find_new_file: loaded {len(processed)} already processed file(s)")
+    unavailable = list_unavailable_paths(dag_id, owner_run_id=owner_run_id)
+    print(f"[COSIDAG] _find_new_file: loaded {len(unavailable)} unavailable file(s)")
 
     candidates: list[str] = []
     for root in sorted(roots):
@@ -343,11 +337,11 @@ def _find_new_file(
 
     print(f"[COSIDAG] _find_new_file: {len(candidates)} candidate file(s) after filtering")
     for path in sorted(candidates):
-        if path not in processed:
+        if path not in unavailable:
             print(f"[COSIDAG] _find_new_file: found new file: {path}")
             return path
 
-    print(f"[COSIDAG] _find_new_file: all {len(candidates)} candidate(s) already processed")
+    print(f"[COSIDAG] _find_new_file: all {len(candidates)} candidate(s) unavailable")
     return None
 
 
@@ -439,7 +433,9 @@ class ConditionalTriggerDagRunOperator(TriggerDagRunOperator):
 
     def execute(self, context):
         dag_run = context.get("dag_run")
-        conf = (dag_run.conf or {}) if dag_run else {}
+        if dag_run is None:
+            raise AirflowException("automatic_retrig requires a DagRun context")
+        conf = normalize_run_conf(dag_run.conf)
 
         # Check runtime override
         val = conf.get("auto_retrig")
@@ -452,7 +448,7 @@ class ConditionalTriggerDagRunOperator(TriggerDagRunOperator):
                 print(f"[COSIDAG] Skipping automatic_retrig (dag_run.conf['auto_retrig']={val})")
                 return None
 
-        # Check run counter limit (before increment, which happens in the template).
+        # Check run counter limit before building the successor configuration.
         # Empty strings from the Trigger UI mean "no limit".
         max_retrig_runs = _normalize_optional_int(
             conf.get("max_retrig_runs", self.max_retrig_runs),
@@ -461,12 +457,27 @@ class ConditionalTriggerDagRunOperator(TriggerDagRunOperator):
         if max_retrig_runs is not None:
             run_count = conf.get("retrig_run_count", 0)
             run_count = int(run_count) if isinstance(run_count, (int, str)) else 0
-            
+
             if run_count >= max_retrig_runs:
                 print(f"[COSIDAG] Skipping automatic_retrig (reached max_retrig_runs={max_retrig_runs}, current_count={run_count})")
                 return None
 
-        return super().execute(context)
+        self.trigger_run_id = automatic_retrigger_run_id(
+            dag_id=self.trigger_dag_id,
+            source_run_id=dag_run.run_id,
+            task_id=self.task_id,
+        )
+        self.conf = build_successor_conf(conf)
+        try:
+            return super().execute(context)
+        except DagRunAlreadyExists:
+            # A retry after an ambiguous worker failure must continue the current
+            # scientific chain instead of creating a duplicate successor.
+            self.log.info(
+                "Successor DagRun %s already exists; treating the retrigger as idempotent",
+                self.trigger_run_id,
+            )
+            return None
 
 
 # ---- COSIDAG --------------------------------------------------------------------
@@ -475,7 +486,8 @@ class ConditionalTriggerDagRunOperator(TriggerDagRunOperator):
 class COSIDAG(DAG):
     """
     DAG subclass that wires:
-      check_new_file -> automatic_retrig -> resolve_inputs -> [custom] -> show_results
+      check_new_file -> automatic_retrig -> resolve_inputs -> [custom] ->
+      show_results -> finalize_cosidag_state
 
     Optional steps can be disabled:
       - check_new_file is not created if monitoring_folders is empty.
@@ -504,6 +516,7 @@ class COSIDAG(DAG):
         default_args_extra: Optional[dict] = None,
         auto_retrig: bool = True,
         max_retrig_runs: Optional[int] = None,
+        claim_stale_seconds: int = 86400,
         *args,
         **kwargs,
     ) -> None:
@@ -549,6 +562,7 @@ class COSIDAG(DAG):
             "concurrency": int(kwargs.get("concurrency", 8)),
             "auto_retrig": bool(auto_retrig),
             "max_retrig_runs": _normalize_optional_int(max_retrig_runs, "max_retrig_runs"),
+            "claim_stale_seconds": int(claim_stale_seconds),
         }
 
         # Base params (can be overridden by dag_run.conf at runtime)
@@ -638,11 +652,17 @@ class COSIDAG(DAG):
                     "" if self.cosidag_defaults["max_retrig_runs"] is None else self.cosidag_defaults["max_retrig_runs"],
                     "Optional safety limit for automatic retriggers. Leave this field empty for no limit.",
                 ),
+                "claim_stale_seconds": _param(
+                    self.cosidag_defaults["claim_stale_seconds"],
+                    "Minimum age before a claim whose owning DagRun is no longer active may be recovered.",
+                ),
             }
         )
 
         self.auto_retrig = bool(auto_retrig)
         self.max_retrig_runs = self.cosidag_defaults["max_retrig_runs"]
+        if self.cosidag_defaults["claim_stale_seconds"] <= 0:
+            raise ValueError("claim_stale_seconds must be positive")
 
         print(
             "[COSIDAG] enabled: "
@@ -657,7 +677,10 @@ class COSIDAG(DAG):
         # ---------------------------------------------------------------------
 
         def _sensor_poke(ti, **context):
-            conf = (context.get("dag_run").conf or {}) if context.get("dag_run") else {}
+            dag_run = context.get("dag_run")
+            if dag_run is None:
+                raise AirflowException("check_new_file requires a DagRun context")
+            conf = normalize_run_conf(dag_run.conf)
             defaults = self.cosidag_defaults
             monitoring = conf.get("monitoring_folders", defaults["monitoring_folders"])
             level_val = int(conf.get("level", defaults["level"]))
@@ -680,6 +703,10 @@ class COSIDAG(DAG):
             selected_policy = _normalize_monitoring_policy(
                 conf.get("monitoring_policy", conf.get("policy", defaults.get("policy", "folder-driven")))
             )
+            claim_stale_s = int(
+                conf.get("claim_stale_seconds", defaults["claim_stale_seconds"])
+            )
+            release_orphaned_claims(self.dag_id, claim_stale_s)
 
             if selected_policy == "file-driven":
                 new_path = _find_new_file(
@@ -687,6 +714,7 @@ class COSIDAG(DAG):
                     dag_id=self.dag_id,
                     date_queries=conf_date_queries,
                     only_basename=only_bn,
+                    owner_run_id=dag_run.run_id,
                 )
             else:
                 new_path = _find_new_folder(
@@ -696,6 +724,7 @@ class COSIDAG(DAG):
                     dag_id=self.dag_id,
                     only_basename=only_bn,
                     prefer_deepest=prefer_deep,
+                    owner_run_id=dag_run.run_id,
                 )
 
             print(f"[COSIDAG] _sensor_poke: policy={selected_policy}, new_path={new_path}")
@@ -715,7 +744,16 @@ class COSIDAG(DAG):
             elif not _is_dir_stable(new_path, idle_seconds=idle_s, min_files=min_f):
                 return False
 
-            print("[COSIDAG] _sensor_poke: pushing detected path to XCom")
+            if not claim_path(
+                dag_id=self.dag_id,
+                path=new_path,
+                owner_run_id=dag_run.run_id,
+                monitoring_policy=selected_policy,
+            ):
+                print(f"[COSIDAG] _sensor_poke: path claimed by another run: {new_path}")
+                return False
+
+            print("[COSIDAG] _sensor_poke: claimed path and pushing it to XCom")
             ti.xcom_push(key="detected_path", value=new_path)
             ti.xcom_push(key="monitoring_policy", value=selected_policy)
             if selected_policy == "file-driven":
@@ -723,9 +761,6 @@ class COSIDAG(DAG):
                 ti.xcom_push(key="detected_folder", value=os.path.dirname(new_path))
             else:
                 ti.xcom_push(key="detected_folder", value=new_path)
-            processed = _load_processed_set(self.dag_id)
-            processed.add(new_path)
-            _save_processed_set(self.dag_id, processed)
             return True
 
         check_new_file = None
@@ -747,35 +782,16 @@ class COSIDAG(DAG):
         # 2) automatic_retrig — Trigger this same DAG again (optional)
         # ---------------------------------------------------------------------
 
-        def _unique_run_id() -> str:
-            ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ")
-            return f"auto::{self.dag_id}::{ts}"
-
         automatic_retrig = None
         if self.auto_retrig:
-            import inspect
-
             trig_kwargs = {
                 "task_id": "automatic_retrig",
                 "trigger_dag_id": self.dag_id,
                 "reset_dag_run": False,
                 "wait_for_completion": False,
+                "conf": {},
                 "dag": self,
             }
-
-            # Propagate conf from previous run and increment the retrigger counter.
-            trig_kwargs["conf"] = """{% set current_conf = dag_run.conf if dag_run and dag_run.conf else {} %}
-{% set run_count = current_conf.get('retrig_run_count', 0) | int %}
-{% set new_conf = current_conf.copy() %}
-{% set _ = new_conf.update({'retrig_run_count': run_count + 1}) %}
-{{ new_conf | tojson }}"""
-
-            # Airflow version differences
-            params = inspect.signature(TriggerDagRunOperator.__init__).parameters
-            if "trigger_run_id" in params:
-                trig_kwargs["trigger_run_id"] = _unique_run_id()
-            elif "run_id" in params:
-                trig_kwargs["run_id"] = _unique_run_id()
 
             trig_kwargs["max_retrig_runs"] = self.max_retrig_runs
             automatic_retrig = ConditionalTriggerDagRunOperator(**trig_kwargs)
@@ -789,12 +805,11 @@ class COSIDAG(DAG):
         resolve_inputs = None
         if file_patterns:
             import glob
-            from airflow.exceptions import AirflowFailException
 
             def _resolve_inputs(**context):
                 ti = context["ti"]
                 dag_run = context.get("dag_run")
-                conf = (dag_run.conf or {}) if dag_run else {}
+                conf = normalize_run_conf(dag_run.conf) if dag_run else {}
 
                 # Prefer XCom from check_new_file, but allow manual runs by passing detected_folder in conf.
                 run_dir = None
@@ -952,7 +967,7 @@ class COSIDAG(DAG):
         def _show_results(**context):
             ti = context["ti"]
             dag_run = context.get("dag_run")
-            conf = (dag_run.conf or {}) if dag_run else {}
+            conf = normalize_run_conf(dag_run.conf) if dag_run else {}
 
             # -------------------------------------------------
             # 1) Retrieve detected path
@@ -1085,6 +1100,54 @@ class COSIDAG(DAG):
         )
 
         # ---------------------------------------------------------------------
+        # 6) finalize_cosidag_state — Commit only completed scientific work
+        # ---------------------------------------------------------------------
+        finalize_cosidag_state = None
+        if check_new_file is not None:
+            def _finalize_cosidag_state(**context):
+                ti = context["ti"]
+                dag_run = context["dag_run"]
+                detected_path = ti.xcom_pull(
+                    task_ids="check_new_file",
+                    key="detected_path",
+                )
+                show_results_ti = dag_run.get_task_instance(task_id="show_results")
+                show_results_state = getattr(show_results_ti, "state", None)
+
+                if show_results_state == "success":
+                    if not detected_path:
+                        raise AirflowFailException(
+                            "COSIDAG succeeded without a detected path to finalize"
+                        )
+                    if not mark_path_succeeded(
+                        self.dag_id,
+                        detected_path,
+                        dag_run.run_id,
+                    ):
+                        raise AirflowFailException(
+                            "COSIDAG state claim is missing or owned by another run"
+                        )
+                    return {"path": detected_path, "status": "succeeded"}
+
+                if detected_path:
+                    mark_path_failed(
+                        self.dag_id,
+                        detected_path,
+                        dag_run.run_id,
+                        f"show_results state={show_results_state or 'missing'}",
+                    )
+                raise AirflowFailException(
+                    "Required COSIDAG work did not succeed; the input remains retryable"
+                )
+
+            finalize_cosidag_state = PythonOperator(
+                task_id="finalize_cosidag_state",
+                python_callable=_finalize_cosidag_state,
+                trigger_rule=TriggerRule.ALL_DONE,
+                dag=self,
+            )
+
+        # ---------------------------------------------------------------------
         # Wiring — Build a robust chain depending on what exists.
         # ---------------------------------------------------------------------
 
@@ -1119,8 +1182,12 @@ class COSIDAG(DAG):
             # No monitoring, no retrigger, no resolve_inputs: run custom (or placeholder) then show results.
             last_custom >> show_results
 
+        if finalize_cosidag_state is not None:
+            show_results >> finalize_cosidag_state
+
         # Expose handles
         self.show_results = show_results
+        self.finalize_cosidag_state = finalize_cosidag_state
 
     def find_file_by_pattern(self, pattern: str, detected_folder: str) -> Optional[str]:
         """Find the first file matching the given regex pattern under detected_folder."""

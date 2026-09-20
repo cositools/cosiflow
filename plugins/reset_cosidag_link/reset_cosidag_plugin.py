@@ -1,10 +1,10 @@
 import os
-import json
 import logging
+import sys
 from flask import Blueprint, request, flash, redirect, url_for, jsonify
 from flask_appbuilder import BaseView, expose
 from airflow.plugins_manager import AirflowPlugin
-from airflow.models import Variable, DagModel
+from airflow.models import DagModel
 from airflow.utils.session import provide_session
 from shared_auth import (
     ACTION_EDIT,
@@ -15,6 +15,14 @@ from shared_auth import (
     require_cosiflow_permission,
 )
 from shared_ui import add_shared_templates
+
+airflow_home = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
+sys.path.append(os.path.join(airflow_home, "modules"))
+from cosidag_state import (  # type: ignore
+    delete_processed_paths as delete_state_paths,
+    list_processed_paths,
+    reset_processed_paths,
+)
 
 # Define the absolute path to the plugin folder
 plugin_folder = os.path.dirname(os.path.abspath(__file__))
@@ -71,15 +79,19 @@ class ResetCosidagView(BaseView):
             return jsonify({"error": "Unknown or inactive DAG."}), 404
 
         try:
-            Variable.set(f"COSIDAG_PROCESSED::{dag_id}", [], serialize_json=True)
+            removed_count = reset_processed_paths(dag_id)
             logger.info(
-                "cosiflow_mutation user=%s action=%s resource=%s dag_id=%s mutation=reset_all result=success",
+                "cosiflow_mutation user=%s action=%s resource=%s dag_id=%s mutation=reset_all removed_count=%s result=success",
                 current_airflow_username(),
                 ACTION_EDIT,
                 COSIDAG_STATE,
                 dag_id,
+                removed_count,
             )
-            flash(f"Successfully reset processed paths for {dag_id}.", "success")
+            flash(
+                f"Successfully reset {removed_count} processed path(s) for {dag_id}.",
+                "success",
+            )
         except Exception:
             logger.exception(
                 "cosiflow_mutation user=%s action=%s resource=%s dag_id=%s mutation=reset_all result=failure",
@@ -97,17 +109,8 @@ class ResetCosidagView(BaseView):
         if not is_active_dag(dag_id):
             return jsonify({"error": "Unknown or inactive DAG."}), 404
         try:
-            variable_key = f"COSIDAG_PROCESSED::{dag_id}"
-            # Get the variable, default to empty list string if not found
-            val_str = Variable.get(variable_key, default_var="[]")
-            try:
-                val = json.loads(val_str)
-                if not isinstance(val, list):
-                    val = []
-            except json.JSONDecodeError:
-                val = []
-            
-            return jsonify({"folders": val, "paths": val})
+            paths = list_processed_paths(dag_id)
+            return jsonify({"folders": paths, "paths": paths})
         except Exception:
             logger.exception("cosiflow_cosidag_state_read_failed dag_id=%s", dag_id)
             return jsonify({"error": "Unable to read processed paths."}), 500
@@ -130,18 +133,8 @@ class ResetCosidagView(BaseView):
             if not selected_set:
                 return jsonify({"error": "No processed paths selected."}), 400
 
-            variable_key = f"COSIDAG_PROCESSED::{dag_id}"
-            val_str = Variable.get(variable_key, default_var="[]")
-            try:
-                current_paths = json.loads(val_str)
-                if not isinstance(current_paths, list):
-                    current_paths = []
-            except json.JSONDecodeError:
-                current_paths = []
-
-            remaining_paths = [path for path in current_paths if str(path) not in selected_set]
-            removed_count = len(current_paths) - len(remaining_paths)
-            Variable.set(variable_key, remaining_paths, serialize_json=True)
+            removed_count = delete_state_paths(dag_id, selected_set)
+            remaining_paths = list_processed_paths(dag_id)
 
             logger.info(
                 "cosiflow_mutation user=%s action=%s resource=%s dag_id=%s mutation=delete_paths removed_count=%s result=success",

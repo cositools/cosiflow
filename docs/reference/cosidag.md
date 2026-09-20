@@ -14,6 +14,7 @@ check_new_file
   -> resolve_inputs
   -> custom task roots ... custom task leaves
   -> show_results
+  -> finalize_cosidag_state
 ```
 
 - `check_new_file` exists only when `monitoring_folders` is non-empty.
@@ -21,6 +22,8 @@ check_new_file
 - `resolve_inputs` exists only when `file_patterns` is non-empty.
 - the custom graph is created by `build_custom(dag)`;
 - `show_results` records the final detected path and optional browser URL.
+- `finalize_cosidag_state` records success only after the required chain has
+  succeeded; on failure it releases the claim for a later retry.
 
 The automatic retrigger task starts the next watcher run before the current run
 enters the scientific graph. `max_active_runs`, `max_active_tasks`, and
@@ -103,8 +106,9 @@ default. Standard Airflow `DAG` arguments such as `dag_id`, `start_date`,
 | `default_args_extra` | `None` | Overrides/extensions for task default arguments |
 | `auto_retrig` | `True` | Create the self-retrigger task |
 | `max_retrig_runs` | unlimited | Maximum number of automatic successor runs |
+| `claim_stale_seconds` | `86400` | Minimum age before an orphaned claim may be recovered after its owning DagRun is no longer active |
 
-The processed-variable name and detected XCom keys are fixed by the current
+The detected XCom keys and transactional state schema are fixed by the current
 implementation; there are no `processed_variable`, `xcom_detected_key`, or
 `builder_fn` aliases.
 
@@ -124,11 +128,9 @@ check_new_file.detected_folder
 check_new_file.monitoring_policy = folder-driven
 ```
 
-The accepted directory is stored in:
-
-```text
-COSIDAG_PROCESSED::<dag_id>
-```
+The accepted directory is claimed transactionally. It becomes processed only
+after `finalize_cosidag_state` confirms that `show_results` and its required
+upstream chain succeeded.
 
 ### File-driven
 
@@ -157,8 +159,8 @@ check_new_file.detected_folder
 check_new_file.monitoring_policy = file-driven
 ```
 
-The accepted file, not its parent directory, is stored in the processed
-variable.
+The accepted file, not its parent directory, is stored in the transactional
+state table after successful finalization.
 
 ## Input resolution
 
@@ -199,7 +201,7 @@ Runtime overrides currently supported by the sensor are:
 - `policy` or `monitoring_policy`.
 
 `automatic_retrig` also reads `auto_retrig` and `max_retrig_runs` from
-`dag_run.conf`.
+`dag_run.conf`. The sensor also reads `claim_stale_seconds`.
 
 The current `resolve_inputs` task uses the `file_patterns` and `select_policy`
 captured when the DAG is parsed. `home_env_var` and Airflow concurrency limits
@@ -226,22 +228,57 @@ When `file_patterns` is configured, trigger the DAG with a valid directory:
 When no monitoring task exists, `show_results` can also read `detected_path`,
 `detected_file`, or `detected_folder` from the run configuration.
 
-## Processed-path state
+## Transactional input state
 
-Inspect, reset, or delete the state from inside the Airflow container:
+COSIDAG stores one row per `(dag_id, path)` in
+`cosiflow_cosidag_state`. The primary key lets PostgreSQL arbitrate concurrent
+claims instead of relying on a shared JSON document.
 
-```bash
-airflow variables get 'COSIDAG_PROCESSED::<dag_id>'
-airflow variables set 'COSIDAG_PROCESSED::<dag_id>' '[]'
-airflow variables delete 'COSIDAG_PROCESSED::<dag_id>'
-```
+| State | Meaning | Eligible for a new claim |
+| --- | --- | --- |
+| `claimed` | A specific DagRun owns the input | No, except for an idempotent retry by the same run |
+| `succeeded` | The required scientific chain completed | No |
+| `failed` | The owning run did not complete successfully | Yes |
 
-The Airflow menu **Develop Tools → Reset Cosidag** provides the same reset plus
-selective deletion of individual paths.
+The sensor first checks readiness and then atomically claims the path. It writes
+XCom only after the claim succeeds. `finalize_cosidag_state` changes the owning
+claim to `succeeded` after `show_results` succeeds. If the upstream chain fails,
+the finalizer marks the claim `failed` and fails itself so that the DagRun keeps
+the correct failure status.
 
-Disabling automatic retriggering does not remove processed-state filtering. To
-run a monitored path again, reset or selectively remove it before triggering
-the DAG.
+Stale claims are recovered only when both conditions hold:
+
+1. the claim is older than `claim_stale_seconds`;
+2. its owning DagRun is no longer `queued` or `running`.
+
+The Airflow menu **Develop Tools → Reset Cosidag** lists only `succeeded` rows.
+A reset or selective deletion removes successful history but never steals an
+active claim. Disabling automatic retriggering does not disable this filtering.
+
+### Legacy Variable migration
+
+During `airflow-init`, after `airflow db migrate`, COSIflow applies
+`env/migrations/001_cosidag_state.sql` and imports every valid
+`COSIDAG_PROCESSED::<dag_id>` JSON list as `succeeded` rows. Each DAG migration
+is recorded in `cosiflow_cosidag_state_migration`, making repeated init runs
+idempotent.
+
+Legacy Variables are retained for rollback evidence but are no longer read or
+written at runtime. Invalid JSON or values that are not lists of strings stop
+initialization instead of silently discarding state.
+
+## Automatic retrigger idempotency
+
+`automatic_retrig` derives a UUID v5 during task execution from the target DAG,
+source `run_id`, and task ID. Different source runs therefore receive different
+successor IDs, while retrying the same task produces the same ID. If the
+successor was created before an ambiguous worker failure, a retry treats
+`DagRunAlreadyExists` as an idempotent success and continues the current
+scientific chain.
+
+Successor `conf` is constructed as a Python dictionary at runtime. The helper
+increments `retrig_run_count` without mutating the source configuration and can
+read the JSON-string form produced by older serialized DAGs during migration.
 
 ## Final result
 

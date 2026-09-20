@@ -7,8 +7,8 @@
 <div class="cosiflow-page cosiflow-page--contained">
     <h2 class="cosiflow-page-title">Reset COSIDAG Processed State</h2>
     <p>
-        This tool resets the <code>COSIDAG_PROCESSED::{dag_id}</code> variable for a specific COSIDAG.<br>
-        This variable tracks processed paths across runs to avoid reprocessing. Folder-driven COSIDAGs store folder paths; file-driven COSIDAGs store file paths.
+        This tool manages paths that completed their COSIDAG scientific workflow successfully.<br>
+        Active claims are not reset. Folder-driven COSIDAGs store folder paths; file-driven COSIDAGs store file paths.
     </p>
     
     <hr>
@@ -24,7 +24,7 @@
     {% endwith %}
 
     <div class="panel panel-default">
-        <div class="panel-heading">Reset Variable</div>
+        <div class="panel-heading">Reset Processed State</div>
         <div class="panel-body">
             <form method="post" action="{{ url_for('ResetCosidagView.reset_all_processed_paths') }}">
                 {% if csrf_token %}
@@ -41,7 +41,7 @@
                 </div>
                 {% if can_edit_state %}
                 <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to reset the processed state for this DAG? This action cannot be undone.');">
-                    <span class="glyphicon glyphicon-refresh" aria-hidden="true"></span> Reset Variable
+                    <span class="glyphicon glyphicon-refresh" aria-hidden="true"></span> Reset Processed State
                 </button>
                 {% endif %}
             </form>

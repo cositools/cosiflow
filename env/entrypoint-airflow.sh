@@ -42,6 +42,9 @@ run_init() {
     configure_runtime
     log "Validated runtime secrets before database migration."
     airflow db migrate
+    python /home/gamma/airflow/modules/cosidag_state.py migrate \
+        --sql /home/gamma/migrations/001_cosidag_state.sql
+    log "COSIDAG transactional state schema and legacy migration completed."
     python /home/gamma/reencrypt_airflow_secrets.py
     airflow sync-perm
 

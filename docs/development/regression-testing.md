@@ -40,10 +40,33 @@ report an explicit skip when that dependency is unavailable.
 | `tests/security/test_endpoint_matrix.py` | Review 6 | Complete route-to-permission coverage, POST-only mutations, least-privilege manifests, and CSRF tokens in mutating forms and requests |
 | `tests/security/test_configure_rbac.py` | Review 6 | Viewer isolation, Scientist/Operator/Admin provisioning, stale-permission removal, verification failures, and idempotent reconciliation |
 | `tests/test_issue18_contracts.py` | Review 18 | Removal of the unused paths module and the supported COSIDAG import contract |
+| `tests/test_review8_cosidag_state.py` | Review 8 | Runtime retrigger identity/configuration, transactional schema, claim/finalization wiring, migration, and reset-plugin contracts |
+| `tests/integration/test_review8_postgres.py` | Review 8 | Real PostgreSQL uniqueness, concurrent claims, failure recovery, idempotent finalization, and reset isolation |
 
 `tests/security/support.py` and `tests/security/auth_support.py` provide
 repository-path, script-loading, and Auth Manager test doubles; they do not
 contain test cases.
+
+## Review 8 transactional-state tests
+
+The Review 8 unit/contract suite is part of the ordinary command above and has
+no optional dependencies. Run it alone with:
+
+```bash
+python3 -m unittest tests.test_review8_cosidag_state -v
+```
+
+The PostgreSQL integration suite uses a disposable Compose project backed by a
+`tmpfs`. It applies the schema twice to verify idempotency and removes the
+container and volume after the run:
+
+```bash
+COSIFLOW_RUN_REVIEW8_POSTGRES_TESTS=1 \
+  python3 -m unittest tests.integration.test_review8_postgres -v
+```
+
+Docker and Compose are required only for this focused integration suite. It
+does not connect to the development or production COSIflow databases.
 
 ## Review 5 safety model
 
