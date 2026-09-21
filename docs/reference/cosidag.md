@@ -93,8 +93,10 @@ default. Standard Airflow `DAG` arguments such as `dag_id`, `start_date`,
 | `build_custom` | `None` | Callable that attaches scientific tasks |
 | `sensor_poke_seconds` | `30` | Sensor polling interval |
 | `sensor_timeout_seconds` | six hours | Sensor timeout |
+| `input_poke_seconds` | `120` | Input-pattern readiness polling interval |
+| `input_timeout_seconds` | 30 minutes | Input-pattern readiness timeout |
 | `home_env_var` | `COSIFLOW_HOME_URL` | Environment variable used by `show_results` |
-| `idle_seconds` | `20` | Minimum age since the latest write |
+| `idle_seconds` | `20` | Minimum time for size and mtime metadata to remain unchanged |
 | `min_files` | `1` | Minimum recursive file count in folder-driven mode |
 | `ready_marker` | `None` | Required marker filename in folder-driven mode |
 | `only_basename` | `None` | Exact candidate folder or file basename |
@@ -117,8 +119,16 @@ implementation; there are no `processed_variable`, `xcom_detected_key`, or
 ### Folder-driven
 
 For every monitoring root, the sensor scans child directories up to `level`,
-then applies date, basename, processed-state, depth, marker, minimum-file, and
-stability checks.
+then applies date, basename, processed-state, depth, optional marker,
+minimum-file, and stability checks. The sensor runs in `reschedule` mode, so it
+releases its worker slot between checks.
+
+Stability requires two or more observations of the same directory snapshot.
+The recursive file count, total size, latest nanosecond mtime, and a digest of
+relative paths, sizes, and mtimes must remain unchanged for at least
+`idle_seconds`. The optional `ready_marker` remains an additional producer
+contract when configured; it is not required by default and does not replace
+the metadata stability window.
 
 On success it publishes:
 
@@ -136,6 +146,9 @@ upstream chain succeeded.
 
 File-driven mode checks only direct child files of each monitoring root.
 `level`, `prefer_deepest`, `ready_marker`, and `min_files` do not apply.
+Readiness requires the selected file's size and nanosecond mtime to remain
+unchanged for at least `idle_seconds`. The rescheduling sensor releases its
+worker slot between observations.
 
 ```python
 with COSIDAG(
@@ -174,14 +187,18 @@ file_patterns={
 }
 ```
 
-- ordinary values use recursive glob syntax;
+- ordinary values use recursive filename glob syntax, or relative-path glob
+  syntax when the pattern contains a path separator;
 - values beginning with `regex:` are matched against each basename with
   `re.match`;
 - `first` selects the lexicographically first path;
 - `latest_mtime` selects the path with the newest modification time;
 - a missing required match fails `resolve_inputs`;
-- before publishing XComs, the task waits until every selected file can be
-  opened.
+- one recursive inventory is shared by every configured pattern;
+- the selected files' size and nanosecond mtime must remain unchanged for at
+  least `idle_seconds` before XComs are published;
+- readiness uses a `PythonSensor` in `reschedule` mode, so no Python operator
+  sleeps while holding a worker slot.
 
 The selected paths are published under the supplied mapping keys. The detected
 folder is also republished as `resolve_inputs.run_dir`.
@@ -203,10 +220,10 @@ Runtime overrides currently supported by the sensor are:
 `automatic_retrig` also reads `auto_retrig` and `max_retrig_runs` from
 `dag_run.conf`. The sensor also reads `claim_stale_seconds`.
 
-The current `resolve_inputs` task uses the `file_patterns` and `select_policy`
-captured when the DAG is parsed. `home_env_var` and Airflow concurrency limits
-are likewise parse-time settings. Change these in the DAG source rather than in
-the Trigger form.
+The current `resolve_inputs` task uses `file_patterns`, `select_policy`,
+`input_poke_seconds`, and `input_timeout_seconds` captured when the DAG is
+parsed. `home_env_var` and Airflow concurrency limits are likewise parse-time
+settings. Change these in the DAG source rather than in the Trigger form.
 
 ## Manual-only DAGs
 

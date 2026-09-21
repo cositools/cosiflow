@@ -63,6 +63,13 @@ from on_failure_callback import notify_email  # type: ignore
 
 from date_helper import _looks_like_date_folder, _parse_date_string, _apply_date_queries  # type: ignore
 from cosidag_runtime import automatic_retrigger_run_id, build_successor_conf, normalize_run_conf  # type: ignore
+from cosidag_filesystem import (  # type: ignore
+    directory_snapshot,
+    file_snapshot,
+    resolve_patterns,
+    scan_file_inventory,
+    stability_observation,
+)
 from cosidag_state import (  # type: ignore
     claim_path,
     list_unavailable_paths,
@@ -130,42 +137,18 @@ def _param(default, description: str) -> Param:
 # ----- Helper functions (MUST stay at module top-level) --------------------------
 
 
-def _dir_stats(path: str):
-    """Return (count, total_size_bytes, latest_mtime) across all files under path."""
-    count = 0
-    total = 0
-    latest = 0.0
-    for root, _, files in os.walk(path):
-        for fn in files:
-            fp = os.path.join(root, fn)
-            try:
-                st = os.stat(fp)
-            except FileNotFoundError:
-                continue
-            count += 1
-            total += st.st_size
-            if st.st_mtime > latest:
-                latest = st.st_mtime
-    return count, total, latest
-
-
-def _is_dir_stable(path: str, idle_seconds: int, min_files: int) -> bool:
-    """True if dir has >= min_files and last write is older than idle_seconds."""
-    count, _, latest = _dir_stats(path)
-    if count < min_files:
-        return False
-    return (time.time() - latest) >= idle_seconds
-
-
-def _is_file_stable(path: str, idle_seconds: int) -> bool:
-    """True if file exists and its last write is older than idle_seconds."""
-    try:
-        st = os.stat(path)
-    except FileNotFoundError:
-        return False
-    if not os.path.isfile(path):
-        return False
-    return (time.time() - st.st_mtime) >= idle_seconds
+def _stability_ready(ti, key: str, identity: str, snapshot, idle_seconds: int) -> bool:
+    """Persist and compare a filesystem snapshot across sensor reschedules."""
+    previous = ti.xcom_pull(task_ids=ti.task_id, key=key)
+    ready, current = stability_observation(
+        previous=previous,
+        identity=identity,
+        snapshot=snapshot,
+        observed_at=time.time(),
+        idle_seconds=idle_seconds,
+    )
+    ti.xcom_push(key=key, value=current)
+    return ready
 
 
 def _normalize_folders(monitoring_folders: Iterable[str]) -> Sequence[str]:
@@ -264,7 +247,7 @@ def _find_new_folder(
         return None
 
     print(f"[COSIDAG] _find_new_folder: monitoring {len(roots)} root folder(s): {', '.join(roots)}")
-    unavailable = list_unavailable_paths(dag_id, owner_run_id=owner_run_id)
+    unavailable = set(list_unavailable_paths(dag_id, owner_run_id=owner_run_id))
     print(f"[COSIDAG] _find_new_folder: loaded {len(unavailable)} unavailable folder(s)")
 
     candidates: list[str] = []
@@ -318,7 +301,7 @@ def _find_new_file(
         return None
 
     print(f"[COSIDAG] _find_new_file: monitoring {len(roots)} root folder(s): {', '.join(roots)}")
-    unavailable = list_unavailable_paths(dag_id, owner_run_id=owner_run_id)
+    unavailable = set(list_unavailable_paths(dag_id, owner_run_id=owner_run_id))
     print(f"[COSIDAG] _find_new_file: loaded {len(unavailable)} unavailable file(s)")
 
     candidates: list[str] = []
@@ -517,6 +500,8 @@ class COSIDAG(DAG):
         auto_retrig: bool = True,
         max_retrig_runs: Optional[int] = None,
         claim_stale_seconds: int = 86400,
+        input_poke_seconds: int = 120,
+        input_timeout_seconds: int = 30 * 60,
         *args,
         **kwargs,
     ) -> None:
@@ -549,6 +534,8 @@ class COSIDAG(DAG):
             "date": date,
             "date_queries": date_queries,
             "home_env_var": home_env_var,
+            "input_poke_seconds": int(input_poke_seconds),
+            "input_timeout_seconds": int(input_timeout_seconds),
             "idle_seconds": int(idle_seconds),
             "min_files": int(min_files),
             "ready_marker": ready_marker,
@@ -592,9 +579,17 @@ class COSIDAG(DAG):
                     self.cosidag_defaults["home_env_var"],
                     "Environment variable that contains the COSIFLOW home URL used by show_results to build links.",
                 ),
+                "input_poke_seconds": _param(
+                    self.cosidag_defaults["input_poke_seconds"],
+                    "Polling interval for input-pattern readiness. The sensor releases its worker slot between checks.",
+                ),
+                "input_timeout_seconds": _param(
+                    self.cosidag_defaults["input_timeout_seconds"],
+                    "Maximum time to wait for all required input patterns to become stable.",
+                ),
                 "idle_seconds": _param(
                     self.cosidag_defaults["idle_seconds"],
-                    "Minimum number of seconds since the last write before a candidate folder or file is considered stable.",
+                    "Minimum time that file size and mtime metadata must remain unchanged before input is stable.",
                 ),
                 "min_files": _param(
                     self.cosidag_defaults["min_files"],
@@ -663,6 +658,14 @@ class COSIDAG(DAG):
         self.max_retrig_runs = self.cosidag_defaults["max_retrig_runs"]
         if self.cosidag_defaults["claim_stale_seconds"] <= 0:
             raise ValueError("claim_stale_seconds must be positive")
+        if self.cosidag_defaults["idle_seconds"] < 0:
+            raise ValueError("idle_seconds must be non-negative")
+        if int(sensor_poke_seconds) <= 0 or int(sensor_timeout_seconds) <= 0:
+            raise ValueError("sensor poke and timeout values must be positive")
+        if self.cosidag_defaults["input_poke_seconds"] <= 0:
+            raise ValueError("input_poke_seconds must be positive")
+        if self.cosidag_defaults["input_timeout_seconds"] <= 0:
+            raise ValueError("input_timeout_seconds must be positive")
 
         print(
             "[COSIDAG] enabled: "
@@ -739,9 +742,25 @@ class COSIDAG(DAG):
 
             print(f"[COSIDAG] _sensor_poke: idle_seconds={idle_s}, min_files={min_f}")
             if selected_policy == "file-driven":
-                if not _is_file_stable(new_path, idle_seconds=idle_s):
+                snapshot = file_snapshot(new_path)
+                if snapshot is None:
                     return False
-            elif not _is_dir_stable(new_path, idle_seconds=idle_s, min_files=min_f):
+            else:
+                snapshot = directory_snapshot(new_path)
+                if snapshot is None or snapshot[0] < min_f:
+                    return False
+
+            if not _stability_ready(
+                ti=ti,
+                key="candidate_stability",
+                identity=f"{selected_policy}:{new_path}",
+                snapshot=snapshot,
+                idle_seconds=idle_s,
+            ):
+                print(
+                    "[COSIDAG] _sensor_poke: candidate metadata has not yet "
+                    f"remained unchanged for {idle_s}s"
+                )
                 return False
 
             if not claim_path(
@@ -769,7 +788,7 @@ class COSIDAG(DAG):
                 task_id="check_new_file",
                 poke_interval=sensor_poke_seconds,
                 timeout=sensor_timeout_seconds,
-                mode="poke",
+                mode="reschedule",
                 python_callable=_sensor_poke,
                 dag=self,
             )
@@ -804,9 +823,7 @@ class COSIDAG(DAG):
         # ---------------------------------------------------------------------
         resolve_inputs = None
         if file_patterns:
-            import glob
-
-            def _resolve_inputs(**context):
+            def _resolve_inputs_poke(**context):
                 ti = context["ti"]
                 dag_run = context.get("dag_run")
                 conf = normalize_run_conf(dag_run.conf) if dag_run else {}
@@ -821,110 +838,52 @@ class COSIDAG(DAG):
                 if not run_dir or not os.path.isdir(run_dir):
                     raise AirflowFailException(f"[resolve_inputs] invalid run_dir: {run_dir}")
 
-                def pick_one(paths: list[str]) -> Optional[str]:
-                    if not paths:
-                        return None
-                    if select_policy == "first":
-                        return sorted(paths)[0]
-                    if select_policy == "latest_mtime":
-                        return max(paths, key=lambda p: os.stat(p).st_mtime)
-                    return sorted(paths)[0]
+                inventory = scan_file_inventory(run_dir)
+                selected, missing = resolve_patterns(
+                    inventory=inventory,
+                    patterns=file_patterns,
+                    select_policy=select_policy,
+                )
+                if missing:
+                    print(
+                        "[resolve_inputs] waiting for required pattern keys: "
+                        + ", ".join(sorted(missing))
+                    )
+                    return False
 
-                def _can_open_file(file_path: str) -> bool:
-                    """Try to open the file in read mode. Returns True if successful, False otherwise."""
-                    if not os.path.exists(file_path):
-                        return False
-                    try:
-                        # Try to open the file in read mode
-                        # This will fail if the file is still being written or locked by another process
-                        with open(file_path, 'rb') as f:
-                            # Try to read at least one byte to ensure file is readable
-                            f.read(1)
-                        return True
-                    except (IOError, OSError, PermissionError, FileNotFoundError) as e:
-                        print(f"[resolve_inputs] Cannot open file {file_path}: {e}")
-                        return False
+                snapshot = [
+                    [key, record.path, record.size, record.mtime_ns]
+                    for key, record in sorted(selected.items())
+                ]
+                idle_s = int(conf.get("idle_seconds", self.cosidag_defaults["idle_seconds"]))
+                if not _stability_ready(
+                    ti=ti,
+                    key="input_stability",
+                    identity=os.path.abspath(run_dir),
+                    snapshot=snapshot,
+                    idle_seconds=idle_s,
+                ):
+                    print(
+                        "[resolve_inputs] selected file metadata has not yet "
+                        f"remained unchanged for {idle_s}s"
+                    )
+                    return False
 
-                # First pass: find all required files
-                found_files = {}
-                for key, pattern in file_patterns.items():
-                    if isinstance(pattern, str) and pattern.startswith("regex:"):
-                        rx = re.compile(pattern[len("regex:"):])
-                        candidates = glob.glob(os.path.join(run_dir, "**", "*"), recursive=True)
-                        matches = sorted(
-                            path for path in candidates
-                            if os.path.isfile(path) and rx.match(os.path.basename(path))
-                        )
-                    else:
-                        matches = sorted(glob.glob(os.path.join(run_dir, "**", pattern), recursive=True))
-                    chosen = pick_one(matches)
-                    if not chosen:
-                        raise AirflowFailException(
-                            f"[resolve_inputs] no file for key={key!r} pattern={pattern!r} under {run_dir}"
-                        )
-                    found_files[key] = chosen
-                    print(f"[resolve_inputs] Found {key} = {chosen}")
-
-                # Second pass: wait for all files to be completely written (can be opened)
-                print(f"[resolve_inputs] Waiting for all {len(found_files)} files to be completely written...")
-                retry_interval = 120  # Wait 2 minutes between retries
-                max_wait_seconds = 1800  # Maximum 30 minutes total wait
-                start_time = time.time()
-                attempt = 0
-                
-                while (time.time() - start_time) < max_wait_seconds:
-                    attempt += 1
-                    all_ready = True
-                    unready_files = []
-                    ready_files = []
-                    
-                    # Check each file individually
-                    for key, file_path in found_files.items():
-                        print(f"[resolve_inputs] Checking file {key}: {file_path}")
-                        if _can_open_file(file_path):
-                            ready_files.append(key)
-                            print(f"[resolve_inputs] ✓ File {key} is ready and can be opened")
-                        else:
-                            all_ready = False
-                            unready_files.append(key)
-                            print(f"[resolve_inputs] ✗ File {key} is still being written or locked")
-                    
-                    if all_ready:
-                        print(f"[resolve_inputs] All {len(found_files)} files are ready and can be opened (attempt {attempt})")
-                        break
-                    
-                    elapsed = time.time() - start_time
-                    print(f"[resolve_inputs] Attempt {attempt}: {len(ready_files)}/{len(found_files)} files ready. "
-                          f"Still waiting for: {unready_files}. "
-                          f"Elapsed: {elapsed:.1f}s. Retrying in {retry_interval}s...")
-                    time.sleep(retry_interval)
-                else:
-                    # Timeout reached - check each file one more time to report final status
-                    print(f"[resolve_inputs] Timeout reached. Checking final status of all files...")
-                    still_unready = []
-                    for key, file_path in found_files.items():
-                        if not _can_open_file(file_path):
-                            still_unready.append(key)
-                            print(f"[resolve_inputs] ✗ File {key} ({file_path}) still cannot be opened")
-                    
-                    if still_unready:
-                        raise AirflowFailException(
-                            f"[resolve_inputs] Timeout ({max_wait_seconds}s) waiting for files to be ready. "
-                            f"Files still cannot be opened: {still_unready}"
-                        )
-
-                # All files are ready, push to XCom
-                for key, file_path in found_files.items():
-                    ti.xcom_push(key=key, value=file_path)
-                    print(f"[resolve_inputs] {key} = {file_path} (ready)")
+                for key, record in selected.items():
+                    ti.xcom_push(key=key, value=record.path)
+                    print(f"[resolve_inputs] {key} = {record.path} (stable)")
 
                 # Also republish run_dir for convenience.
                 ti.xcom_push(key="run_dir", value=run_dir)
                 print(f"[resolve_inputs] run_dir = {run_dir}")
+                return True
 
-            resolve_inputs = PythonOperator(
+            resolve_inputs = PythonSensor(
                 task_id="resolve_inputs",
-                python_callable=_resolve_inputs,
+                python_callable=_resolve_inputs_poke,
+                poke_interval=self.cosidag_defaults["input_poke_seconds"],
+                timeout=self.cosidag_defaults["input_timeout_seconds"],
+                mode="reschedule",
                 dag=self,
             )
 

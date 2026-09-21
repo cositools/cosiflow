@@ -21,6 +21,8 @@ branch after `v0.2.0`; these changes are not part of a release yet.
 - Added shared Jinja/CSS resources used by the Airflow plugins for consistent
   page layout and styling.
 - Added Graphviz to the Airflow image for optional benchmark DAG graph exports.
+- Added deterministic COSIDAG filesystem-readiness tests and a synthetic
+  multi-scale scan benchmark.
 
 ### Changed
 
@@ -48,6 +50,9 @@ branch after `v0.2.0`; these changes are not part of a release yet.
   tracked Compose files retain only non-personal defaults.
 - Reworked the main, module-development, and COSIDAG guides against the current
   implementation, including the exact glob/regex and runtime-override contracts.
+- COSIDAG filesystem waits now use rescheduling sensors, compare consecutive
+  size/mtime snapshots for `idle_seconds`, reuse one inventory for every input
+  pattern, and use constant-time unavailable-path membership.
 
 ### Fixed
 

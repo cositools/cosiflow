@@ -110,6 +110,36 @@ mutating Docker call, that removal rejects a missing module and preflights its
 configured paths, and that valid arguments, including supported paths with
 spaces, remain single argv values.
 
+## Review 16 scheduler-scalability tests
+
+The Review 16 unit suite uses temporary filesystem trees and does not require
+Airflow. It verifies consecutive size/mtime observations, directory-change
+detection, one-inventory pattern resolution, selection policies, reschedule
+configuration, set membership for unavailable paths, and the absence of
+blocking sleeps:
+
+```bash
+python3 -m unittest tests.test_review16_scheduler_scalability -v
+```
+
+When Airflow is installed, the same suite also instantiates a COSIDAG and
+checks that both filesystem waits use `reschedule` mode. The synthetic load
+test reports the legacy repeated-scan baseline and the one-inventory path at
+increasing file counts:
+
+```bash
+python3 test/review16_load_test.py \
+  --sizes 1000,5000,10000 \
+  --patterns 8 \
+  --output test/results/review16_load_test.json
+```
+
+Elapsed time is diagnostic because it depends on the host filesystem. The
+structural performance contract is one recursive walk per readiness cycle,
+regardless of the number of configured patterns. A production-like Airflow
+load check should additionally confirm `up_for_reschedule` task state and run
+a ready task while waiting sensors outnumber worker slots.
+
 ## Review 5 safety model
 
 The Review 5 suite tests failure paths without exposing or changing operational
