@@ -44,6 +44,7 @@ report an explicit skip when that dependency is unavailable.
 | `tests/integration/test_review8_postgres.py` | Review 8 | Real PostgreSQL uniqueness, concurrent claims, failure recovery, idempotent finalization, and reset isolation |
 | `tests/test_review12_worker_resilience.py` | Review 12 | Worker backoff and failure budgets, poison-row isolation, supervisor fallback, stale heartbeat handling, and Compose restart/healthcheck contracts |
 | `tests/integration/test_review12_mysql.py` | Review 12 | Real MySQL retry scheduling, stale-lock recovery, stale healthcheck failure, and container restart behavior |
+| `tests/test_review13_module_loader_safety.py` | Review 13 | YAML schema validation, destructive-path confinement, overlapping-environment rejection, traversal and symlink rejection, shell-payload isolation, and mutation-free install/update/remove failures |
 
 `tests/security/support.py` and `tests/security/auth_support.py` provide
 repository-path, script-loading, and Auth Manager test doubles; they do not
@@ -91,6 +92,23 @@ COSIFLOW_RUN_REVIEW12_MYSQL_TESTS=1 \
 
 The suite removes its containers and volumes after the run. It uses synthetic
 test-only credentials and does not connect to GCN or the development database.
+
+## Review 13 module-loader safety tests
+
+The Review 13 suite requires PyYAML and otherwise uses temporary directories
+and a fake `docker` executable. It does not start containers, create virtual
+environments, remove real paths, or build images:
+
+```bash
+python3 -m unittest tests.test_review13_module_loader_safety -v
+```
+
+The parser tests cover valid quoted YAML, duplicate keys, malformed documents,
+wrong types, unsafe identifiers, destructive paths, and duplicate or nested
+environment targets. The shell tests verify that invalid input produces no
+mutating Docker call, that removal rejects a missing module and preflights its
+configured paths, and that valid arguments, including supported paths with
+spaces, remain single argv values.
 
 ## Review 5 safety model
 

@@ -96,7 +96,8 @@ Airflow can take a short time to parse newly linked DAGs.
 
 ### Command-line path overrides
 
-Paths are relative to the module root unless absolute:
+Paths are relative to the module root. Absolute paths are accepted only when
+their canonical target is still inside that module root:
 
 ```bash
 ./hot_load_module.sh <module> install \
@@ -126,7 +127,11 @@ The hot-loader checks, in order:
 3. the first `*.config.yaml` in the module root;
 4. the first `*.config.yaml` under the module's `env/` directory.
 
-An explicit `-c` path overrides auto-detection.
+An explicit `-c` path overrides auto-detection, but it must resolve to a regular
+file inside the selected module. The loader uses PyYAML from the running
+Airflow environment, rejects duplicate keys and schema/type errors, and
+validates the complete configuration before creating links, environments, or
+images.
 
 Example:
 
@@ -174,6 +179,23 @@ default_environment: analysis
 the current hot-loader does not select environments from it. Selection is based
 on `enabled` or `-E`.
 
+### Loader safety boundaries
+
+Module names and environment names are restricted to letters, digits, `.`, `_`,
+and `-`; separators, traversal components, whitespace, and shell metacharacters
+are rejected. DAG, pipeline, Docker-context, configuration, and requirements
+paths must resolve inside the module root, including after resolving symlinks.
+
+Managed environment paths must be strict descendants of
+`/home/gamma/envs`. The root itself, parent paths, prefix-similar directories,
+and symlinks resolving outside that root are rejected. Two configured
+environments may not use the same target or ancestor/descendant targets. Every
+recursive environment deletion passes through this check. Validation failures
+exit before the loader runs mutating Docker commands.
+
+YAML values are passed as ordinary command arguments or file content; the
+loader does not interpolate configuration values into `bash -c` strings.
+
 ## Update a module
 
 ```bash
@@ -194,6 +216,11 @@ Source-only DAG or pipeline edits are already visible through the symlinks, but
 cd cosiflow/env
 ./hot_load_module.sh <module-directory> remove
 ```
+
+The module directory must still exist. When a configuration is present,
+`remove` performs the same module-root and environment-path preflight as
+installation before unlinking or deleting anything. Removal does not require
+the configured Dockerfile to remain present.
 
 With a detected configuration, removal deletes:
 

@@ -18,8 +18,8 @@ CONTAINER_NAME="cosi_airflow"
 EXTENSION_MODULE=".cfmodule"
 
 # Resolve absolute paths to avoid confusion depending on where script is run from
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")" # Go up two levels: cosiflow/env -> cosiflow -> workspace
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+WORKSPACE_ROOT="$(realpath "$(dirname "$(dirname "$SCRIPT_DIR")")")" # Go up two levels: cosiflow/env -> cosiflow -> workspace
 
 # Default paths (relative to module root)
 PATH_DAGS="src/dags"
@@ -31,6 +31,22 @@ PATH_REQUIREMENTS="env/requirements.txt"
 VENV_PATH="/home/gamma/envs/cosipy"
 ENV_SELECTION=""  # Empty = use YAML enabled, "all" = all, or comma-separated list
 CONFIG_FILE=""    # Optional path to config file (overrides auto-detect when set)
+YAML_CONFIG=""
+CONTAINER_YAML_CONFIG=""
+CONTAINER_MODULES_ROOT="/home/gamma/airflow/modules_pool"
+CONTAINER_VENV_ROOT="/home/gamma/envs"
+CONFIG_HELPER="/shared_dir/env/module_config.py"
+CONFIG_PYTHON="/home/gamma/venv/bin/python"
+
+# CLI overrides are applied only after YAML has been parsed and validated.
+CLI_PATH_DAGS=""
+CLI_PATH_PIPELINE=""
+CLI_PATH_IMAGES=""
+CLI_PATH_REQUIREMENTS=""
+CLI_CREATE_ENV=false
+CLI_BUILD_DOCKER=false
+CLI_ENV_SELECTION=""
+PATH_IMAGES_CONFIGURED=false
 
 ##########################################################################
 # HELPER FUNCTIONS
@@ -38,7 +54,7 @@ CONFIG_FILE=""    # Optional path to config file (overrides auto-detect when set
 
 # Helper to run docker exec as airflow user
 dexec() {
-    docker exec -u $CONTAINER_USER $CONTAINER_NAME "$@"
+    docker exec -u "$CONTAINER_USER" "$CONTAINER_NAME" "$@"
 }
 
 # define a macro `log` for printing messages with color green
@@ -53,102 +69,8 @@ warning() {
 
 # define a macro `error` for printing messages with color red
 error() {
-    echo -e "\033[31m$1\033[0m"
+    echo -e "\033[31m$1\033[0m" >&2
     exit 1
-}
-
-# Function to parse YAML and extract top-level configuration values
-parse_yaml_config() {
-    local yaml_file="$1"
-    local field="$2"  # install_mode, or paths subfields: dags, pipeline, images
-    
-    if [ ! -f "$yaml_file" ]; then
-        return 1
-    fi
-    
-    local in_paths=false
-    local paths_indent=0
-    
-    while IFS= read -r line; do
-        # Remove comments but keep structure
-        line=$(echo "$line" | sed 's/#.*$//')
-        
-        # Skip empty lines
-        if [[ -z "${line// /}" ]]; then
-            continue
-        fi
-        
-        # Check for install_mode
-        if [ "$field" = "install_mode" ]; then
-            # Try with quotes first
-            if [[ "$line" =~ ^install_mode:[[:space:]]*[\"'](.+)[\"'] ]]; then
-                echo "${BASH_REMATCH[1]}"
-                return 0
-            # Try without quotes
-            elif [[ "$line" =~ ^install_mode:[[:space:]]+(.+) ]]; then
-                local val="${BASH_REMATCH[1]}"
-                # Remove any trailing quotes or spaces
-                val=$(echo "$val" | sed "s/^[\"']//;s/[\"']$//" | sed 's/[[:space:]]*$//')
-                echo "$val"
-                return 0
-            fi
-        fi
-        
-        # Check for paths section
-        if [[ "$line" =~ ^paths: ]]; then
-            in_paths=true
-            paths_indent=$(echo "$line" | sed 's/[^ ].*//' | wc -c)
-            ((paths_indent--))
-            continue
-        fi
-        
-        # If we hit another top-level key, stop looking in paths
-        if [ "$in_paths" = true ] && [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*: ]] && [[ ! "$line" =~ ^[[:space:]]+ ]]; then
-            in_paths=false
-            continue
-        fi
-        
-        # Extract path values
-        if [ "$in_paths" = true ]; then
-            case "$field" in
-                dags)
-                    if [[ "$line" =~ ^[[:space:]]+dags:[[:space:]]*[\"'](.+)[\"'] ]]; then
-                        echo "${BASH_REMATCH[1]}"
-                        return 0
-                    elif [[ "$line" =~ ^[[:space:]]+dags:[[:space:]]+(.+) ]]; then
-                        local val="${BASH_REMATCH[1]}"
-                        val=$(echo "$val" | sed "s/^[\"']//;s/[\"']$//")
-                        echo "$val"
-                        return 0
-                    fi
-                    ;;
-                pipeline)
-                    if [[ "$line" =~ ^[[:space:]]+pipeline:[[:space:]]*[\"'](.+)[\"'] ]]; then
-                        echo "${BASH_REMATCH[1]}"
-                        return 0
-                    elif [[ "$line" =~ ^[[:space:]]+pipeline:[[:space:]]+(.+) ]]; then
-                        local val="${BASH_REMATCH[1]}"
-                        val=$(echo "$val" | sed "s/^[\"']//;s/[\"']$//")
-                        echo "$val"
-                        return 0
-                    fi
-                    ;;
-                images)
-                    if [[ "$line" =~ ^[[:space:]]+images:[[:space:]]*[\"'](.+)[\"'] ]]; then
-                        echo "${BASH_REMATCH[1]}"
-                        return 0
-                    elif [[ "$line" =~ ^[[:space:]]+images:[[:space:]]+(.+) ]]; then
-                        local val="${BASH_REMATCH[1]}"
-                        val=$(echo "$val" | sed "s/^[\"']//;s/[\"']$//")
-                        echo "$val"
-                        return 0
-                    fi
-                    ;;
-            esac
-        fi
-    done < "$yaml_file"
-    
-    return 1
 }
 
 # Function to find YAML config file in module
@@ -169,7 +91,7 @@ find_yaml_config() {
     fi
     
     # Try to find any *.config.yaml file in module root
-    yaml_file=$(find "$module_path" -maxdepth 1 -name "*.config.yaml" -type f 2>/dev/null | head -n 1)
+    yaml_file=$(find "$module_path" -maxdepth 1 -name "*.config.yaml" -type f -print 2>/dev/null | LC_ALL=C sort | head -n 1)
     if [ -n "$yaml_file" ] && [ -f "$yaml_file" ]; then
         echo "$yaml_file"
         return 0
@@ -177,7 +99,7 @@ find_yaml_config() {
     
     # Try to find any *.config.yaml file in env/ subdirectory
     if [ -d "$module_path/env" ]; then
-        yaml_file=$(find "$module_path/env" -maxdepth 1 -name "*.config.yaml" -type f 2>/dev/null | head -n 1)
+        yaml_file=$(find "$module_path/env" -maxdepth 1 -name "*.config.yaml" -type f -print 2>/dev/null | LC_ALL=C sort | head -n 1)
         if [ -n "$yaml_file" ] && [ -f "$yaml_file" ]; then
             echo "$yaml_file"
             return 0
@@ -187,64 +109,214 @@ find_yaml_config() {
     return 1
 }
 
-# Function to load configuration from YAML file
-# Usage: load_yaml_config <module_path> [config_file_path]
-# If config_file_path is given, it is used; otherwise config is auto-detected in module.
-load_yaml_config() {
-    local module_path="$1"
-    local yaml_file
-    
-    if [ -n "$2" ] && [ -f "$2" ]; then
-        yaml_file="$2"
+validate_identifier() {
+    local value="$1"
+    local label="$2"
+    if [[ "$value" == "." || "$value" == ".." || ! "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+        error "$label contains unsupported characters: $value"
+    fi
+}
+
+canonical_existing_path() {
+    local candidate="$1"
+    if [ ! -e "$candidate" ]; then
+        return 1
+    fi
+    realpath "$candidate"
+}
+
+require_path_below() {
+    local root="$1"
+    local candidate="$2"
+    local label="$3"
+    case "$candidate" in
+        "$root"/*) ;;
+        *) error "$label must stay below $root: $candidate" ;;
+    esac
+}
+
+resolve_module_path() {
+    local configured_path="$1"
+    local expected_type="$2"
+    local label="$3"
+    local candidate
+    local resolved
+
+    if [ -z "$configured_path" ] || [[ "$configured_path" =~ [[:cntrl:]] ]]; then
+        error "$label must be a non-empty path without control characters."
+    fi
+    if [[ "$configured_path" = /* ]]; then
+        candidate="$configured_path"
     else
-        # Find YAML config file
-        local found_yaml=$(find_yaml_config "$module_path")
-        if [ $? -ne 0 ] || [ -z "$found_yaml" ]; then
-            return 1
+        candidate="$MODULE_PATH/$configured_path"
+    fi
+    if ! resolved=$(canonical_existing_path "$candidate"); then
+        error "$label not found: $candidate"
+    fi
+    require_path_below "$MODULE_PATH" "$resolved" "$label"
+    if [ "$expected_type" = "file" ] && [ ! -f "$resolved" ]; then
+        error "$label must be a regular file: $resolved"
+    fi
+    if [ "$expected_type" = "directory" ] && [ ! -d "$resolved" ]; then
+        error "$label must be a directory: $resolved"
+    fi
+    printf '%s\n' "$resolved"
+}
+
+module_relative_path() {
+    local resolved="$1"
+    require_path_below "$MODULE_PATH" "$resolved" "Module path"
+    printf '%s\n' "${resolved#"$MODULE_PATH"/}"
+}
+
+config_helper() {
+    dexec "$CONFIG_PYTHON" "$CONFIG_HELPER" --config "$CONTAINER_YAML_CONFIG" "$@"
+}
+
+prepare_yaml_config() {
+    local yaml_file="$1"
+    local resolved
+    local relative
+
+    if ! resolved=$(canonical_existing_path "$yaml_file"); then
+        error "Config file not found: $yaml_file"
+    fi
+    require_path_below "$MODULE_PATH" "$resolved" "Config file"
+    if [ ! -f "$resolved" ]; then
+        error "Config path is not a regular file: $resolved"
+    fi
+
+    relative="${resolved#"$MODULE_PATH"/}"
+    YAML_CONFIG="$resolved"
+    CONTAINER_YAML_CONFIG="$CONTAINER_MODULES_ROOT/$MODULE_NAME/$relative"
+    if ! config_helper validate; then
+        error "Module configuration validation failed."
+    fi
+}
+
+config_value() {
+    config_helper get "$1"
+}
+
+list_yaml_envs() {
+    config_helper list-environments
+}
+
+config_environment_value() {
+    local env_name="$1"
+    local field="$2"
+    validate_identifier "$env_name" "Environment name"
+    config_helper get-environment "$env_name" "$field"
+}
+
+load_yaml_config() {
+    local install_mode
+    local value
+
+    if [ -z "$YAML_CONFIG" ]; then
+        return 1
+    fi
+    if ! install_mode=$(config_value install_mode); then
+        return 1
+    fi
+    case "$install_mode" in
+        container) BUILD_DOCKER=true; CREATE_ENV=false ;;
+        environment) BUILD_DOCKER=false; CREATE_ENV=true ;;
+        both) BUILD_DOCKER=true; CREATE_ENV=true ;;
+        none|"") BUILD_DOCKER=false; CREATE_ENV=false ;;
+        *) error "Unsupported install mode after validation: $install_mode" ;;
+    esac
+
+    if value=$(config_value paths.dags) && [ -n "$value" ]; then PATH_DAGS="$value"; fi
+    if value=$(config_value paths.pipeline) && [ -n "$value" ]; then PATH_PIPELINE="$value"; fi
+    if value=$(config_value paths.images) && [ -n "$value" ]; then
+        PATH_IMAGES="$value"
+        PATH_IMAGES_CONFIGURED=true
+    fi
+}
+
+validate_container_venv_path() {
+    local candidate="$1"
+    local resolved
+    if ! resolved=$(dexec realpath -m -- "$candidate"); then
+        error "Cannot canonicalize environment path: $candidate"
+    fi
+    case "$resolved" in
+        "$CONTAINER_VENV_ROOT"/*) ;;
+        *) error "Environment path must be below $CONTAINER_VENV_ROOT: $resolved" ;;
+    esac
+    if [ "$resolved" = "$CONTAINER_VENV_ROOT" ]; then
+        error "Refusing to operate on the environment root itself."
+    fi
+    printf '%s\n' "$resolved"
+}
+
+safe_remove_venv() {
+    local safe_path
+    if ! safe_path=$(validate_container_venv_path "$1"); then
+        return 1
+    fi
+    dexec rm -rf -- "$safe_path"
+}
+
+preflight_environment() {
+    local env_name="$1"
+    local req_path
+    local req_no_deps
+    local venv_path
+
+    validate_identifier "$env_name" "Environment name"
+    req_path=$(config_environment_value "$env_name" requirements) || error "Cannot read requirements for '$env_name'."
+    resolve_module_path "$req_path" file "Requirements file for $env_name" >/dev/null || exit 1
+    req_no_deps=$(config_environment_value "$env_name" requirements_no_deps) || error "Cannot read optional requirements for '$env_name'."
+    if [ -n "$req_no_deps" ]; then
+        resolve_module_path "$req_no_deps" file "No-deps requirements file for $env_name" >/dev/null || exit 1
+    fi
+    venv_path=$(config_environment_value "$env_name" venv_path) || error "Cannot read environment path for '$env_name'."
+    validate_container_venv_path "$venv_path" >/dev/null || exit 1
+}
+
+preflight_inputs() {
+    local require_dockerfile="${1:-true}"
+    local resolved
+    local env_name
+    local selected
+    local configured_envs=()
+
+    resolved=$(resolve_module_path "$PATH_DAGS" directory "DAG path") || exit 1
+    PATH_DAGS=$(module_relative_path "$resolved") || exit 1
+    if [ -n "$PATH_PIPELINE" ]; then
+        resolved=$(resolve_module_path "$PATH_PIPELINE" directory "Pipeline path") || exit 1
+        PATH_PIPELINE=$(module_relative_path "$resolved") || exit 1
+    fi
+    if [ "$BUILD_DOCKER" = true ] || [ "$PATH_IMAGES_CONFIGURED" = true ]; then
+        resolved=$(resolve_module_path "$PATH_IMAGES" directory "Docker context path") || exit 1
+        if [ "$require_dockerfile" = true ] && [ "$BUILD_DOCKER" = true ] && [ ! -f "$resolved/Dockerfile" ]; then
+            error "Docker build requested but Dockerfile not found: $resolved/Dockerfile"
         fi
-        yaml_file="$found_yaml"
+        PATH_IMAGES=$(module_relative_path "$resolved") || exit 1
     fi
-    
-    # Load install_mode
-    local install_mode=$(parse_yaml_config "$yaml_file" "install_mode")
-    if [ -n "$install_mode" ]; then
-        case "$install_mode" in
-            container)
-                BUILD_DOCKER=true
-                CREATE_ENV=false
-                ;;
-            environment)
-                BUILD_DOCKER=false
-                CREATE_ENV=true
-                ;;
-            both)
-                BUILD_DOCKER=true
-                CREATE_ENV=true
-                ;;
-            none)
-                BUILD_DOCKER=false
-                CREATE_ENV=false
-                ;;
-        esac
+
+    if [ -n "$YAML_CONFIG" ]; then
+        while IFS= read -r env_name; do
+            [ -n "$env_name" ] && configured_envs+=("$env_name")
+        done < <(list_yaml_envs)
+        for env_name in "${configured_envs[@]}"; do
+            preflight_environment "$env_name"
+        done
+
+        if [ -n "$ENV_SELECTION" ] && [ "$ENV_SELECTION" != "all" ]; then
+            IFS=',' read -ra selected_envs <<< "$ENV_SELECTION"
+            for selected in "${selected_envs[@]}"; do
+                selected=$(printf '%s' "$selected" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                validate_identifier "$selected" "Selected environment name"
+                config_environment_value "$selected" requirements >/dev/null || error "Selected environment is not configured: $selected"
+            done
+        fi
+    elif [ "$CREATE_ENV" = true ]; then
+        resolve_module_path "$PATH_REQUIREMENTS" file "Legacy requirements file" >/dev/null || exit 1
+        validate_container_venv_path "$VENV_PATH" >/dev/null || exit 1
     fi
-    
-    # Load paths
-    local dags_path=$(parse_yaml_config "$yaml_file" "dags")
-    if [ -n "$dags_path" ]; then
-        PATH_DAGS="$dags_path"
-    fi
-    
-    local pipeline_path=$(parse_yaml_config "$yaml_file" "pipeline")
-    if [ -n "$pipeline_path" ]; then
-        PATH_PIPELINE="$pipeline_path"
-    fi
-    
-    local images_path=$(parse_yaml_config "$yaml_file" "images")
-    if [ -n "$images_path" ]; then
-        PATH_IMAGES="$images_path"
-    fi
-    
-    return 0
 }
 
 ##########################################################################
@@ -252,33 +324,32 @@ load_yaml_config() {
 ##########################################################################
 
 # Parse positional args: module_name [action]
-MODULE_NAME=$1
-if [ "$2" = "install" ] || [ "$2" = "remove" ] || [ "$2" = "update" ]; then
-    ACTION=$2
-    shift 2
+if [ $# -eq 0 ]; then
+    MODULE_NAME=""
 else
+    MODULE_NAME="$1"
+fi
+if [ -n "$MODULE_NAME" ] && { [ "${2:-}" = "install" ] || [ "${2:-}" = "remove" ] || [ "${2:-}" = "update" ]; }; then
+    ACTION="$2"
+    shift 2
+elif [ -n "$MODULE_NAME" ]; then
     ACTION=install
     shift 1
-fi
-
-# Load configuration from YAML if module exists and YAML file is present
-MODULE_PATH="$WORKSPACE_ROOT/$MODULE_NAME"
-if [ -d "$MODULE_PATH" ]; then
-    # Load YAML config as defaults (will be overridden by CLI options)
-    load_yaml_config "$MODULE_PATH"
+else
+    ACTION=install
 fi
 
 # Parse options -d, -p, -f, -e, -r, -a, -E, -c
 # CLI options override YAML configuration
 while getopts "d:p:f:er:aE:c:" opt; do
     case $opt in
-        d) PATH_DAGS="$OPTARG" ;;
-        p) PATH_PIPELINE="$OPTARG" ;;
-        f) PATH_IMAGES="$OPTARG" ;;
-        e) CREATE_ENV=true ;;
-        r) PATH_REQUIREMENTS="$OPTARG" ;;
-        a) CREATE_ENV=true; BUILD_DOCKER=true ;;
-        E) CREATE_ENV=true; ENV_SELECTION="$OPTARG" ;;
+        d) CLI_PATH_DAGS="$OPTARG" ;;
+        p) CLI_PATH_PIPELINE="$OPTARG" ;;
+        f) CLI_PATH_IMAGES="$OPTARG" ;;
+        e) CLI_CREATE_ENV=true ;;
+        r) CLI_PATH_REQUIREMENTS="$OPTARG" ;;
+        a) CLI_CREATE_ENV=true; CLI_BUILD_DOCKER=true ;;
+        E) CLI_CREATE_ENV=true; CLI_ENV_SELECTION="$OPTARG" ;;
         c) CONFIG_FILE="$OPTARG" ;;
         :) echo "Option -$OPTARG requires an argument." >&2; exit 1 ;;
         *) echo "Usage: $0 <module_name> [install|remove|update] -d [dags] -p [pipeline] -f [images] -e [-r requirements.txt] -E [env1,env2|all] -a [-c config.yaml]" >&2; exit 1 ;;
@@ -317,200 +388,39 @@ if [ -z "$MODULE_NAME" ]; then
     exit 1
 fi
 
-# If -c was used: resolve to absolute path and reload config from that file
-if [ -n "$CONFIG_FILE" ]; then
-    if [ ! -f "$CONFIG_FILE" ]; then
-        error "Config file not found: $CONFIG_FILE"
-    fi
-    CONFIG_FILE="$(cd "$(dirname "$CONFIG_FILE")" && pwd)/$(basename "$CONFIG_FILE")"
-    load_yaml_config "$MODULE_PATH" "$CONFIG_FILE"
+validate_identifier "$MODULE_NAME" "Module name"
+MODULE_PATH="$WORKSPACE_ROOT/$MODULE_NAME"
+if [ ! -d "$MODULE_PATH" ]; then
+    error "Module directory not found: $MODULE_PATH"
+fi
+if [ -d "$MODULE_PATH" ]; then
+    MODULE_PATH=$(canonical_existing_path "$MODULE_PATH") || error "Cannot resolve module directory."
+    require_path_below "$WORKSPACE_ROOT" "$MODULE_PATH" "Module directory"
 fi
 
-# Helper to run docker exec as airflow user
-dexec() {
-    docker exec -u $CONTAINER_USER $CONTAINER_NAME "$@"
-}
-
-# Function to parse YAML and extract environment configurations
-# Uses simple pattern matching (works without yq dependency)
-parse_yaml_envs() {
-    local yaml_file="$1"
-    local env_name="$2"
-    local field="$3"  # requirements, venv_path, enabled, description, python_version
-    
-    if [ ! -f "$yaml_file" ]; then
-        return 1
+# Resolve and validate the complete YAML configuration before any mutation.
+if [ -n "$CONFIG_FILE" ]; then
+    prepare_yaml_config "$CONFIG_FILE"
+elif [ -d "$MODULE_PATH" ]; then
+    if found_yaml=$(find_yaml_config "$MODULE_PATH"); then
+        prepare_yaml_config "$found_yaml"
     fi
-    
-    # Simple YAML parsing - look for the environment block
-    local in_environments=false
-    local in_target_env=false
-    local env_indent_level=0
-    
-    while IFS= read -r line; do
-        local original_line="$line"
-        # Remove comments but keep the line structure
-        line=$(echo "$line" | sed 's/#.*$//')
-        
-        # Skip completely empty lines
-        if [[ -z "${line// /}" ]]; then
-            continue
-        fi
-        
-        # Detect environments section
-        if [[ "$line" =~ ^environments: ]]; then
-            in_environments=true
-            continue
-        fi
-        
-        # If we hit another top-level key, stop looking
-        if [ "$in_environments" = true ] && [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*: ]] && [[ ! "$line" =~ ^[[:space:]]+ ]]; then
-            break
-        fi
-        
-        # Check if we're entering the target environment block
-        if [ "$in_environments" = true ] && [[ "$line" =~ ^[[:space:]]+${env_name}: ]]; then
-            in_target_env=true
-            # Count leading spaces to determine indent level
-            env_indent_level=$(echo "$line" | sed 's/[^ ].*//' | wc -c)
-            ((env_indent_level--))
-            continue
-        fi
-        
-        # Check if we're leaving the target environment block (another env at same or less indent)
-        if [ "$in_target_env" = true ]; then
-            local current_indent=$(echo "$line" | sed 's/[^ ].*//' | wc -c)
-            ((current_indent--))
-            
-            # If we hit another environment at same or less indent, we've left our target
-            if [[ "$line" =~ ^[[:space:]]*[a-zA-Z0-9_]+: ]] && [ $current_indent -le $env_indent_level ] && [[ ! "$line" =~ ^[[:space:]]+${env_name}: ]]; then
-                in_target_env=false
-                continue
-            fi
-            
-            # Extract field value if we're in the target environment
-            if [ "$in_target_env" = true ]; then
-                case "$field" in
-                    requirements)
-                        if [[ "$line" =~ ^[[:space:]]+requirements:[[:space:]]*[\"'](.+)[\"'] ]]; then
-                            echo "${BASH_REMATCH[1]}"
-                            return 0
-                        elif [[ "$line" =~ ^[[:space:]]+requirements:[[:space:]]+(.+) ]]; then
-                            local val="${BASH_REMATCH[1]}"
-                            val=$(echo "$val" | sed "s/^[\"']//;s/[\"']$//")
-                            echo "$val"
-                            return 0
-                        fi
-                        ;;
-                    venv_path)
-                        if [[ "$line" =~ ^[[:space:]]+venv_path:[[:space:]]*[\"'](.+)[\"'] ]]; then
-                            echo "${BASH_REMATCH[1]}"
-                            return 0
-                        elif [[ "$line" =~ ^[[:space:]]+venv_path:[[:space:]]+(.+) ]]; then
-                            local val="${BASH_REMATCH[1]}"
-                            val=$(echo "$val" | sed "s/^[\"']//;s/[\"']$//")
-                            echo "$val"
-                            return 0
-                        fi
-                        ;;
-                    enabled)
-                        if [[ "$line" =~ ^[[:space:]]+enabled:[[:space:]]*(true|false) ]]; then
-                            echo "${BASH_REMATCH[1]}"
-                            return 0
-                        elif [[ "$line" =~ ^[[:space:]]+enabled:[[:space:]]+[\"']?(true|false)[\"']? ]]; then
-                            echo "${BASH_REMATCH[1]}"
-                            return 0
-                        fi
-                        ;;
-                    description)
-                        if [[ "$line" =~ ^[[:space:]]+description:[[:space:]]*[\"'](.+)[\"'] ]]; then
-                            echo "${BASH_REMATCH[1]}"
-                            return 0
-                        elif [[ "$line" =~ ^[[:space:]]+description:[[:space:]]+(.+) ]]; then
-                            local val="${BASH_REMATCH[1]}"
-                            val=$(echo "$val" | sed "s/^[\"']//;s/[\"']$//")
-                            echo "$val"
-                            return 0
-                        fi
-                        ;;
-                    python_version)
-                        if [[ "$line" =~ ^[[:space:]]+python_version:[[:space:]]*[\"']?([0-9.]+)[\"']? ]]; then
-                            echo "${BASH_REMATCH[1]}"
-                            return 0
-                        elif [[ "$line" =~ ^[[:space:]]+python_version:[[:space:]]+(.+) ]]; then
-                            local val="${BASH_REMATCH[1]}"
-                            val=$(echo "$val" | sed "s/^[\"']//;s/[\"']$//")
-                            echo "$val"
-                            return 0
-                        fi
-                        ;;
-                    requirements_no_deps)
-                        if [[ "$line" =~ ^[[:space:]]+requirements_no_deps:[[:space:]]*[\"'](.+)[\"'] ]]; then
-                            echo "${BASH_REMATCH[1]}"
-                            return 0
-                        elif [[ "$line" =~ ^[[:space:]]+requirements_no_deps:[[:space:]]+(.+) ]]; then
-                            local val="${BASH_REMATCH[1]}"
-                            val=$(echo "$val" | sed "s/^[\"']//;s/[\"']$//")
-                            echo "$val"
-                            return 0
-                        fi
-                        ;;
-                esac
-            fi
-        fi
-    done < "$yaml_file"
-    
-    return 1
-}
+fi
+if [ -n "$YAML_CONFIG" ]; then
+    load_yaml_config || error "Failed to load validated module configuration."
+fi
 
-# Function to list all environments from YAML
-list_yaml_envs() {
-    local yaml_file="$1"
-    
-    if [ ! -f "$yaml_file" ]; then
-        return 1
-    fi
-    
-    # Extract environment names (lines with "env_name:" that are indented under "environments:")
-    # Only match keys with exactly 2 spaces of indent (environment names, not their fields)
-    local in_environments=false
-    while IFS= read -r line; do
-        # Remove comments but preserve structure
-        local original_line="$line"
-        line=$(echo "$line" | sed 's/#.*$//')
-        
-        # Skip empty lines
-        if [[ -z "${line// /}" ]]; then
-            continue
-        fi
-        
-        # Check if we're in the environments section
-        if [[ "$line" =~ ^environments: ]]; then
-            in_environments=true
-            continue
-        fi
-        
-        # If we hit another top-level key (no leading spaces), stop
-        if [ "$in_environments" = true ] && [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*: ]] && [[ ! "$line" =~ ^[[:space:]]+ ]]; then
-            break
-        fi
-        
-        # Extract environment names (keys with exactly 2 spaces indent, not 4+ which are fields)
-        if [ "$in_environments" = true ]; then
-            # Count leading spaces
-            local leading_spaces=$(echo "$line" | sed 's/[^ ].*//' | wc -c)
-            ((leading_spaces--))
-            
-            # Only match lines with exactly 2 spaces (environment names)
-            # Match pattern: exactly 2 spaces, then a key name ending with colon
-            if [ $leading_spaces -eq 2 ] && [[ "$line" =~ ^[[:space:]][[:space:]]([a-zA-Z0-9_]+):[[:space:]]*$ ]]; then
-                echo "${BASH_REMATCH[1]}"
-            elif [ $leading_spaces -eq 2 ] && [[ "$line" =~ ^[[:space:]][[:space:]]([a-zA-Z0-9_]+): ]]; then
-                echo "${BASH_REMATCH[1]}"
-            fi
-        fi
-    done < "$yaml_file"
-}
+# Command-line flags override validated YAML defaults.
+if [ -n "$CLI_PATH_DAGS" ]; then PATH_DAGS="$CLI_PATH_DAGS"; fi
+if [ -n "$CLI_PATH_PIPELINE" ]; then PATH_PIPELINE="$CLI_PATH_PIPELINE"; fi
+if [ -n "$CLI_PATH_IMAGES" ]; then
+    PATH_IMAGES="$CLI_PATH_IMAGES"
+    PATH_IMAGES_CONFIGURED=true
+fi
+if [ -n "$CLI_PATH_REQUIREMENTS" ]; then PATH_REQUIREMENTS="$CLI_PATH_REQUIREMENTS"; fi
+if [ "$CLI_CREATE_ENV" = true ]; then CREATE_ENV=true; fi
+if [ "$CLI_BUILD_DOCKER" = true ]; then BUILD_DOCKER=true; fi
+if [ -n "$CLI_ENV_SELECTION" ]; then ENV_SELECTION="$CLI_ENV_SELECTION"; fi
 
 # Function to create a single Python virtual environment
 # Optional 4th argument: python_version (e.g. 3.11) to use python3.11 -m venv; if empty, uses python3
@@ -521,6 +431,13 @@ create_single_env() {
     local venv_path="$3"
     local python_version="${4:-}"
     local requirements_no_deps_file="${5:-}"
+    local safe_venv_path
+
+    validate_identifier "$env_name" "Environment name"
+    if ! safe_venv_path=$(validate_container_venv_path "$venv_path"); then
+        return 1
+    fi
+    venv_path="$safe_venv_path"
     
     # Choose Python interpreter: python3.11, python3.10, etc., or default python3
     local python_bin="python3"
@@ -540,7 +457,7 @@ create_single_env() {
     # stale editable VCS checkouts under <venv>/src. Always recreate managed
     # environments so changes of repository URL or pinned revision are applied
     # non-interactively and reproducibly.
-    dexec rm -rf "$venv_path"
+    safe_remove_venv "$venv_path" || error "Refusing unsafe environment removal."
     dexec "$python_bin" -m venv "$venv_path"
 
     if [ $? -ne 0 ]; then
@@ -577,7 +494,7 @@ create_single_env() {
     local install_status=$?
     
     # Cleanup main requirements
-    dexec rm -f "$temp_req"
+    dexec rm -f -- "$temp_req"
     
     if [ $install_status -ne 0 ]; then
         error "   - Failed to install packages for '$env_name'."
@@ -599,7 +516,7 @@ create_single_env() {
 
         dexec "$venv_path/bin/python" -m pip install --no-cache-dir --no-deps -r "$temp_nodeps"
         local nodeps_install_status=$?
-        dexec rm -f "$temp_nodeps"
+        dexec rm -f -- "$temp_nodeps"
 
         if [ $nodeps_install_status -ne 0 ]; then
             error "   - Failed to install no-deps packages for '$env_name'."
@@ -608,20 +525,59 @@ create_single_env() {
     
     # Create activation helper script for this environment
     local activate_script="/home/gamma/activate_${env_name}.sh"
-    dexec bash -c "cat > $activate_script << 'EOF'
-#!/bin/bash
-# Helper script to activate the $env_name virtual environment
-source $venv_path/bin/activate
-log \"   - Activated Python environment: \$VIRTUAL_ENV\"
-log \"       - Python path: \$(which python)\"
-EOF
-        chmod +x $activate_script"
+    local temp_activate
+    temp_activate=$(mktemp "${TMPDIR:-/tmp}/cosiflow-activate-${env_name}.XXXXXX") || error "Cannot create activation helper."
+    {
+        printf '%s\n' '#!/bin/bash'
+        printf '# Helper script to activate the %s virtual environment\n' "$env_name"
+        printf 'source %q\n' "$venv_path/bin/activate"
+        printf '%s\n' 'echo "   - Activated Python environment: $VIRTUAL_ENV"'
+        printf '%s\n' 'echo "       - Python path: $(command -v python)"'
+    } > "$temp_activate"
+    if ! docker cp "$temp_activate" "$CONTAINER_NAME:$activate_script"; then
+        rm -f -- "$temp_activate"
+        error "Failed to copy activation helper for '$env_name'."
+    fi
+    rm -f -- "$temp_activate"
+    dexec chmod +x -- "$activate_script" || error "Failed to make activation helper executable."
     
     log "   - Environment '$env_name' created successfully."
     log "       - Activate with: source $activate_script"
     log "       - Or use: $venv_path/bin/python"
     
     return 0
+}
+
+create_configured_environment() {
+    local env_name="$1"
+    local req_path
+    local req_no_deps
+    local requirements_file
+    local requirements_nodeps_file=""
+    local venv_path
+    local description
+    local python_version
+
+    validate_identifier "$env_name" "Environment name"
+    req_path=$(config_environment_value "$env_name" requirements) || return 1
+    requirements_file=$(resolve_module_path "$req_path" file "Requirements file for $env_name") || return 1
+    req_no_deps=$(config_environment_value "$env_name" requirements_no_deps) || return 1
+    if [ -n "$req_no_deps" ]; then
+        requirements_nodeps_file=$(resolve_module_path "$req_no_deps" file "No-deps requirements file for $env_name") || return 1
+    fi
+    venv_path=$(config_environment_value "$env_name" venv_path) || return 1
+    description=$(config_environment_value "$env_name" description) || return 1
+    python_version=$(config_environment_value "$env_name" python_version) || return 1
+
+    if [ -n "$description" ]; then
+        log "   - $description"
+    fi
+    create_single_env \
+        "$env_name" \
+        "$requirements_file" \
+        "$venv_path" \
+        "$python_version" \
+        "$requirements_nodeps_file"
 }
 
 log "\n1.     Action: $ACTION module '$MODULE_NAME'"
@@ -631,44 +587,38 @@ log "\n1.     Action: $ACTION module '$MODULE_NAME'"
 # ==============================================================================
 if [ "$ACTION" == "remove" ]; then
     log "   - Removing module '$MODULE_NAME'..."
-    
-    MODULE_PATH="$WORKSPACE_ROOT/$MODULE_NAME"
-    if [ -n "$CONFIG_FILE" ]; then
-        YAML_CONFIG="$CONFIG_FILE"
-    else
-        YAML_CONFIG=$(find_yaml_config "$MODULE_PATH")
+
+    # Removal still trusts configured module-relative paths and environment
+    # targets. Validate all of them before the first unlink or deletion. A
+    # Dockerfile is not required when removing an existing image.
+    if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ]; then
+        preflight_inputs false
     fi
-    
+
     # Load config to know what to remove
     remove_envs=false
     remove_container=false
-    
+
     if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ]; then
         log "   - Using configuration from: $(basename "$YAML_CONFIG")"
-        
-        # Check what was configured to install
-        install_mode=$(parse_yaml_config "$YAML_CONFIG" "install_mode")
+
+        install_mode=$(config_value install_mode) || error "Cannot read install mode."
         case "$install_mode" in
             container|both)
                 remove_container=true
                 ;;
         esac
-        
-        # Check if environments were configured
-        all_envs=($(list_yaml_envs "$YAML_CONFIG"))
+
+        all_envs=()
+        while IFS= read -r env_name; do
+            [ -n "$env_name" ] && all_envs+=("$env_name")
+        done < <(list_yaml_envs)
         if [ ${#all_envs[@]} -gt 0 ]; then
             remove_envs=true
-        fi
-        
-        # Load paths from config
-        dags_path=$(parse_yaml_config "$YAML_CONFIG" "dags")
-        if [ -n "$dags_path" ]; then
-            PATH_DAGS="$dags_path"
-        fi
-        
-        pipeline_path=$(parse_yaml_config "$YAML_CONFIG" "pipeline")
-        if [ -n "$pipeline_path" ]; then
-            PATH_PIPELINE="$pipeline_path"
+            for env_name in "${all_envs[@]}"; do
+                venv_path=$(config_environment_value "$env_name" venv_path) || error "Cannot read environment path."
+                validate_container_venv_path "$venv_path" >/dev/null || exit 1
+            done
         fi
     else
         # Legacy mode: remove everything
@@ -678,13 +628,13 @@ if [ "$ACTION" == "remove" ]; then
     
     # Remove DAGs link
     log "   - Removing DAGs link..."
-    dexec rm -f /home/gamma/airflow/dags/$MODULE_NAME$EXTENSION_MODULE 2>/dev/null
+    dexec rm -f -- "/home/gamma/airflow/dags/${MODULE_NAME}${EXTENSION_MODULE}" 2>/dev/null
     log "   - DAGs link removed."
     
     # Remove Pipeline scripts link (only if pipeline path was configured)
     if [ -n "$PATH_PIPELINE" ]; then
         log "   - Removing Pipeline scripts link..."
-        dexec rm -f /home/gamma/airflow/pipeline/$MODULE_NAME$EXTENSION_MODULE 2>/dev/null
+        dexec rm -f -- "/home/gamma/airflow/pipeline/${MODULE_NAME}${EXTENSION_MODULE}" 2>/dev/null
         log "   - Pipeline scripts link removed."
     fi
     
@@ -692,15 +642,13 @@ if [ "$ACTION" == "remove" ]; then
     if [ "$remove_envs" = true ]; then
         if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ]; then
             log "   - Removing Python virtual environments..."
-            all_envs=($(list_yaml_envs "$YAML_CONFIG"))
             if [ ${#all_envs[@]} -gt 0 ]; then
                 for env_name in "${all_envs[@]}"; do
-                    venv_path_yaml=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "venv_path")
-                    venv_path="${venv_path_yaml:-/home/gamma/envs/$env_name}"
+                    venv_path=$(config_environment_value "$env_name" "venv_path") || error "Cannot read environment path."
                     activate_script="/home/gamma/activate_${env_name}.sh"
-                    
-                    dexec rm -rf "$venv_path" 2>/dev/null
-                    dexec rm -f "$activate_script" 2>/dev/null
+
+                    safe_remove_venv "$venv_path" 2>/dev/null || error "Refusing unsafe environment removal."
+                    dexec rm -f -- "$activate_script" 2>/dev/null
                     log "   - Removed environment '$env_name'"
                 done
             else
@@ -708,8 +656,8 @@ if [ "$ACTION" == "remove" ]; then
             fi
         else
             # Legacy: remove default cosipy environment
-            dexec rm -rf "$VENV_PATH" 2>/dev/null
-            dexec rm -f /home/gamma/activate_cosipy.sh 2>/dev/null
+            safe_remove_venv "$VENV_PATH" 2>/dev/null || error "Refusing unsafe legacy environment removal."
+            dexec rm -f -- /home/gamma/activate_cosipy.sh 2>/dev/null
             log "   - Removed default Python environment."
         fi
     else
@@ -719,7 +667,7 @@ if [ "$ACTION" == "remove" ]; then
     # Remove Docker image (if configured)
     if [ "$remove_container" = true ]; then
         log "   - Removing Docker image..."
-        docker rmi -f ${MODULE_NAME}:latest 2>/dev/null
+        docker rmi -f "${MODULE_NAME}:latest" 2>/dev/null
         if [ $? -eq 0 ]; then
             log "   - Removed image ${MODULE_NAME}:latest."
         else
@@ -738,91 +686,27 @@ fi
 # INSTALL / UPDATE
 # ==============================================================================
 if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
-    
-    # Find YAML config file (or use -c path)
-    if [ -n "$CONFIG_FILE" ]; then
-        YAML_CONFIG="$CONFIG_FILE"
-    else
-        YAML_CONFIG=$(find_yaml_config "$MODULE_PATH")
-    fi
-    
+
     if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ]; then
         log "   - Configuration loaded from: $(basename "$YAML_CONFIG")"
-        install_mode=$(parse_yaml_config "$YAML_CONFIG" "install_mode")
-        
-        # Debug: check what was read
-        if [ -z "$install_mode" ]; then
-            warning "   - Warning: install_mode not found or empty in YAML"
-            warning "   - Trying direct grep..."
-            install_mode=$(grep -E "^install_mode:" "$YAML_CONFIG" | sed 's/^install_mode:[[:space:]]*//' | sed 's/[[:space:]]*$//' | head -n 1)
-        fi
-        
+        install_mode=$(config_value install_mode) || error "Cannot read install mode."
         if [ -n "$install_mode" ]; then
             log "   - Install mode: $install_mode"
         else
             warning "   - Install mode: (empty or not found)"
         fi
         echo ""
-        
-        # Apply install_mode settings directly (in case load_yaml_config wasn't called earlier or didn't find the file)
-        if [ -n "$install_mode" ]; then
-            case "$install_mode" in
-                container)
-                    BUILD_DOCKER=true
-                    CREATE_ENV=false
-                    ;;
-                environment)
-                    BUILD_DOCKER=false
-                    CREATE_ENV=true
-                    ;;
-                both)
-                    BUILD_DOCKER=true
-                    CREATE_ENV=true
-                    ;;
-                none)
-                    BUILD_DOCKER=false
-                    CREATE_ENV=false
-                    ;;
-            esac
-            # Debug output
-            log "   - Applied settings: BUILD_DOCKER=$BUILD_DOCKER, CREATE_ENV=$CREATE_ENV"
-            echo ""
-        else
-            warning "   - Cannot apply install_mode: value is empty"
-            echo ""
-        fi
-        
-        # Reload config to ensure we have latest paths (in case YAML was found after initial load)
-        load_yaml_config "$MODULE_PATH"
-        
-        # Ensure install_mode is still applied after load_yaml_config (it might override)
-        if [ -n "$install_mode" ]; then
-            case "$install_mode" in
-                container)
-                    BUILD_DOCKER=true
-                    CREATE_ENV=false
-                    ;;
-                environment)
-                    BUILD_DOCKER=false
-                    CREATE_ENV=true
-                    ;;
-                both)
-                    BUILD_DOCKER=true
-                    CREATE_ENV=true
-                    ;;
-                none)
-                    BUILD_DOCKER=false
-                    CREATE_ENV=false
-                    ;;
-            esac
-        fi
     fi
-    
+
+    preflight_inputs
+
     log "2.  Linking module '$MODULE_NAME' into Airflow..."
 
     # 1. Link DAGs (Airflow needs the DAG definition)
     log "   - Linking DAGs..."
-    dexec ln -sfn /home/gamma/airflow/modules_pool/$MODULE_NAME/$PATH_DAGS /home/gamma/airflow/dags/$MODULE_NAME$EXTENSION_MODULE
+    dexec ln -sfn -- \
+        "$CONTAINER_MODULES_ROOT/$MODULE_NAME/$PATH_DAGS" \
+        "/home/gamma/airflow/dags/${MODULE_NAME}${EXTENSION_MODULE}"
     
     if [ $? -eq 0 ]; then
         log "   - DAGs linked."
@@ -833,7 +717,9 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
     # 2. Link Pipeline scripts (only if pipeline path is configured)
     if [ -n "$PATH_PIPELINE" ]; then
         log "   - Linking Pipeline scripts..."
-        dexec ln -sfn /home/gamma/airflow/modules_pool/$MODULE_NAME/$PATH_PIPELINE /home/gamma/airflow/pipeline/$MODULE_NAME$EXTENSION_MODULE
+        dexec ln -sfn -- \
+            "$CONTAINER_MODULES_ROOT/$MODULE_NAME/$PATH_PIPELINE" \
+            "/home/gamma/airflow/pipeline/${MODULE_NAME}${EXTENSION_MODULE}"
         
         if [ $? -eq 0 ]; then
             log "   - Pipeline scripts linked."
@@ -855,77 +741,29 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
         # Check if YAML config exists and -E flag was used (multi-env mode)
         if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ] && [ -n "$ENV_SELECTION" ]; then
             log "   - Using multi-environment mode with $(basename "$YAML_CONFIG")"
-            
+
             # Determine which environments to create
             envs_to_create=()
-            
+
             if [ "$ENV_SELECTION" = "all" ]; then
-                # Get all environments from YAML
-                envs_to_create=($(list_yaml_envs "$YAML_CONFIG"))
+                while IFS= read -r env_name; do
+                    [ -n "$env_name" ] && envs_to_create+=("$env_name")
+                done < <(list_yaml_envs)
             else
-                # Parse comma-separated list
                 IFS=',' read -ra envs_to_create <<< "$ENV_SELECTION"
             fi
-            
+
             if [ ${#envs_to_create[@]} -eq 0 ]; then
                 warning "   - No environments found or specified."
                 log "       Skipping environment creation."
             else
                 success_count=0
                 fail_count=0
-                
+
                 for env_name in "${envs_to_create[@]}"; do
-                    env_name=$(echo "$env_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-                    
-                    # Extract environment configuration from YAML
-                    req_path=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements")
-                    venv_path_yaml=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "venv_path")
-                    enabled=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "enabled")
-                    description=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "description")
-                    python_version=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "python_version")
-                    req_no_deps=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements_no_deps")
-                    
-                    if [ -z "$req_path" ]; then
-                        warning "   - Environment '$env_name' not found in YAML or missing requirements."
-                        ((fail_count++))
-                        continue
-                    fi
-                    
-                    # Resolve requirements file path
-                    if [ "${req_path:0:1}" = "/" ]; then
-                        REQUIREMENTS_FILE="$req_path"
-                    else
-                        REQUIREMENTS_FILE="$MODULE_PATH/$req_path"
-                    fi
-                    
-                    # Resolve requirements_no_deps path (optional)
-                    REQUIREMENTS_NODEPS_FILE=""
-                    if [ -n "$req_no_deps" ]; then
-                        if [ "${req_no_deps:0:1}" = "/" ]; then
-                            REQUIREMENTS_NODEPS_FILE="$req_no_deps"
-                        else
-                            REQUIREMENTS_NODEPS_FILE="$MODULE_PATH/$req_no_deps"
-                        fi
-                    fi
-                    
-                    # Use venv_path from YAML or default
-                    final_venv_path="${venv_path_yaml:-/home/gamma/envs/$env_name}"
-                    
-                    # Show description if available
-                    if [ -n "$description" ]; then
-                        log "   - $description"
-                    fi
-                    
-                    # Check if requirements file exists
-                    if [ ! -f "$REQUIREMENTS_FILE" ]; then
-                        warning "   - Requirements file not found: $REQUIREMENTS_FILE"
-                        log "       Skipping environment '$env_name'."
-                        ((fail_count++))
-                        continue
-                    fi
-                    
-                    # Create the environment
-                    if create_single_env "$env_name" "$REQUIREMENTS_FILE" "$final_venv_path" "$python_version" "$REQUIREMENTS_NODEPS_FILE"; then
+                    env_name=$(printf '%s' "$env_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                    validate_identifier "$env_name" "Selected environment name"
+                    if create_configured_environment "$env_name"; then
                         ((success_count++))
                     else
                         ((fail_count++))
@@ -942,10 +780,12 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
         elif [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ] && [ -z "$ENV_SELECTION" ]; then
             # YAML exists but no -E flag: use enabled environments
             log "   - Using $(basename "$YAML_CONFIG") (installing enabled environments)"
-            
-            all_envs=($(list_yaml_envs "$YAML_CONFIG"))
-            
-            # Debug: show what was found
+
+            all_envs=()
+            while IFS= read -r env_name; do
+                [ -n "$env_name" ] && all_envs+=("$env_name")
+            done < <(list_yaml_envs)
+
             if [ ${#all_envs[@]} -eq 0 ]; then
                 warning "   - No environments found in YAML file: $YAML_CONFIG"
             else
@@ -953,9 +793,9 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
             fi
             
             envs_to_create=()
-            
+
             for env_name in "${all_envs[@]}"; do
-                enabled=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "enabled")
+                enabled=$(config_environment_value "$env_name" enabled) || error "Cannot read enabled flag for '$env_name'."
                 if [ "$enabled" = "true" ]; then
                     envs_to_create+=("$env_name")
                 fi
@@ -971,42 +811,9 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
             else
                 success_count=0
                 fail_count=0
-                
+
                 for env_name in "${envs_to_create[@]}"; do
-                    req_path=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements")
-                    venv_path_yaml=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "venv_path")
-                    description=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "description")
-                    python_version=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "python_version")
-                    req_no_deps=$(parse_yaml_envs "$YAML_CONFIG" "$env_name" "requirements_no_deps")
-                    
-                    if [ "${req_path:0:1}" = "/" ]; then
-                        REQUIREMENTS_FILE="$req_path"
-                    else
-                        REQUIREMENTS_FILE="$MODULE_PATH/$req_path"
-                    fi
-                    
-                    REQUIREMENTS_NODEPS_FILE=""
-                    if [ -n "$req_no_deps" ]; then
-                        if [ "${req_no_deps:0:1}" = "/" ]; then
-                            REQUIREMENTS_NODEPS_FILE="$req_no_deps"
-                        else
-                            REQUIREMENTS_NODEPS_FILE="$MODULE_PATH/$req_no_deps"
-                        fi
-                    fi
-                    
-                    final_venv_path="${venv_path_yaml:-/home/gamma/envs/$env_name}"
-                    
-                    if [ -n "$description" ]; then
-                        log "   - $description"
-                    fi
-                    
-                    if [ ! -f "$REQUIREMENTS_FILE" ]; then
-                        warning "   - Requirements file not found: $REQUIREMENTS_FILE"
-                        ((fail_count++))
-                        continue
-                    fi
-                    
-                    if create_single_env "$env_name" "$REQUIREMENTS_FILE" "$final_venv_path" "$python_version" "$REQUIREMENTS_NODEPS_FILE"; then
+                    if create_configured_environment "$env_name"; then
                         ((success_count++))
                     else
                         ((fail_count++))
@@ -1023,22 +830,14 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
         else
             # Legacy mode: single environment with -r flag or default
             log "   - Using legacy single-environment mode"
-            
-            if [ "${PATH_REQUIREMENTS:0:1}" = "/" ]; then
-                REQUIREMENTS_FILE="$PATH_REQUIREMENTS"
-            else
-                REQUIREMENTS_FILE="$MODULE_PATH/$PATH_REQUIREMENTS"
+
+            if ! REQUIREMENTS_FILE=$(resolve_module_path "$PATH_REQUIREMENTS" file "Legacy requirements file"); then
+                exit 1
             fi
-            
-            if [ ! -f "$REQUIREMENTS_FILE" ]; then
-                warning "   - Requirements file not found: $REQUIREMENTS_FILE"
-                log "       Skipping environment creation."
+            if create_single_env "cosipy" "$REQUIREMENTS_FILE" "$VENV_PATH"; then
+                echo ""
             else
-                if create_single_env "cosipy" "$REQUIREMENTS_FILE" "$VENV_PATH"; then
-                    echo ""
-                else
-                    exit 1
-                fi
+                exit 1
             fi
         fi
     fi
@@ -1047,12 +846,7 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
     if [ "$BUILD_DOCKER" == true ]; then
         log "4.  Building Docker Image..."
         
-        # Resolve Docker context path
-        if [ "${PATH_IMAGES:0:1}" = "/" ]; then
-            DOCKER_CONTEXT="$PATH_IMAGES"
-        else
-            DOCKER_CONTEXT="$MODULE_PATH/$PATH_IMAGES"
-        fi
+        DOCKER_CONTEXT=$(resolve_module_path "$PATH_IMAGES" directory "Docker context path") || exit 1
         
         if [ -d "$MODULE_PATH" ] && [ -f "$DOCKER_CONTEXT/Dockerfile" ]; then
             log "   - Found Dockerfile in $DOCKER_CONTEXT"

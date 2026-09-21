@@ -104,7 +104,8 @@ ENV CONSTRAINT_URL="https://raw.githubusercontent.com/apache/airflow/constraints
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir "apache-airflow==${AIRFLOW_VERSION}" --constraint "${CONSTRAINT_URL}" && \
     pip install --no-cache-dir apache-airflow-providers-postgres psycopg2-binary \
-    pandas plotly scikit-learn tensorflow inotify_simple PyMySQL graphviz
+    pandas plotly scikit-learn tensorflow inotify_simple PyMySQL graphviz \
+    "PyYAML>=6,<7"
 
 # ------------------------------ Final Setup ------------------------------
 RUN mkdir -p ${HOME}/airflow
