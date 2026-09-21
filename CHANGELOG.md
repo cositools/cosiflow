@@ -51,6 +51,11 @@ branch after `v0.2.0`; these changes are not part of a release yet.
 
 ### Fixed
 
+- GCN inbound and outbox workers now retry bounded transient failures with
+  exponential backoff, isolate malformed outbox rows, recover expired locks,
+  and fail the process visibly when their recovery budget is exhausted. The
+  supervisor no longer depends on successful MySQL reporting to observe a dead
+  worker, and Compose restarts the service with `unless-stopped`.
 - The final COSIDAG `show_results` task now uses `ALL_SUCCESS`. It runs only
   when all upstream dependencies have succeeded and no longer presents a
   pipeline containing failed tasks as completed.

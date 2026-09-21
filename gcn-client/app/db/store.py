@@ -207,6 +207,52 @@ class NoticeStore:
                 )
                 return rows
 
+    def recover_stale_outbound_locks(self, lock_timeout_seconds: int) -> int:
+        if lock_timeout_seconds <= 0:
+            raise ValueError("lock_timeout_seconds must be positive")
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE gcn_delivery_attempts AS attempt
+                    JOIN gcn_outbound_notices AS notice
+                      ON notice.id = attempt.outbound_notice_id
+                    SET attempt.status = 'failed',
+                        attempt.finished_at = CURRENT_TIMESTAMP(6),
+                        attempt.error_class = 'WorkerLockExpired',
+                        attempt.error_message = 'Worker lock expired before attempt completion'
+                    WHERE attempt.status = 'started'
+                      AND notice.status = 'locked'
+                      AND notice.locked_at < TIMESTAMPADD(
+                        SECOND, -%s, CURRENT_TIMESTAMP(6)
+                      )
+                    """,
+                    (lock_timeout_seconds,),
+                )
+                cur.execute(
+                    """
+                    UPDATE gcn_outbound_notices
+                    SET status = CASE
+                          WHEN attempts_count + 1 >= max_attempts THEN 'failed'
+                          ELSE 'queued'
+                        END,
+                        attempts_count = attempts_count + 1,
+                        available_at = CURRENT_TIMESTAMP(6),
+                        locked_by = NULL,
+                        locked_at = NULL,
+                        last_error = 'Recovered expired worker lock'
+                    WHERE status = 'locked'
+                      AND locked_at < TIMESTAMPADD(
+                        SECOND, -%s, CURRENT_TIMESTAMP(6)
+                      )
+                    """,
+                    (lock_timeout_seconds,),
+                )
+                recovered = int(cur.rowcount)
+        if recovered:
+            logger.warning("Recovered %s expired outbound lock(s)", recovered)
+        return recovered
+
     def start_attempt(self, outbound_notice_id: int, attempt_no: int, row: dict[str, Any], dry_run: bool) -> int:
         with self.connection() as conn:
             with conn.cursor() as cur:
@@ -271,9 +317,18 @@ class NoticeStore:
                     (status, outbound_notice_id),
                 )
 
-    def finish_attempt_failure(self, attempt_id: int, outbound_notice_id: int, row: dict[str, Any], exc: Exception) -> None:
+    def finish_attempt_failure(
+        self,
+        attempt_id: int,
+        outbound_notice_id: int,
+        row: dict[str, Any],
+        exc: Exception,
+        *,
+        retry_delay_seconds: float = 0.0,
+    ) -> None:
         error_message = str(exc)
         next_status = "failed" if int(row["attempts_count"]) + 1 >= int(row["max_attempts"]) else "queued"
+        retry_delay_microseconds = max(0, int(retry_delay_seconds * 1_000_000))
         with self.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -292,12 +347,88 @@ class NoticeStore:
                     UPDATE gcn_outbound_notices
                     SET status = %s,
                         attempts_count = attempts_count + 1,
+                        available_at = CASE
+                          WHEN %s = 'queued' THEN TIMESTAMPADD(
+                            MICROSECOND, %s, CURRENT_TIMESTAMP(6)
+                          )
+                          ELSE available_at
+                        END,
                         locked_by = NULL,
                         locked_at = NULL,
                         last_error = %s
                     WHERE id = %s
                     """,
-                    (next_status, error_message, outbound_notice_id),
+                    (
+                        next_status,
+                        next_status,
+                        retry_delay_microseconds,
+                        error_message,
+                        outbound_notice_id,
+                    ),
+                )
+
+    def record_claim_failure(
+        self,
+        row: dict[str, Any],
+        exc: Exception,
+        *,
+        permanent: bool,
+        retry_delay_seconds: float = 0.0,
+    ) -> None:
+        attempt_no = int(row["attempts_count"]) + 1
+        next_status = (
+            "failed"
+            if permanent or attempt_no >= int(row["max_attempts"])
+            else "queued"
+        )
+        retry_delay_microseconds = max(0, int(retry_delay_seconds * 1_000_000))
+        error_message = str(exc)
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO gcn_delivery_attempts (
+                      outbound_notice_id, attempt_no, status, dry_run, topic,
+                      producer_client_label, payload_sha256, finished_at,
+                      error_class, error_message
+                    )
+                    VALUES (%s, %s, 'failed', %s, %s, %s, %s,
+                            CURRENT_TIMESTAMP(6), %s, %s)
+                    """,
+                    (
+                        row["id"],
+                        attempt_no,
+                        self.settings.dry_run,
+                        row["topic"],
+                        self.settings.producer_client_label,
+                        row["payload_sha256"],
+                        exc.__class__.__name__,
+                        error_message,
+                    ),
+                )
+                cur.execute(
+                    """
+                    UPDATE gcn_outbound_notices
+                    SET status = %s,
+                        attempts_count = attempts_count + 1,
+                        available_at = CASE
+                          WHEN %s = 'queued' THEN TIMESTAMPADD(
+                            MICROSECOND, %s, CURRENT_TIMESTAMP(6)
+                          )
+                          ELSE available_at
+                        END,
+                        locked_by = NULL,
+                        locked_at = NULL,
+                        last_error = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        next_status,
+                        next_status,
+                        retry_delay_microseconds,
+                        error_message,
+                        row["id"],
+                    ),
                 )
 
     def heartbeat(self, component: str, status: str, details: dict[str, Any] | None = None) -> None:
@@ -328,6 +459,37 @@ class NoticeStore:
                 return list(cur.fetchall())
 
     def assert_healthy(self, degraded_after_seconds: float, offline_after_seconds: float) -> None:
+        if degraded_after_seconds <= 0 or offline_after_seconds <= degraded_after_seconds:
+            raise ValueError("heartbeat thresholds must be positive and ordered")
+        rows = {row["component"]: row for row in self.fetch_heartbeats()}
+        now = datetime.now(timezone.utc)
+        failures: list[str] = []
+        for component in ("inbound", "outbox"):
+            row = rows.get(component)
+            if not row:
+                failures.append(f"{component}: no heartbeat")
+                continue
+            status = str(row.get("status") or "").lower()
+            if status in {"failed", "error", "dead", "offline", "degraded", "warning", "locked"}:
+                failures.append(f"{component}: status={status}")
+                continue
+            updated_at = row.get("updated_at")
+            if updated_at is None:
+                failures.append(f"{component}: missing timestamp")
+                continue
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            age = (now - updated_at).total_seconds()
+            if age > offline_after_seconds:
+                failures.append(f"{component}: heartbeat age exceeds offline threshold")
+            elif age > degraded_after_seconds:
+                failures.append(f"{component}: heartbeat is degraded")
+        if failures:
+            raise RuntimeError("; ".join(failures))
+
+    def assert_workers_not_stale(self, offline_after_seconds: float) -> None:
+        if offline_after_seconds <= 0:
+            raise ValueError("offline_after_seconds must be positive")
         rows = {row["component"]: row for row in self.fetch_heartbeats()}
         now = datetime.now(timezone.utc)
         failures: list[str] = []
@@ -346,11 +508,8 @@ class NoticeStore:
                 continue
             if updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=timezone.utc)
-            age = (now - updated_at).total_seconds()
-            if age > offline_after_seconds:
+            if (now - updated_at).total_seconds() > offline_after_seconds:
                 failures.append(f"{component}: heartbeat age exceeds offline threshold")
-            elif age > degraded_after_seconds:
-                failures.append(f"{component}: heartbeat is degraded")
         if failures:
             raise RuntimeError("; ".join(failures))
 

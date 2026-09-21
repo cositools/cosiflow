@@ -7,6 +7,7 @@ import os
 import queue
 import signal
 import threading
+import time
 
 from dotenv import load_dotenv
 
@@ -20,27 +21,84 @@ from app.services.outbox_service import OutboxService
 logger = logging.getLogger(__name__)
 
 
-def _run_supervised(store: NoticeStore, components) -> None:
+def _safe_store_call(description, operation) -> None:
+    try:
+        operation()
+    except Exception:
+        logger.exception("Could not persist %s", description)
+
+
+def _run_supervised(
+    store: NoticeStore,
+    components,
+    *,
+    heartbeat_offline_seconds: float = 90.0,
+    watchdog_interval_seconds: float = 5.0,
+    watchdog_start_grace_seconds: float = 30.0,
+    watchdog_failure_budget: int = 5,
+) -> None:
     outcomes: queue.Queue[tuple[str, BaseException | None]] = queue.Queue()
 
     def runner(name, target):
+        outcome_exc: BaseException | None = None
         try:
             target()
         except BaseException as exc:
+            outcome_exc = exc
             logger.exception("GCN component %s failed", name)
-            store.heartbeat(name, "failed", {"error_class": type(exc).__name__})
-            store.lifecycle_event("component_failed", {"component": name, "error_class": type(exc).__name__})
-            outcomes.put((name, exc))
-        else:
-            outcomes.put((name, None))
+            _safe_store_call(
+                f"{name} failed heartbeat",
+                lambda: store.heartbeat(name, "failed", {"error_class": type(exc).__name__}),
+            )
+            _safe_store_call(
+                f"{name} component_failed lifecycle event",
+                lambda: store.lifecycle_event(
+                    "component_failed",
+                    {"component": name, "error_class": type(exc).__name__},
+                ),
+            )
+        finally:
+            outcomes.put((name, outcome_exc))
 
+    threads = {}
     for name, target in components:
-        threading.Thread(target=runner, args=(name, target), name=name, daemon=True).start()
+        thread = threading.Thread(
+            target=runner,
+            args=(name, target),
+            name=name,
+            daemon=True,
+        )
+        threads[name] = thread
+        thread.start()
 
-    name, exc = outcomes.get()
-    if exc is not None:
-        raise RuntimeError(f"GCN component {name} failed") from exc
-    raise RuntimeError(f"GCN component {name} exited unexpectedly")
+    started_at = time.monotonic()
+    watchdog_failures = 0
+    while True:
+        try:
+            name, exc = outcomes.get(timeout=watchdog_interval_seconds)
+        except queue.Empty:
+            dead = [name for name, thread in threads.items() if not thread.is_alive()]
+            if dead:
+                raise RuntimeError(f"GCN component {dead[0]} stopped without an outcome")
+            if time.monotonic() - started_at < watchdog_start_grace_seconds:
+                continue
+            try:
+                store.assert_workers_not_stale(heartbeat_offline_seconds)
+                watchdog_failures = 0
+            except Exception as exc:
+                watchdog_failures += 1
+                logger.warning(
+                    "GCN watchdog failure %s/%s: %s",
+                    watchdog_failures,
+                    watchdog_failure_budget,
+                    exc,
+                )
+                if watchdog_failures >= watchdog_failure_budget:
+                    raise RuntimeError("GCN watchdog failure budget exhausted") from exc
+            continue
+        if exc is not None:
+            raise RuntimeError(f"GCN component {name} failed") from exc
+        raise RuntimeError(f"GCN component {name} exited unexpectedly")
 
 
 def main() -> None:
@@ -78,8 +136,8 @@ def main() -> None:
         return
     if args.command == "healthcheck":
         store.assert_healthy(
-            float(os.getenv("GCN_HEARTBEAT_DEGRADED_SECONDS", "30")),
-            float(os.getenv("GCN_HEARTBEAT_OFFLINE_SECONDS", "90")),
+            settings.heartbeat_degraded_seconds,
+            settings.heartbeat_offline_seconds,
         )
         return
 
@@ -94,7 +152,10 @@ def main() -> None:
         store.lifecycle_event("started", {"pid": os.getpid()})
 
         def handle_signal(signum, _frame):
-            store.lifecycle_event("stopping", {"signal": signum})
+            _safe_store_call(
+                "stopping lifecycle event",
+                lambda: store.lifecycle_event("stopping", {"signal": signum}),
+            )
             raise SystemExit(128 + signum)
 
         signal.signal(signal.SIGTERM, handle_signal)
@@ -102,6 +163,10 @@ def main() -> None:
         _run_supervised(
             store,
             (("inbound", inbound.run_forever), ("outbox", outbox.run_forever)),
+            heartbeat_offline_seconds=settings.heartbeat_offline_seconds,
+            watchdog_interval_seconds=settings.watchdog_interval_seconds,
+            watchdog_start_grace_seconds=settings.watchdog_start_grace_seconds,
+            watchdog_failure_budget=settings.worker_failure_budget,
         )
     elif args.command == "run-inbound":
         inbound.run_forever()

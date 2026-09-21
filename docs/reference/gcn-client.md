@@ -59,6 +59,12 @@ The receiver in
    coordinates, classification, and HEALPix URL;
 6. inserts the result into `gcn_inbound_notices`.
 
+Automatic Kafka commits are disabled. When `GCN_CONSUMER_COMMIT=true`, the
+worker commits a message synchronously only after the database insert returns.
+If the insert or commit fails, it closes and recreates the consumer after a
+bounded exponential backoff. A redelivered message is safe because the inbox
+uniqueness constraint uses its Kafka topic, partition, and offset.
+
 The `(topic, kafka_partition, kafka_offset)` unique key makes the receiver
 idempotent when Kafka redelivers a message. COSI notices that identify the COSI
 schema are validated; notices from other missions remain available with
@@ -80,8 +86,11 @@ transactional-outbox-style workflow:
 5. in dry-run mode it marks the row `dry_run_published` without contacting
    Kafka; when explicitly enabled, it serializes the JSON and publishes it with
    `gcn_kafka.Producer`;
-6. failures are re-queued until `max_attempts` is reached, after which the row
-   is marked `failed`.
+6. transient publication failures are re-queued with a persisted, bounded
+   exponential backoff until `max_attempts` is reached;
+7. malformed or permanently invalid rows are recorded as failed and unlocked
+   without stopping later rows in the batch;
+8. expired worker locks are recovered after the configured timeout.
 
 The outbox `idempotency_key` prevents the same pipeline task/result from
 creating duplicate logical notices.
@@ -124,6 +133,26 @@ The most important groups are:
   `GCN_DB_PASSWORD`: MySQL connection;
 - `GCN_SCHEMA_ROOT`, `GCN_COSI_ALERT_SCHEMA`: local schema validation.
 
+Worker resilience uses these optional settings:
+
+| Variable | Default | Purpose |
+| --- | ---: | --- |
+| `GCN_WORKER_BACKOFF_INITIAL_SECONDS` | `1` | First delay after a worker-loop failure |
+| `GCN_WORKER_BACKOFF_MAX_SECONDS` | `30` | Maximum worker-loop delay |
+| `GCN_WORKER_BACKOFF_JITTER_RATIO` | `0.2` | Random spread applied to retry delays |
+| `GCN_WORKER_FAILURE_BUDGET` | `5` | Consecutive loop or watchdog failures before process exit |
+| `GCN_OUTBOX_RETRY_INITIAL_SECONDS` | `5` | First persisted delivery retry delay |
+| `GCN_OUTBOX_RETRY_MAX_SECONDS` | `300` | Maximum persisted delivery retry delay |
+| `GCN_OUTBOX_LOCK_TIMEOUT_SECONDS` | `300` | Age after which an abandoned outbox lock is recovered |
+| `GCN_HEARTBEAT_DEGRADED_SECONDS` | `30` | Age that makes the external healthcheck degraded |
+| `GCN_HEARTBEAT_OFFLINE_SECONDS` | `90` | Age that makes a worker offline |
+| `GCN_WATCHDOG_INTERVAL_SECONDS` | `5` | Main-process watchdog interval |
+| `GCN_WATCHDOG_START_GRACE_SECONDS` | `30` | Startup grace before watchdog checks |
+
+The maximum worker backoff must remain below the offline heartbeat threshold.
+The outbox lock timeout must exceed the expected maximum duration of one
+publish attempt.
+
 Add your own required credentials to
 `cosiflow/env/.env`:
 
@@ -151,9 +180,19 @@ docker compose logs -f gcn-client
 
 The default configuration consumes the topics listed in
 `GCN_CONSUMER_TOPICS`. Missing Kafka or database credentials are fatal before
-the client opens a connection. The container healthcheck uses application
-heartbeats and Compose applies a bounded restart policy. Airflow only displays
-this state; it has no lifecycle endpoint or Docker access.
+the client opens a connection. Transient failures are retried locally up to a
+configured failure budget. An exhausted budget, an unexpected worker return,
+or a stale-worker watchdog failure exits the process non-zero. The container
+healthcheck uses application heartbeats and Compose uses `unless-stopped`, so
+Docker restarts the failed process until an operator explicitly stops it.
+Airflow only displays this state; it has no lifecycle endpoint or Docker
+access.
+
+Outbox publication is at-least-once across the Kafka/MySQL boundary. If Kafka
+accepts a notice and the following MySQL success update fails, stale-lock
+recovery may publish the notice again. Consumers must use the notice identity
+or payload identity to tolerate that ambiguity; the implementation does not
+claim distributed exactly-once delivery.
 
 Use `./gcn-lifecycle.sh start|stop|restart|status` from `cosiflow/env` for audited local
 lifecycle operations. Shared deployments use the platform orchestrator and its

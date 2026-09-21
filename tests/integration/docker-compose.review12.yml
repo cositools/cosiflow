@@ -1,0 +1,48 @@
+x-client: &client
+  image: cosiflow-gcn-client:review12-test
+  build:
+    context: ../../gcn-client
+    dockerfile: Dockerfile
+  environment: &client-environment
+    GCN_DB_HOST: mysql
+    GCN_DB_PORT: "3306"
+    GCN_DB_NAME: review12
+    GCN_DB_USER: review12
+    GCN_DB_PASSWORD: review12-test-only
+    GCN_CONSUMER_ENABLED: "false"
+    GCN_PRODUCER_ENABLED: "false"
+    GCN_DRY_RUN: "true"
+    GCN_SCHEMA_ROOT: /app/gcn-schema
+    GCN_COSI_ALERT_SCHEMA: /app/gcn-schema/gcn/notices/cosi/alert.schema.json
+  depends_on:
+    mysql:
+      condition: service_healthy
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: review12-root-test-only
+      MYSQL_DATABASE: review12
+      MYSQL_USER: review12
+      MYSQL_PASSWORD: review12-test-only
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+    tmpfs:
+      - /var/lib/mysql
+
+  client:
+    <<: *client
+    profiles: ["tools"]
+
+  restart-probe:
+    <<: *client
+    profiles: ["restart"]
+    depends_on: {}
+    environment:
+      <<: *client-environment
+    command: ["python", "-c", "raise SystemExit(7)"]
+    restart: unless-stopped
