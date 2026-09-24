@@ -527,243 +527,345 @@
 
 <!-- JavaScript for file preview functionality -->
 <script>
+    const previewUrlTemplate = {{ url_for(
+        'HEASARCExplorerView.preview_file',
+        filepath='__FILEPATH__'
+    ) | tojson }};
+    const imageUrlTemplate = {{ url_for(
+        'HEASARCExplorerView.image_file',
+        filepath='__FILEPATH__'
+    ) | tojson }};
+    const downloadUrlTemplate = {{ url_for(
+        'HEASARCExplorerView.download_file',
+        filepath='__FILEPATH__'
+    ) | tojson }};
+    const allowedInlineImageMimeTypes = new Set([
+        'image/png',
+        'image/jpeg',
+        'image/gif',
+        'image/bmp',
+        'image/webp',
+    ]);
+
+    function createPreviewElement(tagName, options = {}) {
+        const element = document.createElement(tagName);
+        if (options.className) {
+            element.className = options.className;
+        }
+        if (options.text !== undefined) {
+            element.textContent = String(options.text);
+        }
+        return element;
+    }
+
+    function replacePreviewContent(...nodes) {
+        const previewContent = document.querySelector('.preview-content');
+        if (previewContent) {
+            previewContent.replaceChildren(...nodes);
+        }
+    }
+
+    function setPreviewTitle(title) {
+        const previewTitle = document.querySelector('.preview-title');
+        if (previewTitle) {
+            previewTitle.textContent = title;
+        }
+    }
+
+    function showPreviewMessage(className, ...messages) {
+        const container = createPreviewElement('div', { className });
+        messages.forEach(message => {
+            container.append(createPreviewElement('p', { text: message }));
+        });
+        replacePreviewContent(container);
+    }
+
+    function validateRouteUrl(rawUrl, trustedTemplate) {
+        if (typeof rawUrl !== 'string' || !rawUrl) {
+            throw new TypeError('Missing route URL');
+        }
+
+        const marker = '__FILEPATH__';
+        const trustedUrl = new URL(trustedTemplate, window.location.origin);
+        const markerIndex = trustedUrl.pathname.indexOf(marker);
+        if (markerIndex < 0) {
+            throw new TypeError('Invalid trusted route template');
+        }
+
+        const candidate = new URL(rawUrl, window.location.origin);
+        const pathPrefix = trustedUrl.pathname.slice(0, markerIndex);
+        const pathSuffix = trustedUrl.pathname.slice(markerIndex + marker.length);
+        const allowedProtocol = candidate.protocol === 'http:' || candidate.protocol === 'https:';
+        const allowedPath = candidate.pathname.startsWith(pathPrefix)
+            && candidate.pathname.endsWith(pathSuffix)
+            && candidate.pathname.length > pathPrefix.length + pathSuffix.length;
+
+        if (!allowedProtocol
+                || candidate.origin !== window.location.origin
+                || candidate.username
+                || candidate.password
+                || candidate.search
+                || candidate.hash
+                || !allowedPath) {
+            throw new TypeError('Unsupported route URL');
+        }
+        return candidate.href;
+    }
+
+    function isValidBase64(value) {
+        return typeof value === 'string'
+            && value.length > 0
+            && value.length % 4 === 0
+            && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
+    }
+
+    function validateInlineImagePayload(data) {
+        if (!allowedInlineImageMimeTypes.has(data.mime_type) || !isValidBase64(data.content)) {
+            throw new TypeError('Unsupported inline image payload');
+        }
+        return `data:${data.mime_type};base64,${data.content}`;
+    }
+
+    function formatFileSize(size) {
+        const parsedSize = Number(size);
+        return Number.isSafeInteger(parsedSize) && parsedSize >= 0
+            ? `${parsedSize} bytes`
+            : 'unknown';
+    }
+
+    function createImageMetadata(data) {
+        const fragment = document.createDocumentFragment();
+        if (data.caption) {
+            const caption = createPreviewElement('div', { className: 'preview-caption' });
+            caption.append(createPreviewElement('strong', {
+                className: 'preview-caption-title',
+                text: 'Figure caption',
+            }));
+            caption.append(document.createTextNode(String(data.caption)));
+            fragment.append(caption);
+        }
+
+        const hiddenCaptionKeys = new Set(['Description', 'Caption']);
+        const metadataEntries = Object.entries(data.metadata || {})
+            .filter(([key]) => !hiddenCaptionKeys.has(key));
+        if (metadataEntries.length) {
+            const metadata = createPreviewElement('div', { className: 'preview-metadata' });
+            const list = document.createElement('dl');
+            metadataEntries.forEach(([key, value]) => {
+                list.append(createPreviewElement('dt', { text: key }));
+                list.append(createPreviewElement('dd', { text: value }));
+            });
+            metadata.append(list);
+            fragment.append(metadata);
+        }
+        return fragment;
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
-        console.log('DOM loaded, setting up preview functionality');
-        // Add click handlers to all preview file buttons
         const previewButtons = document.querySelectorAll('.preview-file');
-        console.log('Found preview buttons:', previewButtons.length);
-        
         let currentPreviewButton = null;
-        
+
         previewButtons.forEach(button => {
             let clickTimeout;
-            
-            // Single click for preview toggle
+
             button.addEventListener('click', function(e) {
                 e.preventDefault();
                 const filepath = this.getAttribute('data-filepath');
                 const filename = this.getAttribute('data-filename');
-                console.log('Button clicked:', filepath, filename);
-                
-                // Clear any existing timeout
                 clearTimeout(clickTimeout);
-                
-                // Set a timeout to detect if this is a single click
                 clickTimeout = setTimeout(() => {
                     toggleFilePreview(this, filepath, filename);
-                }, 200); // 200ms delay to detect double-click
+                }, 200);
             });
-            
-            // Double click for download
+
             button.addEventListener('dblclick', function(e) {
                 e.preventDefault();
-                clearTimeout(clickTimeout); // Cancel single-click action
-                
-                const downloadUrl = this.getAttribute('data-download-url');
-                console.log('Double-click download:', downloadUrl);
-                window.location.href = downloadUrl;
+                clearTimeout(clickTimeout);
+                try {
+                    const downloadUrl = validateRouteUrl(
+                        this.getAttribute('data-download-url'),
+                        downloadUrlTemplate
+                    );
+                    window.location.href = downloadUrl;
+                } catch (error) {
+                    console.error('Rejected download URL', error);
+                    setPreviewTitle('Download unavailable');
+                    showPreviewMessage('preview-error', 'The download URL is invalid.');
+                }
             });
         });
-        
+
         function toggleFilePreview(button, filepath, filename) {
-            // Remove active class from all buttons
             previewButtons.forEach(btn => btn.classList.remove('active'));
-            
-            // If this is the same file that's currently previewed, close it
             if (currentPreviewButton === button) {
                 closePreview();
                 currentPreviewButton = null;
                 return;
             }
-            
-            // Otherwise, show preview for this file
+
             button.classList.add('active');
             currentPreviewButton = button;
             loadFilePreview(filepath, filename);
         }
-        
+
         function closePreview() {
-            const previewContent = document.querySelector('.preview-content');
             const previewFilename = document.querySelector('.preview-filename');
-            const previewTitle = document.querySelector('.preview-title');
-            
-            if (previewContent) {
-                previewContent.innerHTML = `
-                    <div class="preview-loading" id="preview-placeholder">
-                        <p>Select a file to preview its contents</p>
-                        <p style="font-size: 0.9em; color: #7f8c8d; margin-top: 10px;">
-                            Click once on any file to see its preview here
-                        </p>
-                    </div>
-                `;
-            }
-            
+            showPreviewMessage(
+                'preview-loading',
+                'Select a file to preview its contents',
+                'Click once on any file to see its preview here'
+            );
             if (previewFilename) {
                 previewFilename.textContent = 'Click on a file to preview its contents';
             }
-
-            if (previewTitle) {
-                previewTitle.textContent = 'Select a plot';
-            }
+            setPreviewTitle('Select a plot');
         }
     });
 
     function loadFilePreview(filepath, filename) {
-        console.log('Loading preview for:', filepath, filename);
-        const previewContent = document.querySelector('.preview-content');
         const previewFilename = document.querySelector('.preview-filename');
-        const previewTitle = document.querySelector('.preview-title');
-        
-        if (!previewContent) {
-            console.error('Preview content element not found!');
-            return;
-        }
-        
-        // Update header
         if (previewFilename) {
             previewFilename.textContent = filename;
         }
+        setPreviewTitle('Loading plot...');
+        showPreviewMessage('preview-loading', 'Loading preview...');
 
-        if (previewTitle) {
-            previewTitle.textContent = 'Loading plot...';
-        }
-        
-        // Show loading state
-        previewContent.innerHTML = '<div class="preview-loading">Loading preview...</div>';
-        
-        // Update to match new route structure
-        const previewUrlTemplate = {{ url_for(
-            'HEASARCExplorerView.preview_file',
-            filepath='__FILEPATH__'
-        ) | tojson }};
         const encodedFilepath = filepath
             .split('/')
             .map(segment => encodeURIComponent(segment))
             .join('/');
-        const previewUrl = previewUrlTemplate.replace('__FILEPATH__', encodedFilepath);
-        console.log('Making request to:', previewUrl);
-        
-        // Make AJAX request to preview endpoint
+        let previewUrl;
+        try {
+            previewUrl = validateRouteUrl(
+                previewUrlTemplate.replace('__FILEPATH__', encodedFilepath),
+                previewUrlTemplate
+            );
+        } catch (error) {
+            console.error('Rejected preview URL', error);
+            setPreviewTitle('Preview unavailable');
+            showPreviewMessage('preview-error', 'The preview URL is invalid.');
+            return;
+        }
+
         fetch(previewUrl)
             .then(response => {
-                console.log('Response status:', response.status);
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    throw new Error(`Preview request failed with status ${response.status}`);
                 }
                 return response.json();
             })
-            .then(data => {
-                console.log('Preview data received:', data);
-                displayPreview(data, filename);
-            })
+            .then(data => displayPreview(data, filename))
             .catch(error => {
                 console.error('Error loading preview:', error);
-                previewContent.innerHTML = `
-                    <div class="preview-error">
-                        <p>Error loading preview: ${error.message}</p>
-                    </div>
-                `;
+                setPreviewTitle('Preview unavailable');
+                showPreviewMessage('preview-error', 'Unable to load the file preview.');
             });
     }
 
     function displayPreview(data, filename) {
-        const previewContent = document.querySelector('.preview-content');
-        const previewTitle = document.querySelector('.preview-title');
-        
-        if (data.error) {
-            if (previewTitle) {
-                previewTitle.textContent = 'Preview unavailable';
+        try {
+            if (!data || typeof data !== 'object') {
+                throw new TypeError('Invalid preview response');
             }
-            previewContent.innerHTML = `
-                <div class="preview-error">
-                    <p>${data.error}</p>
-                </div>
-            `;
-            return;
-        }
-        
-        // Determine content type and display accordingly
-        if (data.content_type === 'image') {
-            if (previewTitle) {
-                previewTitle.textContent = data.preview_title || 'Plot';
+            if (data.error) {
+                setPreviewTitle('Preview unavailable');
+                showPreviewMessage('preview-error', String(data.error));
+                return;
             }
-            const imageUrl = escapeHtml(data.image_url);
-            previewContent.innerHTML = `
-                <div class="preview-image-toolbar" role="toolbar" aria-label="Image zoom controls">
-                    <button type="button" class="preview-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
-                    <span class="preview-zoom-level" aria-live="polite">100%</span>
-                    <button type="button" class="preview-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
-                    <button type="button" class="preview-zoom-reset" title="Fit image to preview">Fit</button>
-                    <a class="preview-open-image" href="${imageUrl}" target="_blank" rel="noopener"
-                       title="Open the full-size image in a new tab">Open full image ↗</a>
-                </div>
-                <div class="preview-image-viewport">
-                    <img src="data:${data.mime_type};base64,${data.content}"
-                         class="preview-image"
-                         data-full-image-url="${imageUrl}"
-                         alt="${escapeHtml(filename)}"
-                         title="Double-click to open the full-size image in a new tab">
-                </div>
-                <p class="preview-image-help">Use − / + to zoom. Double-click the image to open it full-size.</p>
-                ${renderImageMetadata(data)}
-            `;
-            initializeImagePreview();
-        } else if (data.content_type === 'image_metadata') {
-            if (previewTitle) {
-                previewTitle.textContent = data.preview_title || 'Plot';
+
+            if (data.content_type === 'image') {
+                const imageUrl = validateRouteUrl(data.image_url, imageUrlTemplate);
+                const inlineImageUrl = validateInlineImagePayload(data);
+                setPreviewTitle(String(data.preview_title || 'Plot'));
+
+                const toolbar = createPreviewElement('div', { className: 'preview-image-toolbar' });
+                toolbar.setAttribute('role', 'toolbar');
+                toolbar.setAttribute('aria-label', 'Image zoom controls');
+                const zoomOut = createPreviewElement('button', { className: 'preview-zoom-out', text: '−' });
+                const zoomLabel = createPreviewElement('span', { className: 'preview-zoom-level', text: '100%' });
+                const zoomIn = createPreviewElement('button', { className: 'preview-zoom-in', text: '+' });
+                const zoomReset = createPreviewElement('button', { className: 'preview-zoom-reset', text: 'Fit' });
+                [zoomOut, zoomIn, zoomReset].forEach(button => { button.type = 'button'; });
+                zoomOut.title = 'Zoom out';
+                zoomOut.setAttribute('aria-label', 'Zoom out');
+                zoomIn.title = 'Zoom in';
+                zoomIn.setAttribute('aria-label', 'Zoom in');
+                zoomReset.title = 'Fit image to preview';
+                zoomLabel.setAttribute('aria-live', 'polite');
+                const openImage = createPreviewElement('a', {
+                    className: 'preview-open-image',
+                    text: 'Open full image ↗',
+                });
+                openImage.href = imageUrl;
+                openImage.target = '_blank';
+                openImage.rel = 'noopener noreferrer';
+                openImage.title = 'Open the full-size image in a new tab';
+                toolbar.append(zoomOut, zoomLabel, zoomIn, zoomReset, openImage);
+
+                const viewport = createPreviewElement('div', { className: 'preview-image-viewport' });
+                const image = createPreviewElement('img', { className: 'preview-image' });
+                image.src = inlineImageUrl;
+                image.alt = String(filename || '');
+                image.title = 'Double-click to open the full-size image in a new tab';
+                viewport.append(image);
+                const help = createPreviewElement('p', {
+                    className: 'preview-image-help',
+                    text: 'Use − / + to zoom. Double-click the image to open it full-size.',
+                });
+                replacePreviewContent(toolbar, viewport, help, createImageMetadata(data));
+                initializeImagePreview({
+                    viewport,
+                    image,
+                    zoomOut,
+                    zoomIn,
+                    zoomReset,
+                    zoomLabel,
+                    imageUrl,
+                });
+            } else if (data.content_type === 'image_metadata') {
+                const imageUrl = validateRouteUrl(data.image_url, imageUrlTemplate);
+                setPreviewTitle(String(data.preview_title || 'Plot'));
+                const notice = createPreviewElement('div', { className: 'preview-error' });
+                notice.append(createPreviewElement('p', {
+                    text: 'The image cannot be shown as an inline preview.',
+                }));
+                notice.append(createPreviewElement('p', {
+                    text: `File size: ${formatFileSize(data.size)}`,
+                }));
+                const linkParagraph = document.createElement('p');
+                const link = createPreviewElement('a', { text: 'Open the full-size image in a new tab ↗' });
+                link.href = imageUrl;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                linkParagraph.append(link);
+                notice.append(linkParagraph);
+                replacePreviewContent(notice, createImageMetadata(data));
+            } else if (data.content_type === 'text') {
+                setPreviewTitle('File contents');
+                replacePreviewContent(createPreviewElement('div', {
+                    className: 'preview-text',
+                    text: data.content === undefined ? '' : data.content,
+                }));
+            } else if (data.content_type === 'binary') {
+                setPreviewTitle('Preview unavailable');
+                showPreviewMessage(
+                    'preview-error',
+                    'Binary file preview not supported',
+                    `File size: ${formatFileSize(data.size)}`
+                );
+            } else {
+                setPreviewTitle('Preview unavailable');
+                showPreviewMessage('preview-error', 'Preview not available for this file type');
             }
-            previewContent.innerHTML = `
-                <div class="preview-error">
-                    <p>The image is too large for an inline preview.</p>
-                    <p>File size: ${data.size} bytes</p>
-                    <p>
-                        <a href="${escapeHtml(data.image_url)}" target="_blank" rel="noopener">
-                            Open the full-size image in a new tab ↗
-                        </a>
-                    </p>
-                </div>
-                ${renderImageMetadata(data)}
-            `;
-        } else if (data.content_type === 'text') {
-            if (previewTitle) {
-                previewTitle.textContent = 'File contents';
-            }
-            previewContent.innerHTML = `
-                <div class="preview-text">${escapeHtml(data.content)}</div>
-            `;
-        } else if (data.content_type === 'binary') {
-            if (previewTitle) {
-                previewTitle.textContent = 'Preview unavailable';
-            }
-            previewContent.innerHTML = `
-                <div class="preview-error">
-                    <p>Binary file preview not supported</p>
-                    <p>File size: ${data.size} bytes</p>
-                </div>
-            `;
-        } else {
-            if (previewTitle) {
-                previewTitle.textContent = 'Preview unavailable';
-            }
-            previewContent.innerHTML = `
-                <div class="preview-error">
-                    <p>Preview not available for this file type</p>
-                </div>
-            `;
+        } catch (error) {
+            console.error('Rejected preview data', error);
+            setPreviewTitle('Preview unavailable');
+            showPreviewMessage('preview-error', 'The preview response is invalid.');
         }
     }
 
-    function initializeImagePreview() {
-        const viewport = document.querySelector('.preview-image-viewport');
-        const image = viewport && viewport.querySelector('.preview-image');
-        const zoomOut = document.querySelector('.preview-zoom-out');
-        const zoomIn = document.querySelector('.preview-zoom-in');
-        const zoomReset = document.querySelector('.preview-zoom-reset');
-        const zoomLabel = document.querySelector('.preview-zoom-level');
-        if (!viewport || !image || !zoomOut || !zoomIn || !zoomReset || !zoomLabel) {
-            return;
-        }
-
+    function initializeImagePreview(elements) {
+        const { viewport, image, zoomOut, zoomIn, zoomReset, zoomLabel, imageUrl } = elements;
         const minimumZoom = 0.25;
         const maximumZoom = 4;
         const zoomStep = 0.25;
@@ -795,43 +897,10 @@
 
         image.addEventListener('dblclick', event => {
             event.preventDefault();
-            window.open(image.dataset.fullImageUrl, '_blank', 'noopener,noreferrer');
+            window.open(imageUrl, '_blank', 'noopener,noreferrer');
         });
 
         applyZoom(1);
-    }
-
-    function renderImageMetadata(data) {
-        const caption = data.caption
-            ? `
-                <div class="preview-caption">
-                    <strong class="preview-caption-title">Figure caption</strong>
-                    ${escapeHtml(data.caption)}
-                </div>
-            `
-            : '';
-        const hiddenCaptionKeys = new Set(['Description', 'Caption']);
-        const metadataEntries = Object.entries(data.metadata || {})
-            .filter(([key]) => !hiddenCaptionKeys.has(key));
-        const metadata = metadataEntries.length
-            ? `
-                <div class="preview-metadata">
-                    <dl>
-                        ${metadataEntries.map(([key, value]) => `
-                            <dt>${escapeHtml(key)}</dt>
-                            <dd>${escapeHtml(String(value))}</dd>
-                        `).join('')}
-                    </dl>
-                </div>
-            `
-            : '';
-        return `${caption}${metadata}`;
-    }
-
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
     }
 </script>
 {% endblock %}

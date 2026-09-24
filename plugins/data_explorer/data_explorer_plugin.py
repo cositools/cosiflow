@@ -1,6 +1,6 @@
 import os
-import traceback
 import base64
+import logging
 import mimetypes
 import struct
 import zlib
@@ -13,6 +13,9 @@ from jinja2 import Environment
 from shared_auth import ACTION_READ, SCIENTIFIC_DATA, require_cosiflow_permission
 from shared_ui import add_shared_templates
 from werkzeug.exceptions import HTTPException
+
+
+logger = logging.getLogger(__name__)
 
 # Read the data directory from COSI_DATA_DIR, falling back to the container path.
 DL0_FOLDER = os.environ.get("COSI_DATA_DIR", "/home/gamma/workspace/data")
@@ -140,6 +143,15 @@ def get_file_icon(filename):
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 PNG_TEXT_CHUNKS = {b"tEXt", b"zTXt", b"iTXt"}
 MAX_PNG_TEXT_SIZE = 1024 * 1024
+INLINE_IMAGE_MIME_TYPES = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/bmp",
+        "image/webp",
+    }
+)
 
 
 def _decompress_png_text(payload):
@@ -292,12 +304,11 @@ class HEASARCExplorerView(BaseView):
             return self.render_template("explorer.html", folders=folders, current_path=DL0_FOLDER, get_file_icon=get_file_icon)
         except PermissionError:
             abort(403)
-        except Exception as e:
-            error_traceback = traceback.format_exc()
-            # If self.render_template fails (e.g. during an error), try to return a simple error response
-            # But the error 'appbuilder is undefined' suggests we might have issues even getting there if render_template is called
-            # Let's ensure we are using self.render_template which injects appbuilder
-            return f"Error loading folders: {e}\n\nTraceback:\n{error_traceback}", 500
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("cosiflow_data_explorer_home_failed")
+            return "Unable to load the Data Explorer.", 500
 
     @expose('/folder/<path:foldername>')
     @require_cosiflow_permission(ACTION_READ, SCIENTIFIC_DATA)
@@ -340,43 +351,65 @@ class HEASARCExplorerView(BaseView):
             abort(403)
         except HTTPException:
             raise
-        except Exception as e:
-            error_traceback = traceback.format_exc()
-            return f"Error loading files: {e}\n\nTraceback:\n{error_traceback}", 500
+        except Exception:
+            logger.exception(
+                "cosiflow_data_explorer_folder_failed folder=%r", foldername
+            )
+            return "Unable to load the requested folder.", 500
 
     @expose('/download/<path:filepath>')
     @require_cosiflow_permission(ACTION_READ, SCIENTIFIC_DATA)
     def download_file(self, filepath):
-        abs_path = _resolve_data_path(filepath)
-        return send_from_directory(
-            os.fspath(abs_path.parent),
-            abs_path.name,
-            as_attachment=True,
-        )
+        try:
+            abs_path = _resolve_data_path(filepath)
+            return send_from_directory(
+                os.fspath(abs_path.parent),
+                abs_path.name,
+                as_attachment=True,
+            )
+        except PermissionError:
+            abort(403)
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception(
+                "cosiflow_data_explorer_download_failed filepath=%r", filepath
+            )
+            return "Unable to download the requested file.", 500
 
     @expose('/image/<path:filepath>')
     @require_cosiflow_permission(ACTION_READ, SCIENTIFIC_DATA)
     def image_file(self, filepath):
         """Serve an image inline for the full-size preview in a separate tab."""
-        abs_path = _resolve_data_path(filepath)
-        if not abs_path.is_file():
-            abort(404)
+        try:
+            abs_path = _resolve_data_path(filepath)
+            if not abs_path.is_file():
+                abort(404)
 
-        mime_type, _ = mimetypes.guess_type(os.fspath(abs_path))
-        if get_content_type(os.fspath(abs_path), mime_type) != "image":
-            abort(415)
+            mime_type, _ = mimetypes.guess_type(os.fspath(abs_path))
+            if get_content_type(os.fspath(abs_path), mime_type) != "image":
+                abort(415)
 
-        response = send_from_directory(
-            os.fspath(abs_path.parent),
-            abs_path.name,
-            as_attachment=False,
-            conditional=True,
-        )
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'none'; style-src 'unsafe-inline'; sandbox"
-        )
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        return response
+            response = send_from_directory(
+                os.fspath(abs_path.parent),
+                abs_path.name,
+                as_attachment=False,
+                conditional=True,
+            )
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+            )
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
+        except PermissionError:
+            abort(403)
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception(
+                "cosiflow_data_explorer_image_failed filepath=%r", filepath
+            )
+            return "Unable to load the requested image.", 500
 
     @expose('/preview/<path:filepath>')
     @require_cosiflow_permission(ACTION_READ, SCIENTIFIC_DATA)
@@ -424,6 +457,23 @@ class HEASARCExplorerView(BaseView):
                 })
             
             if content_type == "image":
+                if mime_type not in INLINE_IMAGE_MIME_TYPES:
+                    metadata = get_image_metadata(abs_path)
+                    return jsonify({
+                        "content_type": "image_metadata",
+                        "size": file_size,
+                        "mime_type": mime_type or "application/octet-stream",
+                        "image_url": url_for(
+                            "HEASARCExplorerView.image_file",
+                            filepath=filepath,
+                        ),
+                        "preview_title": get_plot_preview_title(abs_path, metadata),
+                        "caption": (
+                            metadata.get("Description")
+                            or metadata.get("Caption")
+                        ),
+                        "metadata": metadata,
+                    })
                 # Load image as base64
                 with open(abs_path, 'rb') as f:
                     content = base64.b64encode(f.read()).decode('utf-8')
@@ -473,8 +523,13 @@ class HEASARCExplorerView(BaseView):
         
         except HTTPException:
             raise
-        except Exception as e:
-            return jsonify({"error": f"Error loading file: {str(e)}"}), 500
+        except PermissionError:
+            abort(403)
+        except Exception:
+            logger.exception(
+                "cosiflow_data_explorer_preview_failed filepath=%r", filepath
+            )
+            return jsonify({"error": "Unable to load the file preview."}), 500
 
 class DummyOperator(BaseOperator):
     def execute(self, context):

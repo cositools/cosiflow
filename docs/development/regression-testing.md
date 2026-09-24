@@ -39,6 +39,7 @@ report an explicit skip when that dependency is unavailable.
 | `tests/security/test_shared_auth.py` | Review 6 | Anonymous redirect, fail-closed authorization, absence of pre-authorization side effects, capability checks, and the Viewer/Scientist/Operator/Admin permission matrix |
 | `tests/security/test_endpoint_matrix.py` | Review 6 | Complete route-to-permission coverage, POST-only mutations, least-privilege manifests, and CSRF tokens in mutating forms and requests |
 | `tests/security/test_configure_rbac.py` | Review 6 | Viewer isolation, Scientist/Operator/Admin provisioning, stale-permission removal, verification failures, and idempotent reconciliation |
+| `tests/security/test_review19_data_explorer.py` | Review 19 | Sanitized Data Explorer failures, server-side diagnostics, image isolation, DOM-safe hostile payload handling, same-origin route validation, raster MIME allowlisting, and base64 validation |
 | `tests/test_issue18_contracts.py` | Review 18 | Removal of the unused paths module and the supported COSIDAG import contract |
 | `tests/test_review8_cosidag_state.py` | Review 8 | Runtime retrigger identity/configuration, transactional schema, claim/finalization wiring, migration, and reset-plugin contracts |
 | `tests/integration/test_review8_postgres.py` | Review 8 | Real PostgreSQL uniqueness, concurrent claims, failure recovery, idempotent finalization, and reset isolation |
@@ -213,6 +214,31 @@ The tests use deterministic Auth Manager and FAB security-manager doubles so
 they run without Airflow. They exercise the same public method contract used by
 the plugins, but do not replace an authenticated smoke test in the supported
 Airflow image or production SSO validation.
+
+## Review 19 Data Explorer security tests
+
+The Review 19 suite uses synthetic exceptions, temporary image files, and
+framework doubles to verify every Data Explorer error boundary without reading
+real scientific data. Run the focused suite with:
+
+```bash
+python3 -m unittest tests.security.test_review19_data_explorer -v
+```
+
+The server tests require only Python. The hostile-payload DOM test runs when a
+Node.js executable is available. Set `REVIEW19_NODE` to an explicit executable
+when Node.js is not on `PATH`:
+
+```bash
+REVIEW19_NODE=/path/to/node \
+  python3 -m unittest tests.security.test_review19_data_explorer -v
+```
+
+The DOM test executes the browser script against a minimal in-memory DOM. It
+checks HTML and event-attribute payloads, filename and metadata handling,
+same-origin route enforcement, unsupported URL schemes, raster MIME types,
+base64 validation, and the generic fetch-failure message. The Review 6
+endpoint and role-matrix suites remain the authority for Data Explorer access.
 
 ## Adding or changing a regression test
 
