@@ -45,6 +45,7 @@ report an explicit skip when that dependency is unavailable.
 | `tests/test_review12_worker_resilience.py` | Review 12 | Worker backoff and failure budgets, poison-row isolation, supervisor fallback, stale heartbeat handling, and Compose restart/healthcheck contracts |
 | `tests/integration/test_review12_mysql.py` | Review 12 | Real MySQL retry scheduling, stale-lock recovery, stale healthcheck failure, and container restart behavior |
 | `tests/test_review13_module_loader_safety.py` | Review 13 | YAML schema validation, destructive-path confinement, overlapping-environment rejection, traversal and symlink rejection, shell-payload isolation, and mutation-free install/update/remove failures |
+| `tests/integration/review16/test_scheduler_load.sh` | Review 16 | Real LocalExecutor scheduling with two slots, six rescheduling sensors, PostgreSQL task state, and independent ready work |
 
 `tests/security/support.py` and `tests/security/auth_support.py` provide
 repository-path, script-loading, and Auth Manager test doubles; they do not
@@ -136,9 +137,24 @@ python3 test/review16_load_test.py \
 
 Elapsed time is diagnostic because it depends on the host filesystem. The
 structural performance contract is one recursive walk per readiness cycle,
-regardless of the number of configured patterns. A production-like Airflow
-load check should additionally confirm `up_for_reschedule` task state and run
-a ready task while waiting sensors outnumber worker slots.
+regardless of the number of configured patterns.
+
+The isolated scheduler-load test uses PostgreSQL, `LocalExecutor`,
+`parallelism = 2`, a two-slot default pool, six independent rescheduling
+sensors, and a second DAG containing immediately runnable work. It requires
+the local Airflow image and removes its temporary Compose project and database
+volume after the run:
+
+```bash
+docker compose -f env/docker-compose.yaml build airflow
+tests/integration/review16/test_scheduler_load.sh
+```
+
+The test fails unless all six sensors reach `up_for_reschedule`, no sensor
+remains running after that barrier, the waiting count remains greater than the
+available slots, and the independent task creates its sentinel and reaches
+`success` within 30 seconds. This scheduler test is separate from the
+10,000-file filesystem benchmark.
 
 ## Review 5 safety model
 

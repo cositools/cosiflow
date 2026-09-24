@@ -1,0 +1,52 @@
+x-airflow-common: &airflow-common
+  image: cosiflow-airflow:native
+  environment: &airflow-environment
+    AIRFLOW_HOME: /tmp/review16-airflow
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/review16/dags
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__FERNET_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+    AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "16"
+    AIRFLOW__CORE__PARALLELISM: "2"
+    AIRFLOW__DATABASE__LOAD_DEFAULT_CONNECTIONS: "False"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://review16:review16-test-only@postgres:5432/review16
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "1"
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "1"
+    AIRFLOW__SCHEDULER__PARSING_PROCESSES: "1"
+    AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC: "1"
+  depends_on:
+    postgres:
+      condition: service_healthy
+  volumes:
+    - ./review16/dags:/opt/review16/dags:ro
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: review16
+      POSTGRES_PASSWORD: review16-test-only
+      POSTGRES_DB: review16
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U review16 -d review16"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  airflow-init:
+    <<: *airflow-common
+    command:
+      - bash
+      - -ec
+      - |
+        airflow db migrate
+        airflow pools set default_pool 2 "Review 16 two-slot pool"
+    profiles: ["tools"]
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: ["airflow", "scheduler"]
+
