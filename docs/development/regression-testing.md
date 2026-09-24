@@ -126,6 +126,9 @@ python3 -m unittest tests.test_review16_scheduler_scalability -v
 When Airflow is installed, the same suite also instantiates a COSIDAG and
 checks that both filesystem waits use `reschedule` mode. It also verifies that
 a changing first folder does not block selection of a later stable folder.
+Nested candidate coverage asserts one tree walk and one stat per file at both
+one and three candidate depths, then verifies date filtering, deepest-first
+priority, `min_files`, stability, and the selected folder in Airflow.
 The synthetic load test reports the legacy repeated-scan baseline and the
 one-inventory path at increasing file counts:
 
@@ -141,6 +144,20 @@ structural performance contract for `resolve_inputs` is one recursive walk of
 the selected run directory per readiness cycle, regardless of the number of
 configured patterns. Folder-candidate traversal before selection is tracked
 separately.
+
+The nested folder benchmark compares the shared bottom-up inventory with the
+former recursive snapshot per candidate:
+
+```bash
+python3 test/review16_nested_folder_benchmark.py \
+  --depths 4,8,16 \
+  --files-per-level 50 \
+  --output test/results/review16_nested_folder_benchmark.json
+```
+
+The structural contract is one walk and exactly one file visit per cycle,
+independent of the number of overlapping candidates. Elapsed time is recorded
+only as diagnostic information.
 
 The isolated scheduler-load test uses PostgreSQL, `LocalExecutor`,
 `parallelism = 2`, a two-slot default pool, six independent rescheduling

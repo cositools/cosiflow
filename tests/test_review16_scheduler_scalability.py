@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -17,6 +18,7 @@ from cosidag_filesystem import (  # noqa: E402
     directory_snapshot,
     file_snapshot,
     resolve_patterns,
+    scan_directory_snapshots,
     scan_file_inventory,
     stability_observation,
 )
@@ -148,6 +150,57 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported select_policy"):
             resolve_patterns([], {"input": "*.fits"}, "random")
 
+    def test_nested_directory_snapshots_visit_each_file_once_at_any_candidate_depth(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            level_one = root / "level-one"
+            level_two = level_one / "level-two"
+            level_three = level_two / "level-three"
+            level_three.mkdir(parents=True)
+            for level_index, directory in enumerate((level_one, level_two, level_three), 1):
+                for file_index in range(2):
+                    (directory / f"input-{level_index}-{file_index}.fits").write_bytes(b"data")
+
+            file_paths = {str(path) for path in root.rglob("*.fits")}
+            import cosidag_filesystem
+
+            original_walk = cosidag_filesystem.os.walk
+            original_stat = cosidag_filesystem.os.stat
+
+            def measured_scan(max_depth):
+                walk_calls = []
+                stat_calls = []
+
+                def counted_walk(*args, **kwargs):
+                    walk_calls.append(os.fspath(args[0]))
+                    return original_walk(*args, **kwargs)
+
+                def counted_stat(path, *args, **kwargs):
+                    normalized = os.fspath(path)
+                    if normalized in file_paths:
+                        stat_calls.append(normalized)
+                    return original_stat(path, *args, **kwargs)
+
+                with (
+                    patch.object(cosidag_filesystem.os, "walk", side_effect=counted_walk),
+                    patch.object(cosidag_filesystem.os, "stat", side_effect=counted_stat),
+                ):
+                    snapshots = scan_directory_snapshots(str(root), max_depth)
+                return snapshots, walk_calls, stat_calls
+
+            shallow, shallow_walks, shallow_stats = measured_scan(1)
+            nested, nested_walks, nested_stats = measured_scan(3)
+
+            self.assertEqual(len(shallow), 1)
+            self.assertEqual(len(nested), 3)
+            self.assertEqual(len(shallow_walks), 1)
+            self.assertEqual(len(nested_walks), 1)
+            self.assertEqual(Counter(shallow_stats), Counter({path: 1 for path in file_paths}))
+            self.assertEqual(Counter(nested_stats), Counter({path: 1 for path in file_paths}))
+            self.assertEqual(nested[str(level_one)][0], 6)
+            self.assertEqual(nested[str(level_two)][0], 4)
+            self.assertEqual(nested[str(level_three)][0], 2)
+
 
 class SourceContractTests(unittest.TestCase):
     @classmethod
@@ -166,6 +219,10 @@ class SourceContractTests(unittest.TestCase):
             self.source.count("set(list_unavailable_paths("),
             2,
         )
+
+    def test_per_candidate_diagnostics_use_debug_logging(self):
+        self.assertNotIn('print(f"[COSIDAG] _date_filter_ok: path=', self.source)
+        self.assertIn("LOGGER.debug", self.source)
 
 
 try:
@@ -301,6 +358,61 @@ class AirflowSensorTests(unittest.TestCase):
 
             self.assertEqual(ti.values["detected_path"], str(stable))
             self.assertEqual(ti.values["detected_folder"], str(stable))
+
+    def test_nested_folder_discovery_preserves_date_priority_min_files_and_stability(self):
+        class FakeTaskInstance:
+            task_id = "check_new_file"
+
+            def __init__(self):
+                self.values = {}
+
+            def xcom_pull(self, task_ids, key):
+                return self.values.get(key)
+
+            def xcom_push(self, key, value):
+                self.values[key] = value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            excluded = root / "2026-09-20"
+            selected = root / "2026-09-24"
+            deeper = selected / "2026-09-25"
+            excluded.mkdir()
+            deeper.mkdir(parents=True)
+            (excluded / "old.fits").write_bytes(b"old")
+            (selected / "parent.fits").write_bytes(b"parent")
+            (deeper / "child.fits").write_bytes(b"child")
+
+            dag = cosidag.COSIDAG(
+                monitoring_folders=[tmp],
+                level=2,
+                date_queries=">=2026-09-24",
+                idle_seconds=0,
+                min_files=2,
+                prefer_deepest=True,
+                auto_retrig=False,
+                dag_id="review16_nested_folder_test",
+                start_date=datetime(2026, 1, 1),
+                schedule_interval=None,
+                catchup=False,
+            )
+            sensor = dag.get_task("check_new_file")
+            ti = FakeTaskInstance()
+            context = {
+                "ti": ti,
+                "dag_run": SimpleNamespace(conf={}, run_id="manual__review16_nested"),
+            }
+
+            with (
+                patch.object(cosidag, "release_orphaned_claims"),
+                patch.object(cosidag, "list_unavailable_paths", return_value=[]),
+                patch.object(cosidag, "claim_path", return_value=True),
+            ):
+                self.assertFalse(sensor.poke(context))
+                self.assertTrue(sensor.poke(context))
+
+            self.assertEqual(ti.values["detected_path"], str(selected))
+            self.assertEqual(ti.values["detected_folder"], str(selected))
 
 
 if __name__ == "__main__":

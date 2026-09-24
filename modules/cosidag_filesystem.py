@@ -16,6 +16,9 @@ from pathlib import PurePath
 from typing import Iterable, Mapping, Optional
 
 
+DirectorySnapshot = tuple[int, int, int, str]
+
+
 @dataclass(frozen=True)
 class FileRecord:
     """Metadata collected with one stat during a directory inventory."""
@@ -68,7 +71,7 @@ def file_snapshot(path: str) -> Optional[tuple[int, int]]:
     return stat_result.st_size, stat_result.st_mtime_ns
 
 
-def directory_snapshot(path: str) -> Optional[tuple[int, int, int, str]]:
+def directory_snapshot(path: str) -> Optional[DirectorySnapshot]:
     """Return a compact snapshot that detects directory content changes.
 
     The count, total size, latest mtime, and digest are all derived from the
@@ -91,6 +94,101 @@ def directory_snapshot(path: str) -> Optional[tuple[int, int, int, str]]:
         digest.update(str(record.mtime_ns).encode("ascii"))
         digest.update(b"\n")
     return len(inventory), total_size, latest_mtime_ns, digest.hexdigest()
+
+
+def scan_directory_snapshots(
+    root: str,
+    max_candidate_depth: int,
+) -> dict[str, DirectorySnapshot]:
+    """Build snapshots for nested candidate directories with one tree walk.
+
+    Each regular file is stat'ed once. Direct-file metadata is aggregated
+    bottom-up, so overlapping candidate directories reuse their descendants'
+    summaries instead of recursively walking the same subtree again.
+    """
+    root = os.path.abspath(os.path.expanduser(root))
+    if max_candidate_depth < 1 or not os.path.isdir(root):
+        return {}
+
+    depths: dict[str, int] = {}
+    direct_files: dict[str, list[tuple[str, int, int]]] = {}
+    for current_root, dirs, files in os.walk(root):
+        dirs.sort()
+        files.sort()
+        current_root = os.path.abspath(current_root)
+        relative = os.path.relpath(current_root, root)
+        depth = 0 if relative == os.curdir else len(PurePath(relative).parts)
+        depths[current_root] = depth
+        records: list[tuple[str, int, int]] = []
+        for filename in files:
+            path = os.path.join(current_root, filename)
+            try:
+                stat_result = os.stat(path)
+            except OSError:
+                continue
+            if stat.S_ISREG(stat_result.st_mode):
+                records.append((filename, stat_result.st_size, stat_result.st_mtime_ns))
+        direct_files[current_root] = records
+
+    children: dict[str, list[str]] = {directory: [] for directory in depths}
+    for directory in depths:
+        if directory == root:
+            continue
+        parent = os.path.dirname(directory)
+        if parent in children:
+            children[parent].append(directory)
+
+    aggregated: dict[str, DirectorySnapshot] = {}
+    ordered_directories = sorted(depths, key=lambda path: (depths[path], path), reverse=True)
+    for directory in ordered_directories:
+        digest = hashlib.sha256()
+        file_count = 0
+        total_size = 0
+        latest_mtime_ns = 0
+
+        for filename, size, mtime_ns in direct_files[directory]:
+            file_count += 1
+            total_size += size
+            latest_mtime_ns = max(latest_mtime_ns, mtime_ns)
+            digest.update(b"F\0")
+            digest.update(filename.encode("utf-8", errors="surrogateescape"))
+            digest.update(b"\0")
+            digest.update(str(size).encode("ascii"))
+            digest.update(b"\0")
+            digest.update(str(mtime_ns).encode("ascii"))
+            digest.update(b"\n")
+
+        for child in sorted(children[directory]):
+            child_count, child_size, child_mtime_ns, child_digest = aggregated[child]
+            if child_count == 0:
+                continue
+            file_count += child_count
+            total_size += child_size
+            latest_mtime_ns = max(latest_mtime_ns, child_mtime_ns)
+            digest.update(b"D\0")
+            digest.update(os.path.basename(child).encode("utf-8", errors="surrogateescape"))
+            digest.update(b"\0")
+            digest.update(str(child_count).encode("ascii"))
+            digest.update(b"\0")
+            digest.update(str(child_size).encode("ascii"))
+            digest.update(b"\0")
+            digest.update(str(child_mtime_ns).encode("ascii"))
+            digest.update(b"\0")
+            digest.update(child_digest.encode("ascii"))
+            digest.update(b"\n")
+
+        aggregated[directory] = (
+            file_count,
+            total_size,
+            latest_mtime_ns,
+            digest.hexdigest(),
+        )
+
+    return {
+        directory: aggregated[directory]
+        for directory, depth in depths.items()
+        if 1 <= depth <= max_candidate_depth
+    }
 
 
 def _matches_glob(record: FileRecord, pattern: str) -> bool:

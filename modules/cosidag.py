@@ -30,6 +30,7 @@ Notes
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import time
@@ -65,9 +66,10 @@ from on_failure_callback import notify_email  # type: ignore
 from date_helper import _looks_like_date_folder, _parse_date_string, _apply_date_queries  # type: ignore
 from cosidag_runtime import automatic_retrigger_run_id, build_successor_conf, normalize_run_conf  # type: ignore
 from cosidag_filesystem import (  # type: ignore
-    directory_snapshot,
+    DirectorySnapshot,
     file_snapshot,
     resolve_patterns,
+    scan_directory_snapshots,
     scan_file_inventory,
     stability_observation,
 )
@@ -84,6 +86,8 @@ _BASE_DEFAULT_ARGS = {
     "email_on_failure": True,
     "on_failure_callback": notify_email,  # from callbacks/on_failure_callback.py
 }
+
+LOGGER = logging.getLogger(__name__)
 
 # --- Public config helpers (Airflow Variable -> ENV -> default) -----------------
 try:
@@ -173,18 +177,6 @@ def _normalize_folders(monitoring_folders: Iterable[str]) -> Sequence[str]:
     return out
 
 
-def _iter_subfolders(root: str, max_depth: int) -> Iterable[str]:
-    """Yield subfolders under root up to max_depth (depth 1 = direct children)."""
-    root_depth = root.rstrip(os.sep).count(os.sep)
-    for current_root, dirs, _ in os.walk(root):
-        current_depth = current_root.rstrip(os.sep).count(os.sep) - root_depth
-        if current_depth > max_depth:
-            dirs[:] = []
-            continue
-        if current_depth >= 1:
-            yield current_root
-
-
 def _iter_direct_files(root: str) -> Iterable[str]:
     """Yield regular files directly under root."""
     try:
@@ -208,7 +200,7 @@ def _date_filter_ok(path: str, date_queries) -> bool:
       - string like '>=2025-11-01'
       - list of strings ['>=2025-11-01', '<=2025-11-05']
     """
-    print(f"[COSIDAG] _date_filter_ok: path={path}, date_queries={date_queries}")
+    LOGGER.debug("COSIDAG date filter: path=%s, date_queries=%s", path, date_queries)
     if not date_queries:
         return True
 
@@ -221,14 +213,14 @@ def _date_filter_ok(path: str, date_queries) -> bool:
         try:
             ref_date = _parse_date_string(ds)
         except Exception as e:
-            print(f"[COSIDAG] _date_filter_ok: failed to parse folder date {ds!r}: {e}")
+            LOGGER.warning("COSIDAG failed to parse folder date %r: %s", ds, e)
 
     # 2) Fallback to mtime date
     if ref_date is None:
         try:
             ref_date = datetime.fromtimestamp(os.stat(path).st_mtime).date()
         except Exception as e:
-            print(f"[COSIDAG] _date_filter_ok: failed to get mtime for {path}: {e}")
+            LOGGER.warning("COSIDAG failed to get mtime for %s: %s", path, e)
             # If we cannot determine a reference date, do not filter out for safety.
             return True
 
@@ -243,7 +235,7 @@ def _find_new_folder(
     only_basename: Optional[str] = None,
     prefer_deepest: bool = True,
     owner_run_id: Optional[str] = None,
-    candidate_ready: Optional[Callable[[str], bool]] = None,
+    candidate_ready: Optional[Callable[[str, DirectorySnapshot], bool]] = None,
 ) -> Optional[str]:
     """Return the first available, ready folder across filtered candidates."""
     print(
@@ -259,15 +251,17 @@ def _find_new_folder(
     unavailable = set(list_unavailable_paths(dag_id, owner_run_id=owner_run_id))
     print(f"[COSIDAG] _find_new_folder: loaded {len(unavailable)} unavailable folder(s)")
 
-    candidates: list[str] = []
+    candidate_snapshots: dict[str, DirectorySnapshot] = {}
     for root in sorted(roots):
-        subfolders = list(_iter_subfolders(root, max_depth=level))  # materialize once
-        print(f"[COSIDAG] _find_new_folder: found {len(subfolders)} subfolder(s) in {root} (max_depth={level})")
-        for sub in subfolders:
+        snapshots = scan_directory_snapshots(root, max_candidate_depth=level)
+        print(f"[COSIDAG] _find_new_folder: found {len(snapshots)} subfolder(s) in {root} (max_depth={level})")
+        for sub, snapshot in snapshots.items():
             if only_basename and os.path.basename(sub) != only_basename:
                 continue
             if _date_filter_ok(sub, date_queries):
-                candidates.append(sub)
+                candidate_snapshots[sub] = snapshot
+
+    candidates = list(candidate_snapshots)
 
     if not candidates:
         print("[COSIDAG] _find_new_folder: no candidates found after filtering")
@@ -288,8 +282,8 @@ def _find_new_folder(
         if path in unavailable:
             continue
         available += 1
-        if candidate_ready is not None and not candidate_ready(path):
-            print(f"[COSIDAG] _find_new_folder: candidate is not ready: {path}")
+        if candidate_ready is not None and not candidate_ready(path, candidate_snapshots[path]):
+            LOGGER.debug("COSIDAG folder candidate is not ready: %s", path)
             continue
         print(f"[COSIDAG] _find_new_folder: found new folder: {path}")
         return path
@@ -732,12 +726,11 @@ class COSIDAG(DAG):
             print(f"[COSIDAG] _sensor_poke: marker={marker}")
             print(f"[COSIDAG] _sensor_poke: idle_seconds={idle_s}, min_files={min_f}")
 
-            def _folder_candidate_ready(path: str) -> bool:
+            def _folder_candidate_ready(path: str, snapshot: DirectorySnapshot) -> bool:
                 if marker and not os.path.exists(os.path.join(path, marker)):
                     return False
 
-                snapshot = directory_snapshot(path)
-                if snapshot is None or snapshot[0] < min_f:
+                if snapshot[0] < min_f:
                     return False
 
                 ready = _stability_ready(
@@ -748,9 +741,11 @@ class COSIDAG(DAG):
                     idle_seconds=idle_s,
                 )
                 if not ready:
-                    print(
-                        "[COSIDAG] _sensor_poke: candidate metadata has not yet "
-                        f"remained unchanged for {idle_s}s: {path}"
+                    LOGGER.debug(
+                        "COSIDAG folder candidate metadata has not remained "
+                        "unchanged for %ss: %s",
+                        idle_s,
+                        path,
                     )
                 return ready
 

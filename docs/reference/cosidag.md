@@ -135,6 +135,12 @@ keeps an independent stability history. A higher-priority folder that is still
 changing, lacks enough files, or does not satisfy an optional marker therefore
 does not prevent a later ready folder from being selected.
 
+Each monitoring root is inventoried with one filesystem walk per poke. Every
+regular file is stat'ed once, and candidate snapshots are aggregated bottom-up
+from shared child metadata. Nested candidates therefore do not recursively
+rescan the same files. Per-candidate readiness diagnostics are emitted at debug
+level; normal logs retain cycle summaries and the selected path.
+
 On success it publishes:
 
 ```text

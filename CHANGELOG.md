@@ -58,7 +58,8 @@ branch after `v0.2.0`; these changes are not part of a release yet.
 
 - Folder-driven COSIDAG discovery now keeps independent stability observations
   per candidate, so an earlier changing folder no longer starves a later ready
-  folder.
+  folder. One shared hierarchical inventory also replaces recursive rescans of
+  overlapping candidates, and per-candidate diagnostics use debug logging.
 - GCN inbound and outbox workers now retry bounded transient failures with
   exponential backoff, isolate malformed outbox rows, recover expired locks,
   and fail the process visibly when their recovery budget is exhausted. The
