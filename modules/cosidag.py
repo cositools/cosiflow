@@ -29,6 +29,7 @@ Notes
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
@@ -151,6 +152,13 @@ def _stability_ready(ti, key: str, identity: str, snapshot, idle_seconds: int) -
     return ready
 
 
+def _candidate_stability_key(policy: str, path: str) -> str:
+    """Return a bounded XCom key for one candidate's stability history."""
+    normalized = os.path.abspath(os.path.expanduser(path))
+    digest = hashlib.sha256(os.fsencode(normalized)).hexdigest()
+    return f"candidate_stability_{policy}_{digest}"
+
+
 def _normalize_folders(monitoring_folders: Iterable[str]) -> Sequence[str]:
     """Return absolute existing directories; ignore non-existing."""
     if isinstance(monitoring_folders, (str, os.PathLike)):
@@ -235,8 +243,9 @@ def _find_new_folder(
     only_basename: Optional[str] = None,
     prefer_deepest: bool = True,
     owner_run_id: Optional[str] = None,
+    candidate_ready: Optional[Callable[[str], bool]] = None,
 ) -> Optional[str]:
-    """Return the first new folder across roots (filtered & depth-limited)."""
+    """Return the first available, ready folder across filtered candidates."""
     print(
         "[COSIDAG] _find_new_folder: searching for new folders "
         f"(dag_id={dag_id}, level={level}, date_queries={date_queries}, only_basename={only_basename})"
@@ -274,12 +283,21 @@ def _find_new_folder(
         candidates.sort()
         print("[COSIDAG] _find_new_folder: sorted candidates alphabetically")
 
+    available = 0
     for path in candidates:
-        if path not in unavailable:
-            print(f"[COSIDAG] _find_new_folder: found new folder: {path}")
-            return path
+        if path in unavailable:
+            continue
+        available += 1
+        if candidate_ready is not None and not candidate_ready(path):
+            print(f"[COSIDAG] _find_new_folder: candidate is not ready: {path}")
+            continue
+        print(f"[COSIDAG] _find_new_folder: found new folder: {path}")
+        return path
 
-    print(f"[COSIDAG] _find_new_folder: all {len(candidates)} candidate(s) unavailable")
+    print(
+        "[COSIDAG] _find_new_folder: no ready candidate found "
+        f"({available} available, {len(candidates)} total)"
+    )
     return None
 
 
@@ -711,6 +729,31 @@ class COSIDAG(DAG):
             )
             release_orphaned_claims(self.dag_id, claim_stale_s)
 
+            print(f"[COSIDAG] _sensor_poke: marker={marker}")
+            print(f"[COSIDAG] _sensor_poke: idle_seconds={idle_s}, min_files={min_f}")
+
+            def _folder_candidate_ready(path: str) -> bool:
+                if marker and not os.path.exists(os.path.join(path, marker)):
+                    return False
+
+                snapshot = directory_snapshot(path)
+                if snapshot is None or snapshot[0] < min_f:
+                    return False
+
+                ready = _stability_ready(
+                    ti=ti,
+                    key=_candidate_stability_key("folder", path),
+                    identity=f"folder-driven:{path}",
+                    snapshot=snapshot,
+                    idle_seconds=idle_s,
+                )
+                if not ready:
+                    print(
+                        "[COSIDAG] _sensor_poke: candidate metadata has not yet "
+                        f"remained unchanged for {idle_s}s: {path}"
+                    )
+                return ready
+
             if selected_policy == "file-driven":
                 new_path = _find_new_file(
                     monitoring_folders=monitoring,
@@ -728,40 +771,29 @@ class COSIDAG(DAG):
                     only_basename=only_bn,
                     prefer_deepest=prefer_deep,
                     owner_run_id=dag_run.run_id,
+                    candidate_ready=_folder_candidate_ready,
                 )
 
             print(f"[COSIDAG] _sensor_poke: policy={selected_policy}, new_path={new_path}")
             if not new_path:
                 return False
 
-            print(f"[COSIDAG] _sensor_poke: marker={marker}")
-            if marker and selected_policy == "folder-driven":
-                marker_path = os.path.join(new_path, marker)
-                if not os.path.exists(marker_path):
-                    return False
-
-            print(f"[COSIDAG] _sensor_poke: idle_seconds={idle_s}, min_files={min_f}")
             if selected_policy == "file-driven":
                 snapshot = file_snapshot(new_path)
                 if snapshot is None:
                     return False
-            else:
-                snapshot = directory_snapshot(new_path)
-                if snapshot is None or snapshot[0] < min_f:
+                if not _stability_ready(
+                    ti=ti,
+                    key="candidate_stability",
+                    identity=f"{selected_policy}:{new_path}",
+                    snapshot=snapshot,
+                    idle_seconds=idle_s,
+                ):
+                    print(
+                        "[COSIDAG] _sensor_poke: candidate metadata has not yet "
+                        f"remained unchanged for {idle_s}s"
+                    )
                     return False
-
-            if not _stability_ready(
-                ti=ti,
-                key="candidate_stability",
-                identity=f"{selected_policy}:{new_path}",
-                snapshot=snapshot,
-                idle_seconds=idle_s,
-            ):
-                print(
-                    "[COSIDAG] _sensor_poke: candidate metadata has not yet "
-                    f"remained unchanged for {idle_s}s"
-                )
-                return False
 
             if not claim_path(
                 dag_id=self.dag_id,

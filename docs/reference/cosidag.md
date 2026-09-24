@@ -130,6 +130,11 @@ relative paths, sizes, and mtimes must remain unchanged for at least
 contract when configured; it is not required by default and does not replace
 the metadata stability window.
 
+Candidates are evaluated in the configured priority order, but each candidate
+keeps an independent stability history. A higher-priority folder that is still
+changing, lacks enough files, or does not satisfy an optional marker therefore
+does not prevent a later ready folder from being selected.
+
 On success it publishes:
 
 ```text

@@ -248,6 +248,60 @@ class AirflowSensorTests(unittest.TestCase):
             self.assertEqual(ti.values["input"], str(source))
             self.assertEqual(ti.values["run_dir"], tmp)
 
+    def test_folder_discovery_skips_changing_candidate_for_stable_later_candidate(self):
+        class FakeTaskInstance:
+            task_id = "check_new_file"
+
+            def __init__(self):
+                self.values = {}
+
+            def xcom_pull(self, task_ids, key):
+                return self.values.get(key)
+
+            def xcom_push(self, key, value):
+                self.values[key] = value
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            changing = root / "a-changing"
+            stable = root / "b-stable"
+            changing.mkdir()
+            stable.mkdir()
+            changing_file = changing / "input.fits"
+            changing_file.write_bytes(b"first")
+            (stable / "input.fits").write_bytes(b"stable")
+
+            dag = cosidag.COSIDAG(
+                monitoring_folders=[tmp],
+                level=1,
+                idle_seconds=0,
+                min_files=1,
+                prefer_deepest=False,
+                auto_retrig=False,
+                dag_id="review16_folder_candidate_test",
+                start_date=datetime(2026, 1, 1),
+                schedule_interval=None,
+                catchup=False,
+            )
+            sensor = dag.get_task("check_new_file")
+            ti = FakeTaskInstance()
+            context = {
+                "ti": ti,
+                "dag_run": SimpleNamespace(conf={}, run_id="manual__review16_folder"),
+            }
+
+            with (
+                patch.object(cosidag, "release_orphaned_claims"),
+                patch.object(cosidag, "list_unavailable_paths", return_value=[]),
+                patch.object(cosidag, "claim_path", return_value=True),
+            ):
+                self.assertFalse(sensor.poke(context))
+                changing_file.write_bytes(b"changed-size")
+                self.assertTrue(sensor.poke(context))
+
+            self.assertEqual(ti.values["detected_path"], str(stable))
+            self.assertEqual(ti.values["detected_folder"], str(stable))
+
 
 if __name__ == "__main__":
     unittest.main()

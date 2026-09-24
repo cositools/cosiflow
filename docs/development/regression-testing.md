@@ -124,9 +124,10 @@ python3 -m unittest tests.test_review16_scheduler_scalability -v
 ```
 
 When Airflow is installed, the same suite also instantiates a COSIDAG and
-checks that both filesystem waits use `reschedule` mode. The synthetic load
-test reports the legacy repeated-scan baseline and the one-inventory path at
-increasing file counts:
+checks that both filesystem waits use `reschedule` mode. It also verifies that
+a changing first folder does not block selection of a later stable folder.
+The synthetic load test reports the legacy repeated-scan baseline and the
+one-inventory path at increasing file counts:
 
 ```bash
 python3 test/review16_load_test.py \
@@ -136,8 +137,10 @@ python3 test/review16_load_test.py \
 ```
 
 Elapsed time is diagnostic because it depends on the host filesystem. The
-structural performance contract is one recursive walk per readiness cycle,
-regardless of the number of configured patterns.
+structural performance contract for `resolve_inputs` is one recursive walk of
+the selected run directory per readiness cycle, regardless of the number of
+configured patterns. Folder-candidate traversal before selection is tracked
+separately.
 
 The isolated scheduler-load test uses PostgreSQL, `LocalExecutor`,
 `parallelism = 2`, a two-slot default pool, six independent rescheduling
