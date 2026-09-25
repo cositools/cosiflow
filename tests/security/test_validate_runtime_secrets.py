@@ -45,6 +45,31 @@ class RuntimeSecretValidationTests(unittest.TestCase):
                     errors = VALIDATOR.validate_environment()
                 self.assertIn(f"{name} is required and must not be empty", errors)
 
+    def test_init_scope_does_not_require_runtime_gcn_password(self):
+        environment = valid_environment()
+        environment.pop("GCN_DB_PASSWORD")
+        with patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(VALIDATOR.validate_environment("init"), [])
+
+    def test_runtime_scope_does_not_receive_or_require_admin_password(self):
+        environment = valid_environment()
+        environment.pop("AIRFLOW_ADMIN_PASSWORD")
+        with patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(VALIDATOR.validate_environment("runtime"), [])
+
+    def test_each_scope_rejects_its_own_service_secret(self):
+        cases = (
+            ("init", "AIRFLOW_ADMIN_PASSWORD"),
+            ("runtime", "GCN_DB_PASSWORD"),
+        )
+        for scope, name in cases:
+            with self.subTest(scope=scope, name=name):
+                environment = valid_environment()
+                environment.pop(name)
+                with patch.dict(os.environ, environment, clear=True):
+                    errors = VALIDATOR.validate_environment(scope)
+                self.assertIn(f"{name} is required and must not be empty", errors)
+
     def test_every_postgres_connection_field_is_rejected_when_missing(self):
         environment = valid_environment()
         for name in ("POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_USER", "POSTGRES_DB"):

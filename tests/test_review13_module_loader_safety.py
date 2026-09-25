@@ -179,7 +179,8 @@ class ModuleLoaderShellTests(unittest.TestCase):
         self.env_dir.mkdir(parents=True)
         shutil.copy2(LOADER_PATH, self.env_dir / "hot_load_module.sh")
         shutil.copy2(HELPER_PATH, self.env_dir / "module_config.py")
-        self.module = self.workspace / "safe-module"
+        self.modules_root = self.cosiflow / "modules-pool"
+        self.module = self.modules_root / "safe-module"
         (self.module / "src" / "dags").mkdir(parents=True)
         (self.module / "src" / "pipeline").mkdir(parents=True)
         (self.module / "env").mkdir(parents=True)
@@ -246,7 +247,7 @@ class ModuleLoaderShellTests(unittest.TestCase):
             {
                 "PATH": f"{self.fake_bin}:/usr/bin:/bin",
                 "FAKE_DOCKER_LOG": str(self.log_path),
-                "FAKE_WORKSPACE": str(self.workspace),
+                "FAKE_WORKSPACE": str(self.modules_root),
                 "FAKE_TEST_PYTHON": sys.executable,
                 "FAKE_CONFIG_HELPER": str(self.env_dir / "module_config.py"),
             }

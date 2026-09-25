@@ -1,0 +1,8 @@
+# Explicit opt-in for module installation and containerized benchmarks.
+services:
+  airflow:
+    volumes:
+      - ../../envs:/home/gamma/envs
+      - ../dags:/home/gamma/airflow/dags
+      - ../pipeline:/home/gamma/airflow/pipeline
+      - ../test:/shared_dir/test:ro

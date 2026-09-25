@@ -6,7 +6,8 @@ The executable configuration sources are
 and the
 [`Airflow entrypoint`](https://github.com/cositools/cosiflow/blob/dev-review/env/entrypoint-airflow.sh).
 The ignored `env/.env` supplies local values to Compose; it must never be
-committed.
+committed. Compose uses it only for interpolation. The base stack does not pass
+it through `env_file` or make it reachable through a repository-root mount.
 
 ## Required secrets
 
@@ -28,6 +29,11 @@ Compose uses required-value interpolation, so blank values fail before the
 affected containers are created. The Airflow entrypoint independently validates
 its runtime secrets and never prints them. Airflow web, internal API, and
 Fernet keys must be distinct.
+
+Secret validation is service-scoped. `airflow-init` receives the administrator
+password but no GCN database credential. The Airflow runtime receives the GCN
+application credential but no administrator username, email, or password. Each
+database and the GCN client retain only their own credentials.
 
 ## Local ports
 
@@ -57,6 +63,28 @@ Compose bind-mounts host `data/heasarc` at the `COSI_DATA_DIR` default and host
 `data/logs` at Airflow's `/home/gamma/airflow/logs`. The similarly named
 `COSI_LOG_DIR` is a separate environment contract and is not that Airflow log
 mount.
+
+## Container mount isolation
+
+The base Compose file exposes only narrow paths:
+
+| Service | Read-only mounts | Read-write mounts |
+| --- | --- | --- |
+| `airflow-init` | plugins, modules, `airflow.cfg` | scientific data, Airflow logs |
+| `airflow` | managed Python environments, DAGs, dedicated module pool, plugins, pipeline, callbacks, modules, `airflow.cfg` | scientific data, Airflow logs |
+| `postgres` | none | PostgreSQL data |
+| `gcn-mysql` | none | GCN MySQL data |
+| `gcn-client`, `mailhog` | none | none |
+
+The parent workspace and COSIflow repository root are not mounted. The default
+module source is `modules-pool/`; set `COSIFLOW_MODULES_HOST_DIR` to another
+dedicated directory if needed. That directory must contain only trusted module
+sources and must not contain credentials or unrelated projects.
+
+`docker-compose.development.yaml` explicitly makes DAG, pipeline, and managed
+environment paths writable and mounts `test/` read-only. The separate
+`docker-compose.x11.yaml` override adds `DISPLAY` and the read-only X11 socket.
+Neither capability is present in the base stack.
 
 ## GCN safety defaults
 

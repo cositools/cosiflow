@@ -40,6 +40,7 @@ report an explicit skip when that dependency is unavailable.
 | `tests/security/test_endpoint_matrix.py` | Review 6 | Complete route-to-permission coverage, POST-only mutations, least-privilege manifests, and CSRF tokens in mutating forms and requests |
 | `tests/security/test_configure_rbac.py` | Review 6 | Viewer isolation, Scientist/Operator/Admin provisioning, stale-permission removal, verification failures, and idempotent reconciliation |
 | `tests/security/test_review19_data_explorer.py` | Review 19 | Sanitized Data Explorer failures, server-side diagnostics, image isolation, DOM-safe hostile payload handling, same-origin route validation, raster MIME allowlisting, and base64 validation |
+| `tests/security/test_review21_container_isolation.py` | Review 21 | Service-scoped environments, narrow mounts, read-only code, dedicated module pool, and explicit development/X11 overrides |
 | `tests/test_review28_benchmark_safety.py` | Review 28 | Cleanup dual opt-in and path confinement, all-target preflight, success/timeout exit semantics, run ownership, and bounded stop verification |
 | `tests/test_issue18_contracts.py` | Review 18 | Removal of the unused paths module and the supported COSIDAG import contract |
 | `tests/test_review8_cosidag_state.py` | Review 8 | Runtime retrigger identity/configuration, transactional schema, claim/finalization wiring, migration, and reset-plugin contracts |
@@ -49,6 +50,7 @@ report an explicit skip when that dependency is unavailable.
 | `tests/test_review13_module_loader_safety.py` | Review 13 | YAML schema validation, destructive-path confinement, overlapping-environment rejection, traversal and symlink rejection, shell-payload isolation, and mutation-free install/update/remove failures |
 | `tests/integration/review16/test_scheduler_load.sh` | Review 16 | Real LocalExecutor scheduling with two slots, six rescheduling sensors, PostgreSQL task state, and independent ready work |
 | `tests/integration/review28/test_localexecutor_stop.sh` | Review 28 | Real PostgreSQL/LocalExecutor termination of one benchmark-owned run while a concurrent manual run remains active |
+| `tests/integration/test_review21_container_isolation.py` | Review 21 | Negative in-container access checks for repository roots, `.env`, X11, and read-only code mounts |
 
 `tests/security/support.py` and `tests/security/auth_support.py` provide
 repository-path, script-loading, and Auth Manager test doubles; they do not
@@ -268,6 +270,30 @@ tests/integration/review28/test_localexecutor_stop.sh
 The Compose project uses synthetic credentials and temporary database storage.
 It is removed after the test and does not connect to development or production
 databases.
+
+## Review 21 container-isolation tests
+
+The deterministic Review 21 suite resolves the base and optional Compose
+configurations with synthetic values. It compares environment-variable names,
+mount sources, targets, write modes, and networks without printing secret
+values:
+
+```bash
+python3 -m unittest tests.security.test_review21_container_isolation -v
+```
+
+The optional negative-access test starts a one-off Airflow container from the
+local image. It verifies that the repository root, `.env`, and X11 are absent,
+that code mounts reject writes, and that authorized data and log paths remain
+writable:
+
+```bash
+COSIFLOW_RUN_REVIEW21_CONTAINER_TESTS=1 \
+  python3 -m unittest tests.integration.test_review21_container_isolation -v
+```
+
+It uses the existing local Airflow image, starts no database dependency, and
+does not read or print the local `.env` contents.
 
 ## Adding or changing a regression test
 

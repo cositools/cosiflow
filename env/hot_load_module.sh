@@ -17,9 +17,9 @@ CONTAINER_USER="gamma"
 CONTAINER_NAME="cosi_airflow"
 EXTENSION_MODULE=".cfmodule"
 
-# Resolve absolute paths to avoid confusion depending on where script is run from
+# Resolve paths independently of the caller's current directory.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-WORKSPACE_ROOT="$(realpath "$(dirname "$(dirname "$SCRIPT_DIR")")")" # Go up two levels: cosiflow/env -> cosiflow -> workspace
+MODULES_ROOT="${COSIFLOW_MODULES_HOST_DIR:-$SCRIPT_DIR/../modules-pool}"
 
 # Default paths (relative to module root)
 PATH_DAGS="src/dags"
@@ -35,7 +35,7 @@ YAML_CONFIG=""
 CONTAINER_YAML_CONFIG=""
 CONTAINER_MODULES_ROOT="/home/gamma/airflow/modules_pool"
 CONTAINER_VENV_ROOT="/home/gamma/envs"
-CONFIG_HELPER="/shared_dir/env/module_config.py"
+CONFIG_HELPER="/home/gamma/module_config.py"
 CONFIG_PYTHON="/home/gamma/venv/bin/python"
 
 # CLI overrides are applied only after YAML has been parsed and validated.
@@ -389,13 +389,14 @@ if [ -z "$MODULE_NAME" ]; then
 fi
 
 validate_identifier "$MODULE_NAME" "Module name"
-MODULE_PATH="$WORKSPACE_ROOT/$MODULE_NAME"
+MODULES_ROOT=$(canonical_existing_path "$MODULES_ROOT") || error "Cannot resolve module pool: $MODULES_ROOT"
+MODULE_PATH="$MODULES_ROOT/$MODULE_NAME"
 if [ ! -d "$MODULE_PATH" ]; then
     error "Module directory not found: $MODULE_PATH"
 fi
 if [ -d "$MODULE_PATH" ]; then
     MODULE_PATH=$(canonical_existing_path "$MODULE_PATH") || error "Cannot resolve module directory."
-    require_path_below "$WORKSPACE_ROOT" "$MODULE_PATH" "Module directory"
+    require_path_below "$MODULES_ROOT" "$MODULE_PATH" "Module directory"
 fi
 
 # Resolve and validate the complete YAML configuration before any mutation.
@@ -580,12 +581,24 @@ create_configured_environment() {
         "$requirements_nodeps_file"
 }
 
+require_development_mounts() {
+    dexec test -w /home/gamma/airflow/dags || \
+        error "DAG directory is read-only. Restart with docker-compose.development.yaml."
+    dexec test -w /home/gamma/airflow/pipeline || \
+        error "Pipeline directory is read-only. Restart with docker-compose.development.yaml."
+    if [ "$CREATE_ENV" = true ]; then
+        dexec test -w "$CONTAINER_VENV_ROOT" || \
+            error "Environment directory is read-only. Restart with docker-compose.development.yaml."
+    fi
+}
+
 log "\n1.     Action: $ACTION module '$MODULE_NAME'"
 
 # ==============================================================================
 # REMOVE
 # ==============================================================================
 if [ "$ACTION" == "remove" ]; then
+    require_development_mounts
     log "   - Removing module '$MODULE_NAME'..."
 
     # Removal still trusts configured module-relative paths and environment
@@ -686,6 +699,7 @@ fi
 # INSTALL / UPDATE
 # ==============================================================================
 if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
+    require_development_mounts
 
     if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ]; then
         log "   - Configuration loaded from: $(basename "$YAML_CONFIG")"

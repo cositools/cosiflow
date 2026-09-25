@@ -26,6 +26,11 @@ branch after `v0.2.0`; these changes are not part of a release yet.
 
 ### Changed
 
+- Airflow initialization and runtime now receive separate environment and mount
+  inventories. The base stack uses a dedicated read-only module pool, keeps
+  source mounts read-only, and reserves write access for scientific data and
+  logs. Development writes and X11 access require explicit Compose overrides.
+
 - Consolidated the technical README content under `docs/`, corrected the
   supported `from cosidag import COSIDAG` example, and standardized the scoped
   operator-facing comments in English.

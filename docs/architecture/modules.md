@@ -2,8 +2,8 @@
 
 A COSIflow module adds DAG definitions, pipeline code, managed Python
 environments, and optionally a Docker image to a running COSIflow instance.
-`hot_load_module.sh` installs, updates, and removes modules without copying their
-source trees into this repository.
+`hot_load_module.sh` installs, updates, and removes modules from the dedicated
+`modules-pool/` directory.
 
 ## Prerequisites
 
@@ -11,8 +11,9 @@ Before managing modules:
 
 1. configure and start COSIflow as described in the
    [installation guide](../getting-started/installation.md);
-2. keep every module directory under the workspace root computed by the loader;
-3. run `hot_load_module.sh` from the host, normally from `cosiflow/env`;
+2. place every trusted module directory under `cosiflow/modules-pool/`;
+3. start Airflow with `docker-compose.development.yaml` and run
+   `hot_load_module.sh` from the host, normally from `cosiflow/env`;
 4. generate the required ignored `cosiflow/env/.env` as documented in the main
    README; the stack intentionally fails when a credential is absent.
 
@@ -48,10 +49,8 @@ your-module/
 Requirement filenames are arbitrary; the YAML configuration selects them.
 
 The current Fast Transient Analysis Pipeline is a concrete multi-environment
-example. Because the loader computes its workspace root as the parent of the
-COSIflow repository and accepts a module directory name, the current runtime
-requires the module checkout to be a sibling of `cosiflow/`. This is a loader
-constraint; documentation links never rely on that checkout layout.
+example. Place its checkout under the dedicated module pool so the Airflow
+container does not need access to the parent workspace:
 
 ```text
 fast-transient-analysis-pipeline/
@@ -80,6 +79,12 @@ With the COSIflow stack running:
 ```bash
 cd cosiflow/env
 ./hot_load_module.sh <module-directory> install
+```
+
+Start the stack with the development override before running the installer:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.development.yaml up -d
 ```
 
 The installer:
@@ -235,12 +240,12 @@ environment and module image as well as the links.
 
 ## Creating a new module
 
-Create the directories from the workspace root:
+Create the directories from the COSIflow repository root:
 
 ```bash
-mkdir -p my-module/src/dags
-mkdir -p my-module/src/pipeline
-mkdir -p my-module/env
+mkdir -p modules-pool/my-module/src/dags
+mkdir -p modules-pool/my-module/src/pipeline
+mkdir -p modules-pool/my-module/env
 ```
 
 Add at least:
@@ -379,6 +384,8 @@ diagnostic and synchronizes the resulting DAG bag.
 
 ### Module not found
 
-- confirm that its directory is beside `cosiflow/`;
+- confirm that its directory is under `cosiflow/modules-pool/`, or under the
+  dedicated directory selected by `COSIFLOW_MODULES_HOST_DIR`;
 - match the command argument to the directory name exactly;
-- verify the `modules_pool` mount in `docker-compose.yaml`.
+- verify the `modules_pool` mount in `docker-compose.yaml`;
+- verify that Airflow was started with `docker-compose.development.yaml`.

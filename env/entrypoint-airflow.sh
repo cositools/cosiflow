@@ -13,10 +13,11 @@ error() {
 }
 
 configure_runtime() {
-    python /home/gamma/validate_runtime_secrets.py
+    local scope="$1"
+    python /home/gamma/validate_runtime_secrets.py --scope "$scope"
     export AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="$(
-        python /home/gamma/validate_runtime_secrets.py --sqlalchemy-dsn
+        python /home/gamma/validate_runtime_secrets.py --scope "$scope" --sqlalchemy-dsn
     )"
     export AIRFLOW__EMAIL__EMAIL_BACKEND=airflow.utils.email.send_email_smtp
 
@@ -24,8 +25,10 @@ configure_runtime() {
         export AIRFLOW__SMTP__SMTP_MAIL_FROM="$ALERT_EMAIL_SENDER"
     fi
 
-    export MAILHOG_WEBUI_URL="http://${HOST_IP:-127.0.0.1}:${MAILHOG_WEBUI_PORT:-8025}"
-    export COSIFLOW_HOME_URL="http://${HOST_IP:-127.0.0.1}:${AIRFLOW_WEBUI_PORT:-8080}/heasarcbrowser"
+    if [ "$scope" = "runtime" ]; then
+        export MAILHOG_WEBUI_URL="http://${HOST_IP:-127.0.0.1}:${MAILHOG_WEBUI_PORT:-8025}"
+        export COSIFLOW_HOME_URL="http://${HOST_IP:-127.0.0.1}:${AIRFLOW_WEBUI_PORT:-8080}/heasarcbrowser"
+    fi
     mkdir -p "${COSI_DATA_DIR:?COSI_DATA_DIR is required}"/{obs,transient,tdrss,maps,source}
 }
 
@@ -39,7 +42,7 @@ raise SystemExit(0 if any(str(row.get("username", "")) == username for row in ro
 }
 
 run_init() {
-    configure_runtime
+    configure_runtime init
     log "Validated runtime secrets before database migration."
     airflow db migrate
     python /home/gamma/airflow/modules/cosidag_state.py migrate \
@@ -69,7 +72,7 @@ run_init() {
 }
 
 run_runtime() {
-    configure_runtime
+    configure_runtime runtime
     log "Starting Airflow runtime after successful init."
     airflow webserver --port 8080 &
     webserver_pid=$!

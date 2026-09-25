@@ -82,6 +82,7 @@ COPY migrations /home/gamma/migrations/
 COPY validate_runtime_secrets.py /home/gamma/validate_runtime_secrets.py
 COPY reencrypt_airflow_secrets.py /home/gamma/reencrypt_airflow_secrets.py
 COPY configure_rbac.py /home/gamma/configure_rbac.py
+COPY module_config.py /home/gamma/module_config.py
 
 # Fix ownership
 RUN chown -R "${UID}:${GID}" /home/gamma

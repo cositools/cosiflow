@@ -14,14 +14,18 @@ import os
 from urllib.parse import quote
 
 
-REQUIRED_SECRETS = (
-    "AIRFLOW_ADMIN_PASSWORD",
+COMMON_REQUIRED_SECRETS = (
     "AIRFLOW__WEBSERVER__SECRET_KEY",
     "AIRFLOW__CORE__INTERNAL_API_SECRET_KEY",
     "AIRFLOW__CORE__FERNET_KEY",
     "POSTGRES_PASSWORD",
-    "GCN_DB_PASSWORD",
 )
+SCOPE_REQUIRED_SECRETS = {
+    "init": COMMON_REQUIRED_SECRETS + ("AIRFLOW_ADMIN_PASSWORD",),
+    "runtime": COMMON_REQUIRED_SECRETS + ("GCN_DB_PASSWORD",),
+    "all": COMMON_REQUIRED_SECRETS + ("AIRFLOW_ADMIN_PASSWORD", "GCN_DB_PASSWORD"),
+}
+REQUIRED_SECRETS = SCOPE_REQUIRED_SECRETS["all"]
 
 COMPROMISED_VALUE_HASHES = {
     "850a67bd6adc78c308db0163b838e0acb76425db8ea0d20887a784cf2a7c193c",
@@ -32,10 +36,13 @@ COMPROMISED_VALUE_HASHES = {
 }
 
 
-def validate_environment() -> list[str]:
+def validate_environment(scope: str = "all") -> list[str]:
+    if scope not in SCOPE_REQUIRED_SECRETS:
+        raise ValueError(f"unsupported validation scope: {scope}")
     errors: list[str] = []
     values: dict[str, str] = {}
-    for name in REQUIRED_SECRETS:
+    required_secrets = SCOPE_REQUIRED_SECRETS[scope]
+    for name in required_secrets:
         value = os.getenv(name, "")
         values[name] = value
         if not value:
@@ -50,6 +57,8 @@ def validate_environment() -> list[str]:
         "POSTGRES_PASSWORD",
         "GCN_DB_PASSWORD",
     ):
+        if name not in required_secrets:
+            continue
         value = values.get(name, "")
         if value and len(value) < 16:
             errors.append(f"{name} must contain at least 16 characters")
@@ -96,9 +105,10 @@ def sqlalchemy_dsn() -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--scope", choices=sorted(SCOPE_REQUIRED_SECRETS), default="all")
     parser.add_argument("--sqlalchemy-dsn", action="store_true")
     args = parser.parse_args()
-    errors = validate_environment()
+    errors = validate_environment(args.scope)
     if errors:
         for error in errors:
             print(f"configuration error: {error}", file=__import__("sys").stderr)

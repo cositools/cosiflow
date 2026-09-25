@@ -37,7 +37,7 @@ rotation guidance.
 From the repository root:
 
 ```bash
-mkdir -p data/postgres_data data/gcn_mysql_data data/heasarc data/logs
+mkdir -p data/postgres_data data/gcn_mysql_data data/heasarc data/logs modules-pool
 ```
 
 These directories are bind-mounted into the containers. They remain on disk
@@ -81,6 +81,38 @@ Open a shell in the Airflow container with:
 ```bash
 docker compose exec airflow bash
 ```
+
+## Optional development and X11 access
+
+The base stack mounts DAGs, plugins, pipeline code, callbacks, modules, Python
+environments, and the dedicated module pool read-only. It does not mount the
+repository root, parent workspace, `env/.env`, benchmark scripts, or the host
+X11 socket.
+
+Module installation and containerized benchmarks require the development
+override because they create module links or environments:
+
+```bash
+docker compose down
+docker compose -f docker-compose.yaml -f docker-compose.development.yaml up -d
+```
+
+Use the same two `-f` arguments for subsequent `build`, `exec`, `logs`, and
+`down` commands in that session. The override grants write access only to the
+DAG, pipeline, and managed-environment directories and mounts `test/` read-only.
+
+For a trusted graphical task, add the X11 override and provide `DISPLAY`
+explicitly:
+
+```bash
+DISPLAY=:0 docker compose \
+  -f docker-compose.yaml \
+  -f docker-compose.x11.yaml \
+  up -d
+```
+
+The X11 socket is mounted read-only. Do not enable this override for ordinary
+web, scheduler, GCN, or batch workloads.
 
 ## Stop the stack
 

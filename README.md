@@ -34,6 +34,10 @@ docker compose ps
 ```
 
 Airflow is published only on loopback at `http://127.0.0.1:8080` by default.
+The base stack mounts code read-only and exposes neither the repository root,
+the local `.env`, nor the host X11 socket. Module installation, containerized
+benchmarks, and X11 use explicit Compose overrides documented in the
+[installation guide](docs/getting-started/installation.md#optional-development-and-x11-access).
 See the installation guide before exposing COSIflow outside a development host.
 
 ## Documentation checks

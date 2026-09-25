@@ -5,11 +5,8 @@ x-build-args: &build-args
   UID: ${UID:-501}
   GID: ${GID:-20}
 
-x-airflow-environment: &airflow-environment
+x-airflow-common-environment: &airflow-common-environment
   AIRFLOW_HOME: /home/gamma/airflow
-  AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
-  AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@localhost}
-  AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
   AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY:?AIRFLOW__WEBSERVER__SECRET_KEY is required}
   AIRFLOW__CORE__INTERNAL_API_SECRET_KEY: ${AIRFLOW__CORE__INTERNAL_API_SECRET_KEY:?AIRFLOW__CORE__INTERNAL_API_SECRET_KEY is required}
   AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:?AIRFLOW__CORE__FERNET_KEY is required}
@@ -18,13 +15,21 @@ x-airflow-environment: &airflow-environment
   POSTGRES_USER: ${POSTGRES_USER:-airflow_user}
   POSTGRES_DB: ${POSTGRES_DB:-airflow_db}
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+  PYTHONDONTWRITEBYTECODE: "1"
+
+x-airflow-init-environment: &airflow-init-environment
+  AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
+  AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@localhost}
+  AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
+  COSI_DATA_DIR: ${COSI_DATA_DIR:-/home/gamma/workspace/data}
+
+x-airflow-runtime-environment: &airflow-runtime-environment
   GCN_DB_HOST: gcn-mysql
   GCN_DB_PORT: "3306"
   GCN_DB_NAME: ${GCN_DB_NAME:-gcn}
   GCN_DB_USER: ${GCN_DB_USER:-gcn_user}
   GCN_DB_PASSWORD: ${GCN_DB_PASSWORD:?GCN_DB_PASSWORD is required}
   GCN_DB_CONNECT_TIMEOUT: ${GCN_DB_CONNECT_TIMEOUT:-10}
-  DISPLAY: ${DISPLAY:-}
   HOST_IP: 127.0.0.1
   MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}
   AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}
@@ -44,13 +49,6 @@ x-airflow-environment: &airflow-environment
   GCN_CONSUMER_TOPICS: ${GCN_CONSUMER_TOPICS:-gcn.classic.text.FERMI_GBM_FIN_POS,gcn.classic.text.FERMI_GBM_FLT_POS,gcn.classic.text.FERMI_GBM_GND_POS,gcn.classic.text.FERMI_GBM_POS_TEST,gcn.classic.text.FERMI_GBM_SUBTHRESH,gcn.classic.text.SWIFT_BAT_GRB_LC,gcn.classic.text.SWIFT_BAT_GRB_POS_ACK,gcn.classic.text.SWIFT_BAT_GRB_POS_TEST,gcn.classic.text.SWIFT_BAT_QL_POS,gcn.classic.text.SWIFT_BAT_SCALEDMAP}
   GCN_HEARTBEAT_DEGRADED_SECONDS: ${GCN_HEARTBEAT_DEGRADED_SECONDS:-30}
   GCN_HEARTBEAT_OFFLINE_SECONDS: ${GCN_HEARTBEAT_OFFLINE_SECONDS:-90}
-  GCN_OUTBOUND_TOPIC_DEFAULT: ${GCN_OUTBOUND_TOPIC_DEFAULT:-gcn.notices.cosi.test.alert}
-  GCN_BGO_OUTBOUND_TOPIC: ${GCN_BGO_OUTBOUND_TOPIC:-gcn.notices.cosi.bgo.test.alert}
-  GCN_GED_OUTBOUND_TOPIC: ${GCN_GED_OUTBOUND_TOPIC:-gcn.notices.cosi.ged.test.alert}
-  GCN_OUTBOUND_ALERT_TENSE: ${GCN_OUTBOUND_ALERT_TENSE:-test}
-  GCN_OUTBOUND_ALERT_TYPE: ${GCN_OUTBOUND_ALERT_TYPE:-initial}
-  GCN_OUTBOUND_RECORD_NUMBER: ${GCN_OUTBOUND_RECORD_NUMBER:-1}
-  GCN_OUTBOUND_PRIORITY: ${GCN_OUTBOUND_PRIORITY:-0}
   GCN_MAX_ATTEMPTS: ${GCN_MAX_ATTEMPTS:-3}
 
 x-gcn-client-environment: &gcn-client-environment
@@ -94,7 +92,7 @@ x-gcn-client-environment: &gcn-client-environment
   GCN_WATCHDOG_START_GRACE_SECONDS: ${GCN_WATCHDOG_START_GRACE_SECONDS:-30}
   GCN_LOG_LEVEL: ${GCN_LOG_LEVEL:-INFO}
 
-x-airflow-common: &airflow-common
+x-airflow-image: &airflow-image
   image: cosiflow-airflow:native
   build:
     context: .
@@ -102,24 +100,6 @@ x-airflow-common: &airflow-common
     args:
       <<: *build-args
   user: gamma
-  environment:
-    <<: *airflow-environment
-  volumes:
-    - ../../envs:/home/gamma/envs
-    - ../dags:/home/gamma/airflow/dags
-    - ../../:/home/gamma/airflow/modules_pool
-    - ../plugins:/home/gamma/airflow/plugins
-    - ../pipeline:/home/gamma/airflow/pipeline
-    - ../callbacks:/home/gamma/airflow/callbacks
-    - ../modules:/home/gamma/airflow/modules
-    - ./airflow.cfg:/home/gamma/airflow/airflow.cfg:ro
-    - /tmp/.X11-unix:/tmp/.X11-unix:rw
-    - ..:/shared_dir
-    - ../data/heasarc:/home/gamma/workspace/data
-    - ../data/logs:/home/gamma/airflow/logs
-  networks:
-    - application
-    - database
 
 services:
   gcn-mysql:
@@ -182,22 +162,34 @@ services:
       - database
 
   airflow-init:
-    <<: *airflow-common
+    <<: *airflow-image
     container_name: cosi_airflow_init
+    environment:
+      <<: [*airflow-common-environment, *airflow-init-environment]
     depends_on:
       postgres:
         condition: service_healthy
-      gcn-mysql:
-        condition: service_healthy
     entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh", "init"]
     restart: "no"
+    volumes:
+      - ../plugins:/home/gamma/airflow/plugins:ro
+      - ../modules:/home/gamma/airflow/modules:ro
+      - ./airflow.cfg:/home/gamma/airflow/airflow.cfg:ro
+      - ../data/heasarc:/home/gamma/workspace/data
+      - ../data/logs:/home/gamma/airflow/logs
+    networks:
+      - database
 
   airflow:
-    <<: *airflow-common
+    <<: *airflow-image
     container_name: cosi_airflow
+    environment:
+      <<: [*airflow-common-environment, *airflow-runtime-environment]
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+      gcn-mysql:
+        condition: service_healthy
       mailhog:
         condition: service_started
     entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh", "runtime"]
@@ -210,6 +202,20 @@ services:
       retries: 5
       start_period: 60s
     restart: "on-failure:5"
+    volumes:
+      - ../../envs:/home/gamma/envs:ro
+      - ../dags:/home/gamma/airflow/dags:ro
+      - ${COSIFLOW_MODULES_HOST_DIR:-../modules-pool}:/home/gamma/airflow/modules_pool:ro
+      - ../plugins:/home/gamma/airflow/plugins:ro
+      - ../pipeline:/home/gamma/airflow/pipeline:ro
+      - ../callbacks:/home/gamma/airflow/callbacks:ro
+      - ../modules:/home/gamma/airflow/modules:ro
+      - ./airflow.cfg:/home/gamma/airflow/airflow.cfg:ro
+      - ../data/heasarc:/home/gamma/workspace/data
+      - ../data/logs:/home/gamma/airflow/logs
+    networks:
+      - application
+      - database
 
   mailhog:
     image: mailhog/mailhog

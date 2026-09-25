@@ -13,6 +13,11 @@ container:
 bash cosiflow/test/run_performance_test.sh
 ```
 
+The container wrapper expects Airflow to be running with
+`env/docker-compose.development.yaml`. That explicit override mounts only
+`test/` at `/shared_dir/test` and leaves the repository root and `.env`
+unavailable to the container.
+
 To stop non-terminal runs for the configured DAGs without starting a new test:
 
 ```bash
