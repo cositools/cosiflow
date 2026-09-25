@@ -61,6 +61,12 @@ class RuntimeDag:
     task_states: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class CleanupTarget:
+    root: Path
+    keep_names: frozenset[str]
+
+
 class CommandError(RuntimeError):
     pass
 
@@ -392,30 +398,47 @@ with create_session() as session:
         self.airflow("dags", "show", dag_id, "--save", container_output_path, check=False)
         return output_path.exists() and output_path.stat().st_size > 0
 
-    def stop_active_run(self, dag_id: str, run_id: str) -> None:
+    def run_activity(self, dag_id: str, run_id: str, job_ids: list[int]) -> dict[str, Any]:
         code = f"""
-from airflow.models.dagrun import DagRun
+import json
+import os
+from pathlib import Path
+from airflow.jobs.job import Job
 from airflow.utils.session import create_session
-try:
-    from airflow.utils.state import DagRunState, TaskInstanceState
-    failed_dag = DagRunState.FAILED
-    failed_task = TaskInstanceState.FAILED
-except Exception:
-    failed_dag = "failed"
-    failed_task = "failed"
-active = {sorted(ACTIVE_STATES)!r}
+job_ids = {sorted(set(job_ids))!r}
+jobs = {{}}
 with create_session() as session:
-    dr = session.query(DagRun).filter(DagRun.dag_id == {dag_id!r}, DagRun.run_id == {run_id!r}).one_or_none()
-    if dr and str(dr.state) not in ("success", "failed"):
-        for ti in dr.get_task_instances(session=session):
-            if ti.state is None or str(ti.state) in active:
-                ti.set_state(failed_task, session=session)
-        dr.set_state(failed_dag)
-        session.merge(dr)
+    if job_ids:
+        for job in session.query(Job).filter(Job.id.in_(job_ids)).all():
+            jobs[str(job.id)] = str(job.state)
+processes = []
+for proc in Path("/proc").iterdir():
+    if not proc.name.isdigit() or int(proc.name) == os.getpid():
+        continue
+    try:
+        args = (proc / "cmdline").read_bytes().split(b"\\0")
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        continue
+    tokens = [item.decode("utf-8", "replace") for item in args if item]
+    if (
+        "airflow" in tokens
+        and "tasks" in tokens
+        and "run" in tokens
+        and {dag_id!r} in tokens
+        and {run_id!r} in tokens
+    ):
+        processes.append({{"pid": int(proc.name), "args": tokens}})
+print(json.dumps({{"jobs": jobs, "processes": processes}}, sort_keys=True))
 """
-        self.python(code)
+        return dict(self.python_json(code) or {})
 
-    def stop_other_active_runs(self, dag_ids: list[str], keep_run_ids: set[str]) -> list[dict[str, str]]:
+    def stop_active_run(
+        self,
+        dag_id: str,
+        run_id: str,
+        timeout_seconds: float = 90.0,
+        poll_seconds: float = 1.0,
+    ) -> dict[str, Any]:
         code = f"""
 import json
 from airflow.models.dagrun import DagRun
@@ -427,28 +450,96 @@ try:
 except Exception:
     failed_dag = "failed"
     failed_task = "failed"
+active = {sorted(ACTIVE_STATES)!r}
+result = {{"found": False, "requested_tasks": [], "job_ids": []}}
+with create_session() as session:
+    dr = session.query(DagRun).filter(DagRun.dag_id == {dag_id!r}, DagRun.run_id == {run_id!r}).one_or_none()
+    if dr:
+        result["found"] = True
+        for ti in dr.get_task_instances(session=session):
+            if ti.state is None or str(ti.state) in active:
+                result["requested_tasks"].append(ti.task_id)
+                if ti.job_id is not None:
+                    result["job_ids"].append(int(ti.job_id))
+                ti.error(session=session)
+        if str(dr.state) not in ("success", "failed"):
+            dr.set_state(failed_dag)
+            session.merge(dr)
+print(json.dumps(result, sort_keys=True))
+"""
+        request = dict(self.python_json(code) or {})
+        if not request.get("found"):
+            return {
+                "verified": False,
+                "reason": "dag run not found",
+                "dag_id": dag_id,
+                "run_id": run_id,
+                "job_ids": [],
+                "processes": [],
+            }
+
+        job_ids = [int(value) for value in request.get("job_ids", [])]
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
+        last_activity: dict[str, Any] = {"jobs": {}, "processes": []}
+        while True:
+            last_activity = self.run_activity(dag_id, run_id, job_ids)
+            running_jobs = [
+                job_id
+                for job_id, state in dict(last_activity.get("jobs") or {}).items()
+                if str(state) == "running"
+            ]
+            processes = list(last_activity.get("processes") or [])
+            if not running_jobs and not processes:
+                return {
+                    "verified": True,
+                    "reason": "task runners stopped",
+                    "dag_id": dag_id,
+                    "run_id": run_id,
+                    "job_ids": job_ids,
+                    "processes": [],
+                }
+            if time.monotonic() >= deadline:
+                return {
+                    "verified": False,
+                    "reason": "task runners still active after stop timeout",
+                    "dag_id": dag_id,
+                    "run_id": run_id,
+                    "job_ids": running_jobs,
+                    "processes": processes,
+                }
+            time.sleep(max(0.0, poll_seconds))
+
+    def active_benchmark_runs(
+        self,
+        dag_ids: list[str],
+        keep_run_ids: set[str],
+        run_id_prefix: str,
+    ) -> list[dict[str, str]]:
+        if not run_id_prefix:
+            raise ValueError("benchmark_run_id_prefix must not be empty")
+        code = f"""
+import json
+from airflow.models.dagrun import DagRun
+from airflow.utils.session import create_session
 dag_ids = {dag_ids!r}
 keep_run_ids = {sorted(keep_run_ids)!r}
-active = {sorted(ACTIVE_STATES)!r}
-stopped = []
+run_id_prefix = {run_id_prefix!r}
+runs = []
 with create_session() as session:
-    runs = (
+    candidates = (
         session.query(DagRun)
         .filter(DagRun.dag_id.in_(dag_ids))
         .all()
     )
-    for dr in runs:
+    for dr in candidates:
         if dr.run_id in keep_run_ids:
             continue
         if str(dr.state) in ("success", "failed"):
             continue
-        for ti in dr.get_task_instances(session=session):
-            if ti.state is None or str(ti.state) in active:
-                ti.set_state(failed_task, session=session)
-        dr.set_state(failed_dag)
-        session.merge(dr)
-        stopped.append({{"dag_id": dr.dag_id, "run_id": dr.run_id, "state": str(dr.state)}})
-print(json.dumps(stopped, sort_keys=True))
+        if not str(dr.run_id).startswith(run_id_prefix):
+            continue
+        runs.append({{"dag_id": dr.dag_id, "run_id": dr.run_id, "state": str(dr.state)}})
+print(json.dumps(runs, sort_keys=True))
 """
         return list(self.python_json(code) or [])
 
@@ -500,24 +591,77 @@ def cosidag_conf_for_dataset(dag_cfg: DagConfig, config: dict[str, Any]) -> dict
     return conf
 
 
-def cleanup_data(config: dict[str, Any], cosiflow_root: Path) -> None:
+def strict_descendant(path: Path, parent: Path) -> bool:
+    return path != parent and parent in path.parents
+
+
+def cleanup_preflight(config: dict[str, Any], cosiflow_root: Path) -> list[CleanupTarget]:
+    cleanup_cfg = config.get("cleanup", {})
+    if not cleanup_cfg.get("enabled", False):
+        return []
+
+    allowed_root_value = cleanup_cfg.get("allowed_root")
+    if not allowed_root_value:
+        raise ValueError("cleanup.allowed_root is required when cleanup is enabled")
+
+    repository_root = cosiflow_root.resolve()
+    allowed_root = resolve_from(repository_root, allowed_root_value)
+    if not strict_descendant(allowed_root, repository_root):
+        raise ValueError(
+            f"Cleanup allowed_root must be a strict descendant of the COSIflow root: {allowed_root}"
+        )
+    if not allowed_root.exists() or not allowed_root.is_dir():
+        raise ValueError(f"Cleanup allowed_root is not a directory: {allowed_root}")
+
+    targets: list[CleanupTarget] = []
+    seen_roots: set[Path] = set()
+    roots = cleanup_cfg.get("roots", [])
+    if not isinstance(roots, list) or not roots:
+        raise ValueError("cleanup.roots must contain at least one target")
+
+    for root_cfg in roots:
+        if not isinstance(root_cfg, dict) or not root_cfg.get("path"):
+            raise ValueError("Each cleanup root must define a path")
+        root = resolve_from(repository_root, root_cfg["path"])
+        if root in seen_roots:
+            raise ValueError(f"Duplicate cleanup root: {root}")
+        seen_roots.add(root)
+        if not root.exists():
+            log(f"cleanup skipped, path does not exist: {root}")
+            continue
+        if not root.is_dir():
+            raise ValueError(f"Cleanup path is not a directory: {root}")
+        if not strict_descendant(root, allowed_root):
+            raise ValueError(
+                f"Cleanup path must be a strict descendant of allowed_root {allowed_root}: {root}"
+            )
+        keep_names = frozenset(str(name) for name in root_cfg.get("keep_files", []))
+        targets.append(CleanupTarget(root=root, keep_names=keep_names))
+    return targets
+
+
+def cleanup_data(
+    config: dict[str, Any],
+    cosiflow_root: Path,
+    *,
+    allow_destructive: bool = False,
+) -> None:
     cleanup_cfg = config.get("cleanup", {})
     if not cleanup_cfg.get("enabled", False):
         log("cleanup disabled")
         return
 
     dry_run = bool(cleanup_cfg.get("dry_run", False))
+    if not dry_run and not allow_destructive:
+        raise ValueError(
+            "Destructive cleanup requires --allow-destructive-cleanup in addition to cleanup.enabled=true"
+        )
+
+    targets = cleanup_preflight(config, cosiflow_root)
     verbose = bool(cleanup_cfg.get("verbose", (config.get("logging", {}) or {}).get("verbose_cleanup", False)))
-    for root_cfg in cleanup_cfg.get("roots", []):
-        root = resolve_from(cosiflow_root, root_cfg["path"])
-        keep_names = {str(name) for name in root_cfg.get("keep_files", [])}
-        if not root.exists():
-            log(f"cleanup skipped, path does not exist: {root}")
-            continue
-        if not root.is_dir():
-            raise ValueError(f"Cleanup path is not a directory: {root}")
-        if cosiflow_root not in root.parents and root != cosiflow_root:
-            raise ValueError(f"Refusing to clean outside cosiflow root: {root}")
+    for target in targets:
+        root = target.root
+        keep_names = target.keep_names
 
         protected_dirs: set[Path] = set()
         removed_files = 0
@@ -525,7 +669,7 @@ def cleanup_data(config: dict[str, Any], cosiflow_root: Path) -> None:
         kept_files = 0
 
         for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
-            if path.is_file():
+            if path.is_symlink() or path.is_file():
                 if path.name in keep_names:
                     kept_files += 1
                     protected_dirs.update(path.parents)
@@ -730,6 +874,22 @@ def open_csv(path: Path, append: bool, macro: list[str], header: list[str]):
 
 def terminal(dags: list[RuntimeDag]) -> bool:
     return all(dag.state in TERMINAL_STATES for dag in dags)
+
+
+def successful(dags: list[RuntimeDag]) -> bool:
+    return bool(dags) and all(dag.state == "success" for dag in dags)
+
+
+def benchmark_exit_code(
+    dags: list[RuntimeDag],
+    *,
+    timed_out: bool = False,
+    finalization_ok: bool = True,
+    artifacts_ok: bool = True,
+) -> int:
+    if successful(dags) and not timed_out and finalization_ok and artifacts_ok:
+        return 0
+    return 2
 
 
 def state_counts(task_states: dict[str, str]) -> str:
@@ -1312,6 +1472,11 @@ def main() -> int:
         action="store_true",
         help="Generate charts from the configured CSV without cleanup or triggering.",
     )
+    parser.add_argument(
+        "--allow-destructive-cleanup",
+        action="store_true",
+        help="Allow real cleanup when cleanup.enabled=true and cleanup.dry_run=false.",
+    )
     args = parser.parse_args()
 
     os.environ.setdefault("PYTHONWARNINGS", "ignore::FutureWarning,ignore::UserWarning")
@@ -1324,6 +1489,7 @@ def main() -> int:
     configured_dag_ids = [dag_cfg.dag_id for dag_cfg in dag_configs]
     csv_cfg = config.get("csv", {})
     csv_path = resolve_from(test_dir, csv_cfg.get("output", "results/cosidag_performance.csv"))
+    final_cfg = config.get("finalization", {})
 
     if args.charts_only:
         chart_dags = runtime_dags_from_csv(csv_path)
@@ -1334,25 +1500,54 @@ def main() -> int:
         return 0
 
     if args.finalize_only:
-        stopped = client.stop_other_active_runs(configured_dag_ids, keep_run_ids=set())
+        run_id_prefix = str(final_cfg.get("benchmark_run_id_prefix", "perf__"))
+        stop_timeout = float(final_cfg.get("stop_timeout_seconds", 90))
+        stop_poll = float(final_cfg.get("stop_poll_seconds", 1))
+        active_runs = client.active_benchmark_runs(
+            configured_dag_ids,
+            keep_run_ids=set(),
+            run_id_prefix=run_id_prefix,
+        )
+        verified = True
+        for run in active_runs:
+            result = client.stop_active_run(
+                run["dag_id"],
+                run["run_id"],
+                timeout_seconds=stop_timeout,
+                poll_seconds=stop_poll,
+            )
+            verified = verified and bool(result.get("verified"))
+            log(
+                f"finalize-only stop {run['dag_id']} {run['run_id']}: "
+                f"verified={result.get('verified')} reason={result.get('reason')}"
+            )
         for dag_id in configured_dag_ids:
             log(f"pause {dag_id}")
             client.pause(dag_id)
-        log(f"finalize-only complete: stopped_non_terminal_runs={len(stopped)}")
-        return 0
+        log(
+            "finalize-only complete: "
+            f"requested_benchmark_runs={len(active_runs)}, verified={verified}"
+        )
+        return 0 if verified else 2
 
     unpause = bool((config.get("airflow") or {}).get("unpause_before_trigger", True))
-    final_cfg = config.get("finalization", {})
     started: list[RuntimeDag] = []
     run_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     resource_columns: list[str] = []
     writer = None
     handle = None
     start_time = time.time()
+    timed_out = False
+    finalization_ok = True
+    artifacts_ok = True
 
     try:
         log(f"config: {config_path}")
-        cleanup_data(config, cosiflow_root)
+        cleanup_data(
+            config,
+            cosiflow_root,
+            allow_destructive=args.allow_destructive_cleanup,
+        )
 
         for dag_cfg in dag_configs:
             dag_conf = cosidag_conf_for_dataset(dag_cfg, config)
@@ -1381,7 +1576,7 @@ def main() -> int:
 
         if not started:
             log("no DAG runs were triggered")
-            return 0
+            return 2
 
         initial_resources = resource_snapshot(client, config)
         resource_columns = sorted(initial_resources)
@@ -1412,27 +1607,56 @@ def main() -> int:
                 break
             if time.time() - start_time >= timeout:
                 log(f"timeout reached after {timeout} seconds")
+                timed_out = True
                 break
             time.sleep(interval)
     finally:
         stopped_runs = False
+        stop_timeout = float(final_cfg.get("stop_timeout_seconds", 90))
+        stop_poll = float(final_cfg.get("stop_poll_seconds", 1))
         if bool(final_cfg.get("stop_active_runs", False)):
             for dag in started:
                 if dag.state not in TERMINAL_STATES:
-                    client.stop_active_run(dag.dag_id, dag.run_id)
-                    dag.state = "failed"
-                    dag.end_time = dag.end_time or utc_now()
+                    result = client.stop_active_run(
+                        dag.dag_id,
+                        dag.run_id,
+                        timeout_seconds=stop_timeout,
+                        poll_seconds=stop_poll,
+                    )
+                    if result.get("verified"):
+                        dag.state = "failed"
+                        dag.end_time = dag.end_time or utc_now()
+                    else:
+                        finalization_ok = False
+                        log(
+                            f"unable to verify stop for {dag.dag_id} {dag.run_id}: "
+                            f"{result.get('reason')}; jobs={result.get('job_ids')}; "
+                            f"processes={result.get('processes')}"
+                        )
                     stopped_runs = True
+        elif any(dag.state not in TERMINAL_STATES for dag in started):
+            finalization_ok = False
+            log("active benchmark runs remain because finalization.stop_active_runs is disabled")
 
         if started and bool(final_cfg.get("stop_other_active_runs", True)):
             keep_run_ids = {dag.run_id for dag in started}
-            stopped = client.stop_other_active_runs(
+            run_id_prefix = str(final_cfg.get("benchmark_run_id_prefix", "perf__"))
+            other_runs = client.active_benchmark_runs(
                 configured_dag_ids,
                 keep_run_ids,
+                run_id_prefix,
             )
-            if stopped:
+            for run in other_runs:
+                result = client.stop_active_run(
+                    run["dag_id"],
+                    run["run_id"],
+                    timeout_seconds=stop_timeout,
+                    poll_seconds=stop_poll,
+                )
+                finalization_ok = finalization_ok and bool(result.get("verified"))
+            if other_runs:
                 stopped_runs = True
-                log(f"stopped other active runs: {len(stopped)}")
+                log(f"requested stop for other owned benchmark runs: {len(other_runs)}")
 
         if started and bool(final_cfg.get("pause_dags", True)):
             for dag_cfg in dag_configs:
@@ -1459,8 +1683,14 @@ def main() -> int:
                     for path in chart_paths:
                         log(f"  {path}")
             except Exception as exc:
+                artifacts_ok = False
                 log(f"chart generation failed: {exc}")
-    return 0 if terminal(started) else 2
+    return benchmark_exit_code(
+        started,
+        timed_out=timed_out,
+        finalization_ok=finalization_ok,
+        artifacts_ok=artifacts_ok,
+    )
 
 
 if __name__ == "__main__":

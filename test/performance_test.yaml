@@ -19,7 +19,7 @@ charts:
     include_graphviz: false
 
 polling:
-  interval_seconds:  1
+  interval_seconds: 5
   timeout_seconds: 14400
 
 logging:
@@ -28,9 +28,10 @@ logging:
   verbose_cleanup: false
 
 cleanup:
-  enabled: true
-  dry_run: false
+  enabled: false
+  dry_run: true
   verbose: false
+  allowed_root: data/heasarc/tdrss
   roots:
     - path: data/heasarc/tdrss/2026_07/260722001
       keep_files:
@@ -71,4 +72,7 @@ resources:
 finalization:
   pause_dags: true
   stop_active_runs: true
-  stop_other_active_runs: true
+  stop_other_active_runs: false
+  benchmark_run_id_prefix: perf__
+  stop_timeout_seconds: 90
+  stop_poll_seconds: 1

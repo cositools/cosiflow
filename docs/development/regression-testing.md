@@ -40,6 +40,7 @@ report an explicit skip when that dependency is unavailable.
 | `tests/security/test_endpoint_matrix.py` | Review 6 | Complete route-to-permission coverage, POST-only mutations, least-privilege manifests, and CSRF tokens in mutating forms and requests |
 | `tests/security/test_configure_rbac.py` | Review 6 | Viewer isolation, Scientist/Operator/Admin provisioning, stale-permission removal, verification failures, and idempotent reconciliation |
 | `tests/security/test_review19_data_explorer.py` | Review 19 | Sanitized Data Explorer failures, server-side diagnostics, image isolation, DOM-safe hostile payload handling, same-origin route validation, raster MIME allowlisting, and base64 validation |
+| `tests/test_review28_benchmark_safety.py` | Review 28 | Cleanup dual opt-in and path confinement, all-target preflight, success/timeout exit semantics, run ownership, and bounded stop verification |
 | `tests/test_issue18_contracts.py` | Review 18 | Removal of the unused paths module and the supported COSIDAG import contract |
 | `tests/test_review8_cosidag_state.py` | Review 8 | Runtime retrigger identity/configuration, transactional schema, claim/finalization wiring, migration, and reset-plugin contracts |
 | `tests/integration/test_review8_postgres.py` | Review 8 | Real PostgreSQL uniqueness, concurrent claims, failure recovery, idempotent finalization, and reset isolation |
@@ -47,6 +48,7 @@ report an explicit skip when that dependency is unavailable.
 | `tests/integration/test_review12_mysql.py` | Review 12 | Real MySQL retry scheduling, stale-lock recovery, stale healthcheck failure, and container restart behavior |
 | `tests/test_review13_module_loader_safety.py` | Review 13 | YAML schema validation, destructive-path confinement, overlapping-environment rejection, traversal and symlink rejection, shell-payload isolation, and mutation-free install/update/remove failures |
 | `tests/integration/review16/test_scheduler_load.sh` | Review 16 | Real LocalExecutor scheduling with two slots, six rescheduling sensors, PostgreSQL task state, and independent ready work |
+| `tests/integration/review28/test_localexecutor_stop.sh` | Review 28 | Real PostgreSQL/LocalExecutor termination of one benchmark-owned run while a concurrent manual run remains active |
 
 `tests/security/support.py` and `tests/security/auth_support.py` provide
 repository-path, script-loading, and Auth Manager test doubles; they do not
@@ -239,6 +241,33 @@ checks HTML and event-attribute payloads, filename and metadata handling,
 same-origin route enforcement, unsupported URL schemes, raster MIME types,
 base64 validation, and the generic fetch-failure message. The Review 6
 endpoint and role-matrix suites remain the authority for Data Explorer access.
+
+## Review 28 benchmark-safety tests
+
+The deterministic Review 28 suite uses temporary directory trees and mocked
+Airflow status responses. It verifies that destructive cleanup needs both
+configuration and CLI authorization, every target is preflighted before any
+deletion, repository and symlink escapes are rejected, dry-run has no side
+effects, failed or timed-out runs return non-zero, and stop verification fails
+closed:
+
+```bash
+python3 -m unittest tests.test_review28_benchmark_safety -v
+```
+
+The isolated integration test starts a disposable PostgreSQL database and an
+Airflow 2.10.3 scheduler using `LocalExecutor` with two slots. It triggers a
+benchmark-owned run and a manual run of the same long-running DAG, stops only
+the benchmark run, and checks that its heartbeat no longer changes while the
+manual run continues:
+
+```bash
+tests/integration/review28/test_localexecutor_stop.sh
+```
+
+The Compose project uses synthetic credentials and temporary database storage.
+It is removed after the test and does not connect to development or production
+databases.
 
 ## Adding or changing a regression test
 
