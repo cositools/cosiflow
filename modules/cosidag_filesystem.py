@@ -71,6 +71,23 @@ def file_snapshot(path: str) -> Optional[tuple[int, int]]:
     return stat_result.st_size, stat_result.st_mtime_ns
 
 
+def resolve_confined_relative_path(root: str, relative_path: str) -> str:
+    """Resolve a relative path below ``root`` and reject symlink escape."""
+    root_real = os.path.realpath(os.path.abspath(os.path.expanduser(root)))
+    if os.path.isabs(relative_path):
+        raise ValueError(f"Path must be relative to the candidate folder: {relative_path!r}")
+    resolved = os.path.realpath(os.path.join(root_real, relative_path))
+    try:
+        confined = os.path.commonpath([root_real, resolved]) == root_real
+    except ValueError:
+        confined = False
+    if not confined:
+        raise ValueError(
+            f"Resolved path escapes the candidate folder: {relative_path!r}"
+        )
+    return resolved
+
+
 def directory_snapshot(path: str) -> Optional[DirectorySnapshot]:
     """Return a compact snapshot that detects directory content changes.
 

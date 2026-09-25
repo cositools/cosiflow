@@ -64,11 +64,21 @@ sys.path.append(os.path.join(airflow_home, "modules"))
 from on_failure_callback import notify_email  # type: ignore
 
 from date_helper import _looks_like_date_folder, _parse_date_string, _apply_date_queries  # type: ignore
-from cosidag_runtime import automatic_retrigger_run_id, build_successor_conf, normalize_run_conf  # type: ignore
+from cosidag_runtime import (  # type: ignore
+    automatic_retrigger_run_id,
+    build_successor_conf,
+    normalize_monitoring_policy,
+    normalize_relative_runtime_path,
+    normalize_run_conf,
+    normalize_select_policy,
+    parse_runtime_bool,
+    validate_sensor_runtime_config,
+)
 from cosidag_filesystem import (  # type: ignore
     DirectorySnapshot,
     file_snapshot,
     resolve_patterns,
+    resolve_confined_relative_path,
     scan_directory_snapshots,
     scan_file_inventory,
     stability_observation,
@@ -127,11 +137,9 @@ def cfg_float(key: str, default: float) -> float:
 
 def cfg_bool(key: str, default: bool = False) -> bool:
     v = cfg(key, None)
-    if isinstance(v, bool):
-        return v
     if v is None:
         return default
-    return str(v).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+    return parse_runtime_bool(v, key)
 
 
 def _param(default, description: str) -> Param:
@@ -340,17 +348,6 @@ def _find_new_file(
     return None
 
 
-def _normalize_monitoring_policy(policy: Optional[str]) -> str:
-    """Normalize and validate the COSIDAG monitoring policy."""
-    normalized = str(policy or "folder-driven").strip().lower()
-    if normalized not in {"folder-driven", "file-driven"}:
-        raise ValueError(
-            f"Unsupported COSIDAG monitoring policy {policy!r}. "
-            "Expected 'folder-driven' or 'file-driven'."
-        )
-    return normalized
-
-
 def _normalize_optional_int(value, field_name: str) -> Optional[int]:
     """Return None for unset/blank values, otherwise parse a non-negative int."""
     if value is None:
@@ -435,10 +432,7 @@ class ConditionalTriggerDagRunOperator(TriggerDagRunOperator):
         # Check runtime override
         val = conf.get("auto_retrig")
         if val is not None:
-            is_on = val
-            if isinstance(val, str):
-                is_on = val.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
-
+            is_on = parse_runtime_bool(val, "auto_retrig")
             if not is_on:
                 print(f"[COSIDAG] Skipping automatic_retrig (dag_run.conf['auto_retrig']={val})")
                 return None
@@ -527,7 +521,11 @@ class COSIDAG(DAG):
 
         # ensure that DAG receives the final default_args
         kwargs["default_args"] = base
-        policy = _normalize_monitoring_policy(policy)
+        policy = normalize_monitoring_policy(policy)
+        select_policy = normalize_select_policy(select_policy)
+        ready_marker = normalize_relative_runtime_path(ready_marker, "ready_marker")
+        prefer_deepest = parse_runtime_bool(prefer_deepest, "prefer_deepest")
+        auto_retrig = parse_runtime_bool(auto_retrig, "auto_retrig")
 
         # --- merge tags ---
         existing_tags = list(kwargs.get("tags", []) or [])
@@ -552,14 +550,14 @@ class COSIDAG(DAG):
             "min_files": int(min_files),
             "ready_marker": ready_marker,
             "only_basename": only_basename,
-            "prefer_deepest": bool(prefer_deepest),
+            "prefer_deepest": prefer_deepest,
             "file_patterns": file_patterns,
             "select_policy": select_policy,
             "policy": policy,
             "max_active_runs": int(kwargs.get("max_active_runs", 2)),
             "max_active_tasks": int(kwargs.get("max_active_tasks", 8)),
             "concurrency": int(kwargs.get("concurrency", 8)),
-            "auto_retrig": bool(auto_retrig),
+            "auto_retrig": auto_retrig,
             "max_retrig_runs": _normalize_optional_int(max_retrig_runs, "max_retrig_runs"),
             "claim_stale_seconds": int(claim_stale_seconds),
         }
@@ -666,7 +664,7 @@ class COSIDAG(DAG):
             }
         )
 
-        self.auto_retrig = bool(auto_retrig)
+        self.auto_retrig = auto_retrig
         self.max_retrig_runs = self.cosidag_defaults["max_retrig_runs"]
         if self.cosidag_defaults["claim_stale_seconds"] <= 0:
             raise ValueError("claim_stale_seconds must be positive")
@@ -695,40 +693,27 @@ class COSIDAG(DAG):
             dag_run = context.get("dag_run")
             if dag_run is None:
                 raise AirflowException("check_new_file requires a DagRun context")
-            conf = normalize_run_conf(dag_run.conf)
             defaults = self.cosidag_defaults
-            monitoring = conf.get("monitoring_folders", defaults["monitoring_folders"])
-            level_val = int(conf.get("level", defaults["level"]))
-
-            # Date queries: runtime conf has precedence.
-            conf_date_queries = conf.get("date_queries", None)
-            if conf_date_queries is None:
-                # fallback: use the optional "date" as '==date'
-                conf_date = conf.get("date", defaults.get("date"))
-                if conf_date:
-                    conf_date_queries = f"=={conf_date}"
-                else:
-                    conf_date_queries = defaults.get("date_queries")
-
-            idle_s = int(conf.get("idle_seconds", defaults.get("idle_seconds", 20)))
-            min_f = int(conf.get("min_files", defaults.get("min_files", 1)))
-            marker = conf.get("ready_marker", defaults.get("ready_marker"))
-            only_bn = conf.get("only_basename", defaults.get("only_basename"))
-            prefer_deep = bool(conf.get("prefer_deepest", defaults.get("prefer_deepest", True)))
-            selected_policy = _normalize_monitoring_policy(
-                conf.get("monitoring_policy", conf.get("policy", defaults.get("policy", "folder-driven")))
-            )
-            claim_stale_s = int(
-                conf.get("claim_stale_seconds", defaults["claim_stale_seconds"])
-            )
-            release_orphaned_claims(self.dag_id, claim_stale_s)
+            runtime = validate_sensor_runtime_config(dag_run.conf, defaults)
+            monitoring = runtime.monitoring_folders
+            level_val = runtime.level
+            conf_date_queries = runtime.date_queries
+            idle_s = runtime.idle_seconds
+            min_f = runtime.min_files
+            marker = runtime.ready_marker
+            only_bn = runtime.only_basename
+            prefer_deep = runtime.prefer_deepest
+            selected_policy = runtime.policy
+            release_orphaned_claims(self.dag_id, runtime.claim_stale_seconds)
 
             print(f"[COSIDAG] _sensor_poke: marker={marker}")
             print(f"[COSIDAG] _sensor_poke: idle_seconds={idle_s}, min_files={min_f}")
 
             def _folder_candidate_ready(path: str, snapshot: DirectorySnapshot) -> bool:
-                if marker and not os.path.exists(os.path.join(path, marker)):
-                    return False
+                if marker:
+                    marker_path = resolve_confined_relative_path(path, marker)
+                    if not os.path.exists(marker_path):
+                        return False
 
                 if snapshot[0] < min_f:
                     return False
@@ -995,7 +980,7 @@ class COSIDAG(DAG):
                     "monitoring_policy",
                     conf.get("policy", self.cosidag_defaults.get("policy", "folder-driven")),
                 )
-            policy_value = _normalize_monitoring_policy(policy_value)
+            policy_value = normalize_monitoring_policy(policy_value)
 
             if not detected:
                 print(

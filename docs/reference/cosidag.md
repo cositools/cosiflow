@@ -98,7 +98,7 @@ default. Standard Airflow `DAG` arguments such as `dag_id`, `start_date`,
 | `home_env_var` | `COSIFLOW_HOME_URL` | Environment variable used by `show_results` |
 | `idle_seconds` | `20` | Minimum time for size and mtime metadata to remain unchanged |
 | `min_files` | `1` | Minimum recursive file count in folder-driven mode |
-| `ready_marker` | `None` | Required marker filename in folder-driven mode |
+| `ready_marker` | `None` | Optional relative marker path in folder-driven mode; no marker is required by default |
 | `only_basename` | `None` | Exact candidate folder or file basename |
 | `prefer_deepest` | `True` | Prefer deeper folder candidates |
 | `file_patterns` | `None` | XCom-key to glob/`regex:` pattern mapping |
@@ -127,8 +127,11 @@ Stability requires two or more observations of the same directory snapshot.
 The recursive file count, total size, latest nanosecond mtime, and a digest of
 relative paths, sizes, and mtimes must remain unchanged for at least
 `idle_seconds`. The optional `ready_marker` remains an additional producer
-contract when configured; it is not required by default and does not replace
-the metadata stability window.
+contract only when explicitly configured. It is not needed or required by
+default and does not replace the metadata stability window. A configured
+marker must be relative to the candidate folder. Absolute paths, parent
+traversal, and paths that resolve outside the candidate through a symlink are
+rejected.
 
 Candidates are evaluated in the configured priority order, but each candidate
 keeps an independent stability history. A higher-priority folder that is still
@@ -230,6 +233,15 @@ Runtime overrides currently supported by the sensor are:
 
 `automatic_retrig` also reads `auto_retrig` and `max_retrig_runs` from
 `dag_run.conf`. The sensor also reads `claim_stale_seconds`.
+
+Runtime configuration is validated before filesystem scanning, stale-claim
+recovery, or a new claim. `prefer_deepest` and `auto_retrig` accept native
+booleans, integer `1`/`0`, or case-insensitive string values
+`true`/`false`, `yes`/`no`, `on`/`off`, and `1`/`0`. Other values are rejected
+instead of using Python truthiness. Monitoring policy accepts only
+`folder-driven` or `file-driven`; input selection policy accepts only `first`
+or `latest_mtime` and is validated when the DAG is constructed, before an
+input inventory can run.
 
 The current `resolve_inputs` task uses `file_patterns`, `select_policy`,
 `input_poke_seconds`, and `input_timeout_seconds` captured when the DAG is
