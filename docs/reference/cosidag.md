@@ -80,10 +80,12 @@ with COSIDAG(
 
 ## Constructor parameters
 
-`monitoring_folders` is the only COSIDAG-specific positional argument without a
-default. Standard Airflow `DAG` arguments such as `dag_id`, `start_date`,
-`schedule_interval`, `catchup`, `description`, `max_active_runs`, and
-`max_active_tasks` are passed through `*args` and `**kwargs`.
+COSIDAG-specific arguments are keyword-only. Airflow `DAG` arguments continue
+to pass through: `dag_id` may be the first positional argument, while
+`start_date`, `schedule_interval`, `catchup`, `description`,
+`max_active_runs`, and `max_active_tasks` can be supplied by keyword as usual.
+`monitoring_folders` is required as a keyword; use an empty list for a
+manual-only DAG.
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
@@ -113,6 +115,35 @@ default. Standard Airflow `DAG` arguments such as `dag_id`, `start_date`,
 | `refill_threshold` | `20` | Refill the persistent queue when eligible queued rows fall below this value |
 | `discovery_batch_size` | `100` | Maximum candidates inserted during one refill cycle |
 | `retry_backoff_seconds` | `300` | Delay before the single automatic retry becomes claimable |
+
+### Constructor migration and deprecation
+
+The keyword-first form is the supported constructor API:
+
+```python
+COSIDAG(
+    "cosipipe_example",
+    monitoring_folders=["/data/incoming"],
+    start_date=datetime(2026, 1, 1),
+    schedule_interval=None,
+    catchup=False,
+)
+```
+
+Using `dag_id="cosipipe_example"` is also supported. Existing DAGs that pass
+only `monitoring_folders` positionally and `dag_id` by keyword continue to load
+temporarily:
+
+```python
+# Deprecated compatibility form
+COSIDAG(["/data/incoming"], dag_id="cosipipe_example", ...)
+```
+
+The compatibility form emits `DeprecationWarning` and will be removed after a
+deprecation window. Migrate by adding the `monitoring_folders=` keyword. Other
+COSIDAG options must be passed by keyword; the compatibility shim does not
+accept additional positional COSIDAG arguments. Supplying both positional and
+keyword monitoring configuration fails immediately with `TypeError`.
 
 The Trigger UI exposes the preferred structured `date_filters` form: a list of
 objects containing `operator` (`<`, `<=`, `==`, `>=`, or `>`) and an ISO
@@ -233,6 +264,13 @@ file_patterns={
   therefore survives every sensor reschedule;
 - readiness uses a `PythonSensor` in `reschedule` mode, so no Python operator
   sleeps while holding a worker slot.
+
+The compatibility method `find_file_by_pattern(pattern, detected_folder)`
+accepts a raw regular expression without the `regex:` prefix. It delegates to
+the same file-only inventory and basename `re.match` logic, and returns the
+lexicographically first matching path. It therefore has the same anchored and
+deterministic behavior as a declarative `regex:` pattern with `select_policy`
+set to `first`.
 
 The selected paths are published under the supplied mapping keys. The detected
 folder is also republished as `resolve_inputs.run_dir`.

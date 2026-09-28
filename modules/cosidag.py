@@ -24,15 +24,14 @@ Notes
 * Prefer deepest: if prefer_deepest is True, it prefers the deepest subfolder.
 * File patterns: if file_patterns is provided, it searches for files matching the given patterns
   using glob recursion and selects according to select_policy.
-* Path helper: if available, the module cosiflow.modules.path is used to parse/build
-  URL fragments from detected folders. The code degrades gracefully if not found.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
-import re
+import sys
+import warnings
 from datetime import datetime
 from typing import Callable, Iterable, Optional, Sequence
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -47,16 +46,7 @@ from airflow.sensors.python import PythonSensor
 from airflow.utils.trigger_rule import TriggerRule
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
-# ---- Optional path utils --------------------------------------------------------
-try:
-    from cosiflow.modules.path import PathInfo, build_url_fragment  # type: ignore
-except Exception:
-    PathInfo = None  # type: ignore
-    build_url_fragment = None  # type: ignore
-
 # ---- Import on-failure callback -------------------------------------------------
-import sys
-
 airflow_home = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
 sys.path.append(os.path.join(airflow_home, "callbacks"))
 sys.path.append(os.path.join(airflow_home, "modules"))
@@ -111,6 +101,7 @@ _BASE_DEFAULT_ARGS = {
 }
 
 LOGGER = logging.getLogger(__name__)
+_MISSING_MONITORING_FOLDERS = object()
 
 # --- Public config helpers (Airflow Variable -> ENV -> default) -----------------
 try:
@@ -463,7 +454,8 @@ class COSIDAG(DAG):
 
     def __init__(
         self,
-        monitoring_folders,
+        *dag_args,
+        monitoring_folders=_MISSING_MONITORING_FOLDERS,
         level: int = 1,
         date: Optional[str] = None,
         date_queries: Optional[str | list[str]] = None,
@@ -489,9 +481,35 @@ class COSIDAG(DAG):
         refill_threshold: int = 20,
         discovery_batch_size: int = 100,
         retry_backoff_seconds: int = 300,
-        *args,
         **kwargs,
     ) -> None:
+        if monitoring_folders is _MISSING_MONITORING_FOLDERS:
+            if dag_args and "dag_id" in kwargs:
+                if len(dag_args) != 1:
+                    raise TypeError(
+                        "Legacy COSIDAG construction accepts only monitoring_folders "
+                        "positionally; pass every other COSIDAG option by keyword"
+                    )
+                monitoring_folders = dag_args[0]
+                dag_args = ()
+                warnings.warn(
+                    "Passing monitoring_folders positionally is deprecated; use "
+                    "COSIDAG(..., monitoring_folders=[...]) instead",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+            else:
+                raise TypeError(
+                    "monitoring_folders is a required keyword-only COSIDAG argument; "
+                    "use monitoring_folders=[] for a manual-only DAG"
+                )
+        elif dag_args and "dag_id" in kwargs:
+            raise TypeError(
+                "Airflow dag_id cannot be supplied both positionally and by keyword; "
+                "do not combine legacy positional monitoring_folders with the "
+                "monitoring_folders keyword"
+            )
+
         # --- merge default_args ---
         # priority: kwargs.default_args < _BASE_DEFAULT_ARGS < default_args_extra
         base = dict(_BASE_DEFAULT_ARGS)
@@ -520,7 +538,7 @@ class COSIDAG(DAG):
         if merged_tags:
             kwargs["tags"] = merged_tags
 
-        super().__init__(*args, **kwargs)
+        super().__init__(*dag_args, **kwargs)
 
         # Decide whether monitoring is enabled (task existence, not just runtime behavior).
         self.has_monitoring = bool(monitoring_folders)
@@ -1141,20 +1159,7 @@ class COSIDAG(DAG):
             print("=" * 80)
 
             # -------------------------------------------------
-            # 5) Optional deep-link via PathInfo (fallback / enrichment)
-            # -------------------------------------------------
-            if not url and PathInfo is not None:
-                try:
-                    info = PathInfo.from_path(detected)  # type: ignore[attr-defined]
-                    if callable(build_url_fragment) and homepage:
-                        frag = build_url_fragment(info)  # type: ignore
-                        deep = f"{homepage.rstrip('/')}/{frag.lstrip('/')}"
-                        print(f"[COSIDAG] Result page (PathInfo): {deep}")
-                except Exception as e:
-                    print(f"[COSIDAG] Deep-linking via PathInfo failed: {e}")
-
-            # -------------------------------------------------
-            # 6) Return value (kept for backward compatibility)
+            # 5) Return value (kept for backward compatibility)
             # -------------------------------------------------
             return result
 
@@ -1243,8 +1248,12 @@ class COSIDAG(DAG):
             for t in roots:
                 anchor >> t
 
-        # Close chain into show_results
-        if anchor is not None:
+        # Close the custom barrier into show_results. When custom tasks exist,
+        # their leaves already feed last_custom; a direct anchor edge would
+        # draw a misleading bypass around the custom graph.
+        if roots:
+            last_custom >> show_results
+        elif anchor is not None:
             anchor >> last_custom >> show_results
         else:
             # No monitoring, no retrigger, no resolve_inputs: run custom (or placeholder) then show results.
@@ -1258,14 +1267,16 @@ class COSIDAG(DAG):
         self.finalize_cosidag_state = finalize_cosidag_state
 
     def find_file_by_pattern(self, pattern: str, detected_folder: str) -> Optional[str]:
-        """Find the first file matching the given regex pattern under detected_folder."""
+        """Find the deterministic first basename matched by a regular expression."""
         print(f"[COSIDAG] find_file_by_pattern: pattern={pattern}, detected_folder={detected_folder}")
-        rx = re.compile(pattern)
-        for root, _, files in os.walk(detected_folder):
-            for fname in files:
-                if rx.search(fname):
-                    return os.path.join(root, fname)
-        return None
+        patterns = normalize_file_patterns({"match": f"regex:{pattern}"})
+        selected, _ = resolve_patterns(
+            scan_file_inventory(detected_folder),
+            patterns,
+            "first",
+        )
+        record = selected.get("match")
+        return record.path if record is not None else None
 
 
 # ------------------------------ Example usage ------------------------------------
