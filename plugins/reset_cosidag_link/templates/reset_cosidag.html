@@ -78,6 +78,20 @@
             </div>
         </div>
     </div>
+
+    <div class="panel panel-default" id="failed-panel" style="display: none;">
+        <div class="panel-heading">Failed Paths <span id="failed-count" class="badge"></span></div>
+        <div class="panel-body">
+            <div id="failed-error" class="alert alert-danger" style="display: none;"></div>
+            <table class="table table-striped table-hover" id="failed-table">
+                <thead><tr><th>Path</th><th>Attempts</th><th>Last error</th>{% if can_edit_state %}<th>Action</th>{% endif %}</tr></thead>
+                <tbody id="failed-tbody"></tbody>
+            </table>
+            <div id="failed-empty" style="display: none; text-align: center; font-style: italic; color: #777; padding: 10px;">
+                No failed paths found for this DAG.
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -94,6 +108,7 @@
         const badge = document.getElementById('folder-count');
         const selectAll = document.getElementById('select-all-paths');
         const deleteButton = document.getElementById('delete-selected-btn');
+        loadFailedPaths(dagId);
 
         // Reset UI
         panel.style.display = 'block';
@@ -160,6 +175,74 @@
                 errorDiv.innerText = 'Error fetching data: ' + error.message;
                 errorDiv.style.display = 'block';
             });
+    }
+
+    function loadFailedPaths(dagId) {
+        const panel = document.getElementById('failed-panel');
+        const tbody = document.getElementById('failed-tbody');
+        const table = document.getElementById('failed-table');
+        const empty = document.getElementById('failed-empty');
+        const error = document.getElementById('failed-error');
+        const count = document.getElementById('failed-count');
+        panel.style.display = 'block';
+        tbody.innerHTML = '';
+        error.style.display = 'none';
+        fetch(`/reset_cosidag/get_failed_paths/${dagId}`)
+            .then(response => response.json().then(data => ({ok: response.ok, data})))
+            .then(({ok, data}) => {
+                if (!ok || data.error) throw new Error(data.error || 'Unable to load failed paths');
+                const failed = data.failed || [];
+                count.innerText = failed.length;
+                table.style.display = failed.length ? 'table' : 'none';
+                empty.style.display = failed.length ? 'none' : 'block';
+                failed.forEach(item => {
+                    const row = document.createElement('tr');
+                    [item.path, item.attempt_count, item.last_error || ''].forEach(value => {
+                        const cell = document.createElement('td');
+                        cell.innerText = value;
+                        row.appendChild(cell);
+                    });
+                    {% if can_edit_state %}const action = document.createElement('td');
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'btn btn-warning btn-xs';
+                    button.innerText = 'Retry';
+                    button.onclick = () => retryFailedPath(dagId, item.path);
+                    action.appendChild(button);
+                    row.appendChild(action);{% endif %}
+                    tbody.appendChild(row);
+                });
+            })
+            .catch(fetchError => {
+                error.innerText = fetchError.message;
+                error.style.display = 'block';
+            });
+    }
+
+    function retryFailedPath(dagId, path) {
+        const reason = prompt('Reason for manually retrying this failed input:');
+        if (!reason || !reason.trim()) return;
+        const overridesText = prompt('Optional validated runtime overrides as a JSON object:', '{}');
+        if (overridesText === null) return;
+        let runtimeOverrides;
+        try {
+            runtimeOverrides = JSON.parse(overridesText || '{}');
+        } catch (parseError) {
+            alert('Runtime overrides must be valid JSON.');
+            return;
+        }
+        if (!confirm(`Requeue failed path ${path}?`)) return;
+        fetch(`/reset_cosidag/retry_failed_path/${dagId}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken()},
+            body: JSON.stringify({path, reason: reason.trim(), runtime_overrides: runtimeOverrides})
+        })
+            .then(response => response.json().then(data => ({ok: response.ok, data})))
+            .then(({ok, data}) => {
+                if (!ok || data.error) throw new Error(data.error || 'Unable to retry failed path');
+                loadFailedPaths(dagId);
+            })
+            .catch(retryError => alert(retryError.message));
     }
 
     function getSelectedPathCheckboxes() {

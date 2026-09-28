@@ -23,7 +23,8 @@ check_new_file
 - the custom graph is created by `build_custom(dag)`;
 - `show_results` records the final detected path and optional browser URL.
 - `finalize_cosidag_state` records success only after the required chain has
-  succeeded; on failure it releases the claim for a later retry.
+  succeeded; the first failure returns the input to the queue after a bounded
+  backoff, while the second failure leaves it in `failed` for operator review.
 
 The automatic retrigger task starts the next watcher run before the current run
 enters the scientific graph. `max_active_runs`, `max_active_tasks`, and
@@ -88,8 +89,8 @@ default. Standard Airflow `DAG` arguments such as `dag_id`, `start_date`,
 | --- | --- | --- |
 | `monitoring_folders` | required | Root paths watched by the sensor; use `[]` for a manual-only DAG |
 | `level` | `1` | Maximum child-directory depth in folder-driven mode |
-| `date` | `None` | Exact `YYYYMMDD` or `YYYY-MM-DD` filter |
-| `date_queries` | `None` | One comparison or a list, for example `>=2026-01-01` |
+| `date` | `None` | Legacy source-level exact date filter; invalid values fail closed |
+| `date_queries` | `None` | Legacy source-level comparisons; invalid values fail closed |
 | `build_custom` | `None` | Callable that attaches scientific tasks |
 | `sensor_poke_seconds` | `30` | Sensor polling interval |
 | `sensor_timeout_seconds` | six hours | Sensor timeout |
@@ -109,6 +110,14 @@ default. Standard Airflow `DAG` arguments such as `dag_id`, `start_date`,
 | `auto_retrig` | `True` | Create the self-retrigger task |
 | `max_retrig_runs` | unlimited | Maximum number of automatic successor runs |
 | `claim_stale_seconds` | `86400` | Minimum age before an orphaned claim may be recovered after its owning DagRun is no longer active |
+| `refill_threshold` | `20` | Refill the persistent queue when eligible queued rows fall below this value |
+| `discovery_batch_size` | `100` | Maximum candidates inserted during one refill cycle |
+| `retry_backoff_seconds` | `300` | Delay before the single automatic retry becomes claimable |
+
+The Trigger UI exposes the preferred structured `date_filters` form: a list of
+objects containing `operator` (`<`, `<=`, `==`, `>=`, or `>`) and an ISO
+`YYYY-MM-DD` date. Legacy date arguments remain accepted for existing DAG
+source files, but are not presented as new UI fields.
 
 The detected XCom keys and transactional state schema are fixed by the current
 implementation; there are no `processed_variable`, `xcom_detected_key`, or
@@ -126,14 +135,20 @@ releases its worker slot between checks.
 Stability requires two or more observations of the same directory snapshot.
 The recursive file count, total size, latest nanosecond mtime, and a digest of
 relative paths, sizes, and mtimes must remain unchanged for at least
-`idle_seconds`. The optional `ready_marker` remains an additional producer
+`idle_seconds`. Observations are stored transactionally in
+`cosiflow_cosidag_stability`, rather than in task XCom, because Airflow clears
+task-scoped XCom when a sensor resumes after `UP_FOR_RESCHEDULE`. Consumed
+observations are removed, while abandoned observations expire after 24 hours.
+The optional `ready_marker` remains an additional producer
 contract only when explicitly configured. It is not needed or required by
 default and does not replace the metadata stability window. A configured
 marker must be relative to the candidate folder. Absolute paths, parent
 traversal, and paths that resolve outside the candidate through a symlink are
 rejected.
 
-Candidates are evaluated in the configured priority order, but each candidate
+COSIflow inventories candidates only when the persistent queue falls below
+`refill_threshold`, and inserts at most `discovery_batch_size` new canonical
+paths per refill. Candidates are evaluated in the configured priority order, but each candidate
 keeps an independent stability history. A higher-priority folder that is still
 changing, lacks enough files, or does not satisfy an optional marker therefore
 does not prevent a later ready folder from being selected.
@@ -152,9 +167,11 @@ check_new_file.detected_folder
 check_new_file.monitoring_policy = folder-driven
 ```
 
-The accepted directory is claimed transactionally. It becomes processed only
-after `finalize_cosidag_state` confirms that `show_results` and its required
-upstream chain succeeded.
+The accepted directory is first queued and then claimed transactionally. Its
+filesystem type, confinement, basename/date filters, marker, file count, and
+stability snapshot are checked again after the claim and before any XCom is
+published. It becomes processed only after `finalize_cosidag_state` confirms
+that `show_results` and its required upstream chain succeeded.
 
 ### File-driven
 
@@ -162,7 +179,8 @@ File-driven mode checks only direct child files of each monitoring root.
 `level`, `prefer_deepest`, `ready_marker`, and `min_files` do not apply.
 Readiness requires the selected file's size and nanosecond mtime to remain
 unchanged for at least `idle_seconds`. The rescheduling sensor releases its
-worker slot between observations.
+worker slot between observations. Its stability timestamp uses the same
+transactional observation table and therefore survives each reschedule.
 
 ```python
 with COSIDAG(
@@ -186,8 +204,8 @@ check_new_file.detected_folder
 check_new_file.monitoring_policy = file-driven
 ```
 
-The accepted file, not its parent directory, is stored in the transactional
-state table after successful finalization.
+The accepted file, not its parent directory, is queued by canonical real path
+and stored in the transactional state table after successful finalization.
 
 ## Input resolution
 
@@ -211,6 +229,8 @@ file_patterns={
 - one recursive inventory is shared by every configured pattern;
 - the selected files' size and nanosecond mtime must remain unchanged for at
   least `idle_seconds` before XComs are published;
+- the selected-set stability observation is persisted outside task XCom and
+  therefore survives every sensor reschedule;
 - readiness uses a `PythonSensor` in `reschedule` mode, so no Python operator
   sleeps while holding a worker slot.
 
@@ -226,13 +246,16 @@ Runtime overrides currently supported by the sensor are:
 
 - `monitoring_folders`;
 - `level`;
-- `date` and `date_queries`;
+- structured `date_filters`; legacy `date` and `date_queries` remain accepted by
+  the backend for compatibility;
 - `idle_seconds`, `min_files`, and `ready_marker`;
 - `only_basename` and `prefer_deepest`;
 - `policy` or `monitoring_policy`.
 
 `automatic_retrig` also reads `auto_retrig` and `max_retrig_runs` from
-`dag_run.conf`. The sensor also reads `claim_stale_seconds`.
+`dag_run.conf` when that task exists. The corresponding UI fields are omitted
+when the DAG is built with `auto_retrig=False`. The sensor also reads
+`claim_stale_seconds`.
 
 Runtime configuration is validated before filesystem scanning, stale-claim
 recovery, or a new claim. `prefer_deepest` and `auto_retrig` accept native
@@ -243,10 +266,12 @@ instead of using Python truthiness. Monitoring policy accepts only
 or `latest_mtime` and is validated when the DAG is constructed, before an
 input inventory can run.
 
-The current `resolve_inputs` task uses `file_patterns`, `select_policy`,
-`input_poke_seconds`, and `input_timeout_seconds` captured when the DAG is
-parsed. `home_env_var` and Airflow concurrency limits are likewise parse-time
-settings. Change these in the DAG source rather than in the Trigger form.
+When `resolve_inputs` exists, it accepts validated runtime `file_patterns` and
+`select_policy` overrides. Pattern keys must be safe XCom keys, patterns must be
+non-empty relative glob or `regex:` expressions, and invalid regular
+expressions fail before inventory. These fields are omitted when no resolver
+task exists. `input_poke_seconds`, `input_timeout_seconds`, `home_env_var`, and
+Airflow concurrency limits remain source-only parse-time settings.
 
 ## Manual-only DAGs
 
@@ -276,24 +301,38 @@ claims instead of relying on a shared JSON document.
 
 | State | Meaning | Eligible for a new claim |
 | --- | --- | --- |
+| `queued` | Discovered, validated candidate waiting for a worker | Yes, after `next_attempt_at` |
 | `claimed` | A specific DagRun owns the input | No, except for an idempotent retry by the same run |
 | `succeeded` | The required scientific chain completed | No |
-| `failed` | The owning run did not complete successfully | Yes |
+| `failed` | Two processing attempts failed | No; an operator must retry it explicitly |
+| `discarded` | Post-claim validation found a permanent mismatch | No |
 
-The sensor first checks readiness and then atomically claims the path. It writes
-XCom only after the claim succeeds. `finalize_cosidag_state` changes the owning
-claim to `succeeded` after `show_results` succeeds. If the upstream chain fails,
-the finalizer marks the claim `failed` and fails itself so that the DagRun keeps
-the correct failure status.
+Refill uses `INSERT ... ON CONFLICT DO NOTHING`, so concurrent discovery cannot
+duplicate queue rows. Claiming uses a row-locked PostgreSQL CTE with
+`FOR UPDATE SKIP LOCKED`; concurrent DagRuns therefore receive different
+inputs without loading the full processed history into memory. Paths are keyed
+by canonical real path and must remain confined to one configured monitoring
+root, including across symlinks.
+
+The sensor writes XCom only after the claimed path passes a second validation
+against the stored discovery snapshot. `finalize_cosidag_state` changes the
+owning claim to `succeeded` after `show_results` succeeds. On a first processing
+failure it increments the attempt count and requeues the input after
+`retry_backoff_seconds`; a second failure produces `failed` and stops automatic
+selection. Successful rows are retained indefinitely, with no TTL or automatic
+cap, so an accepted path is never silently made eligible again.
 
 Stale claims are recovered only when both conditions hold:
 
 1. the claim is older than `claim_stale_seconds`;
 2. its owning DagRun is no longer `queued` or `running`.
 
-The Airflow menu **Develop Tools → Reset Cosidag** lists only `succeeded` rows.
-A reset or selective deletion removes successful history but never steals an
-active claim. Disabling automatic retriggering does not disable this filtering.
+The Airflow menu **Develop Tools → Reset Cosidag** keeps successful-history
+reset separate from failed-input retry. Manual retry is limited to `failed`
+rows, requires confirmation and an audit reason, records the author and time,
+and validates any runtime override before returning the row to `queued`. It
+cannot steal `claimed` rows or requeue `succeeded` rows. A reset or selective
+deletion still removes successful history only.
 
 ### Legacy Variable migration
 

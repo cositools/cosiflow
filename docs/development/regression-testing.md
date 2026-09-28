@@ -44,7 +44,8 @@ report an explicit skip when that dependency is unavailable.
 | `tests/test_review28_benchmark_safety.py` | Review 28 | Cleanup dual opt-in and path confinement, all-target preflight, success/timeout exit semantics, run ownership, and bounded stop verification |
 | `tests/test_issue18_contracts.py` | Review 18 | Removal of the unused paths module and the supported COSIDAG import contract |
 | `tests/test_review8_cosidag_state.py` | Review 8 | Runtime retrigger identity/configuration, transactional schema, claim/finalization wiring, migration, and reset-plugin contracts |
-| `tests/integration/test_review8_postgres.py` | Review 8 | Real PostgreSQL uniqueness, concurrent claims, failure recovery, idempotent finalization, and reset isolation |
+| `tests/test_review23_cosidag_queue_contract.py` | Review 23 | Structured and legacy date validation, safe file patterns, canonical confinement, reschedule-safe stability state, bounded queue/refill contracts, retry policy, manual-retry audit, and honest Airflow Params |
+| `tests/integration/test_review8_postgres.py` | Reviews 8 and 23 | Real PostgreSQL uniqueness, reschedule-safe stability observations, bounded enqueue, concurrent queue claims, one automatic retry, terminal failure, audited manual retry, idempotent finalization, and reset isolation |
 | `tests/test_review12_worker_resilience.py` | Review 12 | Worker backoff and failure budgets, poison-row isolation, supervisor fallback, stale heartbeat handling, and Compose restart/healthcheck contracts |
 | `tests/integration/test_review12_mysql.py` | Review 12 | Real MySQL retry scheduling, stale-lock recovery, stale healthcheck failure, and container restart behavior |
 | `tests/test_review13_module_loader_safety.py` | Review 13 | YAML schema validation, destructive-path confinement, overlapping-environment rejection, traversal and symlink rejection, shell-payload isolation, and mutation-free install/update/remove failures |
@@ -76,6 +77,25 @@ COSIFLOW_RUN_REVIEW8_POSTGRES_TESTS=1 \
 
 Docker and Compose are required only for this focused integration suite. It
 does not connect to the development or production COSIflow databases.
+
+## Review 23 queue and runtime-contract tests
+
+The Review 23 contract suite is part of the ordinary test command. It exercises
+strict structured and legacy dates, file and directory glob behavior, pattern
+validation, real-path confinement, reschedule-safe stability state, queue
+source contracts, manual retry overrides, and the conditional Airflow Trigger
+form:
+
+```bash
+python3 -m unittest tests.test_review23_cosidag_queue_contract -v
+```
+
+Its real-database coverage shares the disposable Review 8 PostgreSQL suite.
+That suite now also verifies durable stability observations across sensor
+reschedules, the discovery batch limit, distinct concurrent claims through
+`SKIP LOCKED`, first-failure requeue, second-failure terminal state, and
+audited manual retry. Successful rows remain durable and are never made
+eligible by retention cleanup.
 
 ## Review 12 worker-resilience tests
 
@@ -121,7 +141,7 @@ spaces, remain single argv values.
 The Review 16 unit suite uses temporary filesystem trees and does not require
 Airflow. It verifies consecutive size/mtime observations, directory-change
 detection, one-inventory pattern resolution, selection policies, reschedule
-configuration, set membership for unavailable paths, and the absence of
+configuration, persistent-queue exclusion, and the absence of
 blocking sleeps:
 
 ```bash

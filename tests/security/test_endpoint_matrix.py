@@ -75,6 +75,7 @@ class EndpointPolicyTests(unittest.TestCase):
             "ExploreNoticesView.inject_outbox",
             "ResetCosidagView.reset_all_processed_paths",
             "ResetCosidagView.delete_processed_paths",
+            "ResetCosidagView.retry_failed_path",
             "RefreshDagsView.refresh_dags",
         }
         for endpoint in mutating_endpoints:

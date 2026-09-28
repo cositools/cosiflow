@@ -72,6 +72,8 @@ ENDPOINT_POLICIES = {
     ("ResetCosidagView.reset_cosidag", "GET"): (ACTION_READ, COSIDAG_STATE),
     ("ResetCosidagView.reset_all_processed_paths", "POST"): (ACTION_EDIT, COSIDAG_STATE),
     ("ResetCosidagView.get_processed_folders", "GET"): (ACTION_READ, COSIDAG_STATE),
+    ("ResetCosidagView.get_failed_paths", "GET"): (ACTION_READ, COSIDAG_STATE),
+    ("ResetCosidagView.retry_failed_path", "POST"): (ACTION_EDIT, COSIDAG_STATE),
     ("ResetCosidagView.delete_processed_paths", "POST"): (ACTION_EDIT, COSIDAG_STATE),
     ("RefreshDagsView.refresh_dags", "POST"): (ACTION_EDIT, DAG_CATALOG),
     ("RefreshDagsView.confirm_refresh", "GET"): (ACTION_EDIT, DAG_CATALOG),

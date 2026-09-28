@@ -20,9 +20,12 @@ airflow_home = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
 sys.path.append(os.path.join(airflow_home, "modules"))
 from cosidag_state import (  # type: ignore
     delete_processed_paths as delete_state_paths,
+    list_failed_paths,
     list_processed_paths,
+    manual_retry_failed_path,
     reset_processed_paths,
 )
+from cosidag_runtime import validate_retry_runtime_overrides  # type: ignore
 
 # Define the absolute path to the plugin folder
 plugin_folder = os.path.dirname(os.path.abspath(__file__))
@@ -114,6 +117,59 @@ class ResetCosidagView(BaseView):
         except Exception:
             logger.exception("cosiflow_cosidag_state_read_failed dag_id=%s", dag_id)
             return jsonify({"error": "Unable to read processed paths."}), 500
+
+    @expose("/get_failed_paths/<dag_id>", methods=["GET"])
+    @require_cosiflow_permission(ACTION_READ, COSIDAG_STATE)
+    def get_failed_paths(self, dag_id):
+        if not is_active_dag(dag_id):
+            return jsonify({"error": "Unknown or inactive DAG."}), 404
+        try:
+            return jsonify({"failed": list_failed_paths(dag_id)})
+        except Exception:
+            logger.exception("cosiflow_cosidag_failed_state_read_failed dag_id=%s", dag_id)
+            return jsonify({"error": "Unable to read failed paths."}), 500
+
+    @expose("/retry_failed_path/<dag_id>", methods=["POST"])
+    @require_cosiflow_permission(ACTION_EDIT, COSIDAG_STATE)
+    def retry_failed_path(self, dag_id):
+        if not is_active_dag(dag_id):
+            return jsonify({"error": "Unknown or inactive DAG."}), 404
+        payload = request.get_json(silent=True) or {}
+        path = str(payload.get("path", "")).strip()
+        reason = str(payload.get("reason", "")).strip()
+        if not path or not reason:
+            return jsonify({"error": "Path and retry reason are required."}), 400
+        try:
+            overrides = validate_retry_runtime_overrides(payload.get("runtime_overrides") or {})
+            username = current_airflow_username() or "unknown"
+            retried = manual_retry_failed_path(
+                dag_id,
+                path,
+                username,
+                reason,
+                overrides,
+            )
+            if not retried:
+                return jsonify({"error": "The path is not in failed state."}), 409
+            logger.info(
+                "cosiflow_mutation user=%s action=%s resource=%s dag_id=%s mutation=retry_failed result=success",
+                username,
+                ACTION_EDIT,
+                COSIDAG_STATE,
+                dag_id,
+            )
+            return jsonify({"success": True, "path": path})
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception:
+            logger.exception(
+                "cosiflow_mutation user=%s action=%s resource=%s dag_id=%s mutation=retry_failed result=failure",
+                current_airflow_username(),
+                ACTION_EDIT,
+                COSIDAG_STATE,
+                dag_id,
+            )
+            return jsonify({"error": "Unable to retry failed path."}), 500
 
     @expose("/delete_processed_paths/<dag_id>", methods=['POST'])
     @require_cosiflow_permission(ACTION_EDIT, COSIDAG_STATE)

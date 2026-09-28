@@ -214,11 +214,10 @@ class SourceContractTests(unittest.TestCase):
     def test_no_sleep_remains_in_cosidag(self):
         self.assertNotIn("time.sleep(", self.source)
 
-    def test_unavailable_paths_are_converted_to_sets(self):
-        self.assertEqual(
-            self.source.count("set(list_unavailable_paths("),
-            2,
-        )
+    def test_discovery_does_not_load_the_complete_processed_history(self):
+        self.assertNotIn("list_unavailable_paths", self.source)
+        self.assertIn("queued_count(self.dag_id)", self.source)
+        self.assertIn("enqueue_candidates(", self.source)
 
     def test_per_candidate_diagnostics_use_debug_logging(self):
         self.assertNotIn('print(f"[COSIDAG] _date_filter_ok: path=', self.source)
@@ -347,10 +346,30 @@ class AirflowSensorTests(unittest.TestCase):
                 "dag_run": SimpleNamespace(conf={}, run_id="manual__review16_folder"),
             }
 
+            queued = []
+
+            def enqueue(_dag_id, candidates, limit):
+                queued.extend(list(candidates)[:limit])
+                return len(queued)
+
+            def claim(_dag_id, _run_id):
+                if not queued:
+                    return None
+                item = queued.pop(0)
+                return {
+                    "path": item["path"],
+                    "observed_path": item["observed_path"],
+                    "monitoring_policy": item["monitoring_policy"],
+                    "monitoring_root": item["monitoring_root"],
+                    "candidate_snapshot": json.dumps(list(item["snapshot"])),
+                    "runtime_overrides": None,
+                }
+
             with (
                 patch.object(cosidag, "release_orphaned_claims"),
-                patch.object(cosidag, "list_unavailable_paths", return_value=[]),
-                patch.object(cosidag, "claim_path", return_value=True),
+                patch.object(cosidag, "queued_count", side_effect=lambda _dag_id: len(queued)),
+                patch.object(cosidag, "enqueue_candidates", side_effect=enqueue),
+                patch.object(cosidag, "claim_next_path", side_effect=claim),
             ):
                 self.assertFalse(sensor.poke(context))
                 changing_file.write_bytes(b"changed-size")
@@ -403,10 +422,30 @@ class AirflowSensorTests(unittest.TestCase):
                 "dag_run": SimpleNamespace(conf={}, run_id="manual__review16_nested"),
             }
 
+            queued = []
+
+            def enqueue(_dag_id, candidates, limit):
+                queued.extend(list(candidates)[:limit])
+                return len(queued)
+
+            def claim(_dag_id, _run_id):
+                if not queued:
+                    return None
+                item = queued.pop(0)
+                return {
+                    "path": item["path"],
+                    "observed_path": item["observed_path"],
+                    "monitoring_policy": item["monitoring_policy"],
+                    "monitoring_root": item["monitoring_root"],
+                    "candidate_snapshot": json.dumps(list(item["snapshot"])),
+                    "runtime_overrides": None,
+                }
+
             with (
                 patch.object(cosidag, "release_orphaned_claims"),
-                patch.object(cosidag, "list_unavailable_paths", return_value=[]),
-                patch.object(cosidag, "claim_path", return_value=True),
+                patch.object(cosidag, "queued_count", side_effect=lambda _dag_id: len(queued)),
+                patch.object(cosidag, "enqueue_candidates", side_effect=enqueue),
+                patch.object(cosidag, "claim_next_path", side_effect=claim),
             ):
                 self.assertFalse(sensor.poke(context))
                 self.assertTrue(sensor.poke(context))

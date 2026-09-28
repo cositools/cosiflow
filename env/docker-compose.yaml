@@ -203,6 +203,7 @@ services:
       start_period: 60s
     restart: "on-failure:5"
     volumes:
+      - ../../fast-transient-analysis-pipeline:/home/gamma/airflow/modules_pool/fast-transient-analysis-pipeline:ro
       - ../../envs:/home/gamma/envs:ro
       - ../dags:/home/gamma/airflow/dags:ro
       - ${COSIFLOW_MODULES_HOST_DIR:-../modules-pool}:/home/gamma/airflow/modules_pool:ro

@@ -199,19 +199,47 @@ sys.path.insert(0, "/home/gamma/airflow/modules")
 from airflow import settings
 from sqlalchemy import text
 from cosidag_state import (
+    claim_next_path,
     claim_path,
     delete_processed_paths,
+    enqueue_candidates,
+    forget_stability,
+    list_failed_paths,
     list_processed_paths,
     list_unavailable_paths,
+    manual_retry_failed_path,
     mark_path_failed,
     mark_path_succeeded,
+    observe_stability,
+    queued_count,
     release_orphaned_claims,
 )
+
+candidates = [
+    {"path": f"/data/queue-{index}", "observed_path": f"/data/queue-{index}",
+     "monitoring_policy": "folder-driven", "monitoring_root": "/data",
+     "snapshot": [1, index, index, str(index)]}
+    for index in range(3)
+]
+assert enqueue_candidates("queue-api", candidates, 2) == 2
+assert queued_count("queue-api") == 2
+first = claim_next_path("queue-api", "queue-run-one")
+second = claim_next_path("queue-api", "queue-run-two")
+assert first and second and first["path"] != second["path"]
+assert claim_next_path("queue-api", "queue-run-three") is None
+assert mark_path_failed("queue-api", first["path"], "queue-run-one", "first failure", 0)
+retry = claim_next_path("queue-api", "queue-run-three")
+assert retry and retry["path"] == first["path"] and retry["attempt_count"] == 2
+assert mark_path_failed("queue-api", first["path"], "queue-run-three", "second failure", 0)
+assert list_failed_paths("queue-api")[0]["path"] == first["path"]
+assert manual_retry_failed_path("queue-api", first["path"], "operator", "diagnosed", {})
+manual = claim_next_path("queue-api", "queue-run-four")
+assert manual and manual["path"] == first["path"] and manual["attempt_count"] == 3
 
 assert claim_path("api", "/data/a", "run-one", "folder-driven")
 assert not claim_path("api", "/data/a", "run-two", "folder-driven")
 assert "/data/a" in list_unavailable_paths("api", "run-two")
-assert mark_path_failed("api", "/data/a", "run-one", "test failure")
+assert mark_path_failed("api", "/data/a", "run-one", "test failure", 0)
 assert claim_path("api", "/data/a", "run-two", "folder-driven")
 assert mark_path_succeeded("api", "/data/a", "run-two")
 assert mark_path_succeeded("api", "/data/a", "run-two")
@@ -231,6 +259,25 @@ finally:
     session.close()
 assert release_orphaned_claims("api", 3600) == 1
 assert claim_path("api", "/data/orphan", "recovery-run", "folder-driven")
+
+identity = "/data/stable-candidate"
+snapshot = [2, 100, 200, "digest"]
+assert not observe_stability("stability-api", "candidate-folder", identity, snapshot, 5)
+session = settings.Session()
+try:
+    session.execute(text(
+        "UPDATE cosiflow_cosidag_stability "
+        "SET stable_since = CURRENT_TIMESTAMP - INTERVAL '10 seconds' "
+        "WHERE dag_id = 'stability-api' AND scope = 'candidate-folder'"
+    ))
+    session.commit()
+finally:
+    session.close()
+assert observe_stability("stability-api", "candidate-folder", identity, snapshot, 5)
+assert not observe_stability(
+    "stability-api", "candidate-folder", identity, [2, 101, 200, "changed"], 5
+)
+assert forget_stability("stability-api", "candidate-folder", identity)
 print("state-api-ok")
 """
         result = self.compose(

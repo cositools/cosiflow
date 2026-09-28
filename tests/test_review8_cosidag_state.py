@@ -76,7 +76,7 @@ class TransactionalStateContractTests(unittest.TestCase):
 
     def test_schema_has_per_path_uniqueness_and_state_constraints(self):
         self.assertIn("PRIMARY KEY (dag_id, path)", self.schema)
-        self.assertIn("'claimed', 'succeeded', 'failed'", self.schema)
+        self.assertIn("'queued', 'claimed', 'succeeded', 'failed', 'discarded'", self.schema)
         self.assertIn("status <> 'claimed' OR owner_run_id IS NOT NULL", self.schema)
 
     def test_claim_is_one_atomic_insert_with_conflict_arbitration(self):
@@ -90,7 +90,7 @@ class TransactionalStateContractTests(unittest.TestCase):
         self.assertIn("completed_at = COALESCE", self.state_source)
 
     def test_sensor_claims_before_xcom_and_never_writes_legacy_variable(self):
-        claim_position = self.cosidag_source.index("if not claim_path(")
+        claim_position = self.cosidag_source.index("claimed = claim_next_path(")
         xcom_position = self.cosidag_source.index(
             'ti.xcom_push(key="detected_path", value=new_path)'
         )

@@ -88,6 +88,19 @@ def resolve_confined_relative_path(root: str, relative_path: str) -> str:
     return resolved
 
 
+def canonicalize_confined_path(path: str, roots: Iterable[str]) -> tuple[str, str]:
+    """Return a canonical path and its canonical authorized monitoring root."""
+    canonical = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+    for root in roots:
+        root_real = os.path.realpath(os.path.abspath(os.path.expanduser(root)))
+        try:
+            if os.path.commonpath([root_real, canonical]) == root_real and canonical != root_real:
+                return canonical, root_real
+        except ValueError:
+            continue
+    raise ValueError(f"Candidate path is outside the configured monitoring roots: {path!r}")
+
+
 def directory_snapshot(path: str) -> Optional[DirectorySnapshot]:
     """Return a compact snapshot that detects directory content changes.
 

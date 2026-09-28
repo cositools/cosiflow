@@ -205,7 +205,10 @@ class AirflowRuntimeValidationTests(unittest.TestCase):
         }
         with (
             patch.object(cosidag, "release_orphaned_claims"),
-            patch.object(cosidag, "_find_new_folder", return_value=None) as find_folder,
+            patch.object(cosidag, "queued_count", return_value=0),
+            patch.object(cosidag, "_discover_folder_candidates", return_value=[]) as find_folder,
+            patch.object(cosidag, "enqueue_candidates", return_value=0),
+            patch.object(cosidag, "claim_next_path", return_value=None),
         ):
             self.assertFalse(sensor.poke(context))
         self.assertFalse(find_folder.call_args.kwargs["prefer_deepest"])
@@ -222,8 +225,8 @@ class AirflowRuntimeValidationTests(unittest.TestCase):
         }
         with (
             patch.object(cosidag, "release_orphaned_claims") as release,
-            patch.object(cosidag, "_find_new_folder") as find_folder,
-            patch.object(cosidag, "claim_path") as claim,
+            patch.object(cosidag, "_discover_folder_candidates") as find_folder,
+            patch.object(cosidag, "claim_next_path") as claim,
         ):
             with self.assertRaisesRegex(ValueError, "monitoring policy"):
                 sensor.poke(context)
@@ -243,10 +246,52 @@ class AirflowRuntimeValidationTests(unittest.TestCase):
         }
         with (
             patch.object(cosidag, "release_orphaned_claims") as release,
-            patch.object(cosidag, "_find_new_folder") as find_folder,
-            patch.object(cosidag, "claim_path") as claim,
+            patch.object(cosidag, "_discover_folder_candidates") as find_folder,
+            patch.object(cosidag, "claim_next_path") as claim,
         ):
             with self.assertRaisesRegex(ValueError, "ready_marker"):
+                sensor.poke(context)
+        release.assert_not_called()
+        find_folder.assert_not_called()
+        claim.assert_not_called()
+
+    def test_invalid_monitoring_roots_fail_before_state_effects(self):
+        dag = self.build_dag()
+        sensor = dag.get_task("check_new_file")
+        context = {
+            "ti": SimpleNamespace(),
+            "dag_run": SimpleNamespace(
+                conf={"monitoring_folders": [42]},
+                run_id="manual__review23",
+            ),
+        }
+        with (
+            patch.object(cosidag, "release_orphaned_claims") as release,
+            patch.object(cosidag, "_discover_folder_candidates") as find_folder,
+            patch.object(cosidag, "claim_next_path") as claim,
+        ):
+            with self.assertRaisesRegex(ValueError, "monitoring_folders"):
+                sensor.poke(context)
+        release.assert_not_called()
+        find_folder.assert_not_called()
+        claim.assert_not_called()
+
+    def test_invalid_runtime_patterns_fail_before_state_effects(self):
+        dag = self.build_dag(file_patterns={"input": "*.fits"})
+        sensor = dag.get_task("check_new_file")
+        context = {
+            "ti": SimpleNamespace(),
+            "dag_run": SimpleNamespace(
+                conf={"file_patterns": {"input": "regex:["}},
+                run_id="manual__review23_patterns",
+            ),
+        }
+        with (
+            patch.object(cosidag, "release_orphaned_claims") as release,
+            patch.object(cosidag, "_discover_folder_candidates") as find_folder,
+            patch.object(cosidag, "claim_next_path") as claim,
+        ):
+            with self.assertRaisesRegex(ValueError, "Invalid regex"):
                 sensor.poke(context)
         release.assert_not_called()
         find_folder.assert_not_called()

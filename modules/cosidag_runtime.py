@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from collections.abc import Mapping
 from pathlib import PurePath, PureWindowsPath
 from typing import Any, NamedTuple
+
+from date_helper import normalize_date_filters, serialize_date_filters
 
 
 _TRUE_STRINGS = frozenset({"1", "true", "yes", "on"})
@@ -20,9 +23,9 @@ class SensorRuntimeConfig(NamedTuple):
     """Validated values consumed by the COSIDAG discovery sensor."""
 
     raw: dict[str, Any]
-    monitoring_folders: Any
+    monitoring_folders: tuple[str, ...]
     level: int
-    date_queries: Any
+    date_filters: tuple
     idle_seconds: int
     min_files: int
     ready_marker: str | None
@@ -30,6 +33,15 @@ class SensorRuntimeConfig(NamedTuple):
     prefer_deepest: bool
     policy: str
     claim_stale_seconds: int
+
+
+class ResolveRuntimeConfig(NamedTuple):
+    """Validated values consumed by the input-pattern sensor."""
+
+    raw: dict[str, Any]
+    file_patterns: dict[str, str]
+    select_policy: str
+    idle_seconds: int
 
 
 def normalize_run_conf(value: Any) -> dict[str, Any]:
@@ -99,6 +111,120 @@ def normalize_select_policy(value: Any) -> str:
     return normalized
 
 
+def normalize_file_patterns(value: Any, field_name: str = "file_patterns") -> dict[str, str]:
+    """Validate XCom keys and confined glob/regex patterns before inventory."""
+    if not isinstance(value, Mapping) or not value:
+        raise ValueError(f"{field_name} must be a non-empty mapping")
+    normalized: dict[str, str] = {}
+    for raw_key, raw_pattern in value.items():
+        if not isinstance(raw_key, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,250}", raw_key):
+            raise ValueError(f"{field_name} keys must be safe non-empty XCom keys")
+        if not isinstance(raw_pattern, str) or not raw_pattern.strip():
+            raise ValueError(f"Pattern for {raw_key!r} must be a non-empty string")
+        pattern = raw_pattern.strip()
+        if pattern.startswith("regex:"):
+            expression = pattern[len("regex:") :]
+            if not expression:
+                raise ValueError(f"Regex pattern for {raw_key!r} must not be empty")
+            try:
+                re.compile(expression)
+            except re.error as exc:
+                raise ValueError(f"Invalid regex pattern for {raw_key!r}: {exc}") from exc
+        else:
+            if os.path.isabs(pattern) or PureWindowsPath(pattern).is_absolute():
+                raise ValueError(f"Pattern for {raw_key!r} must be relative")
+            if ".." in PurePath(pattern).parts or ".." in PureWindowsPath(pattern).parts:
+                raise ValueError(f"Pattern for {raw_key!r} must not contain parent traversal")
+        normalized[raw_key] = pattern
+    return normalized
+
+
+def normalize_monitoring_folders(value: Any) -> tuple[str, ...]:
+    """Validate monitoring roots without touching the filesystem."""
+    if isinstance(value, (str, os.PathLike)):
+        value = [value]
+    if not isinstance(value, (list, tuple)) or not value:
+        raise ValueError("monitoring_folders must be a non-empty list of paths")
+    normalized: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, (str, os.PathLike)):
+            raise ValueError(f"monitoring_folders[{index}] must be a path string")
+        path = os.fspath(item).strip()
+        if not path or "\x00" in path:
+            raise ValueError(f"monitoring_folders[{index}] must be a non-empty path")
+        normalized.append(path)
+    return tuple(normalized)
+
+
+def _normalize_optional_string(value: Any, field_name: str) -> str | None:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string or null")
+    if "\x00" in value:
+        raise ValueError(f"{field_name} must not contain a null byte")
+    return value
+
+
+def validate_resolve_runtime_config(
+    value: Any,
+    defaults: Mapping[str, Any],
+) -> ResolveRuntimeConfig:
+    conf = normalize_run_conf(value)
+    return ResolveRuntimeConfig(
+        raw=conf,
+        file_patterns=normalize_file_patterns(
+            conf.get("file_patterns", defaults.get("file_patterns"))
+        ),
+        select_policy=normalize_select_policy(
+            conf.get("select_policy", defaults.get("select_policy", "first"))
+        ),
+        idle_seconds=parse_runtime_int(
+            conf.get("idle_seconds", defaults.get("idle_seconds", 20)),
+            "idle_seconds",
+            minimum=0,
+        ),
+    )
+
+
+def validate_retry_runtime_overrides(value: Any) -> dict[str, Any]:
+    """Allow only retry overrides that the runtime validates and consumes."""
+    conf = normalize_run_conf(value)
+    allowed = {
+        "date_filters",
+        "date",
+        "date_queries",
+        "only_basename",
+        "ready_marker",
+        "file_patterns",
+        "select_policy",
+    }
+    unknown = sorted(set(conf) - allowed)
+    if unknown:
+        raise ValueError(f"Unsupported retry override keys: {', '.join(unknown)}")
+    filters = normalize_date_filters(
+        conf.get("date_filters"),
+        legacy_date=conf.get("date"),
+        legacy_queries=conf.get("date_queries"),
+    )
+    normalized: dict[str, Any] = {}
+    if filters:
+        normalized["date_filters"] = serialize_date_filters(filters)
+    if "only_basename" in conf:
+        normalized["only_basename"] = _normalize_optional_string(
+            conf["only_basename"], "only_basename"
+        )
+    if "ready_marker" in conf:
+        normalized["ready_marker"] = normalize_relative_runtime_path(
+            conf["ready_marker"], "ready_marker"
+        )
+    if "file_patterns" in conf:
+        normalized["file_patterns"] = normalize_file_patterns(conf["file_patterns"])
+    if "select_policy" in conf:
+        normalized["select_policy"] = normalize_select_policy(conf["select_policy"])
+    return normalized
+
+
 def normalize_relative_runtime_path(value: Any, field_name: str) -> str | None:
     """Validate a configured relative path before resolving it under a root."""
     if value is None or value == "":
@@ -121,19 +247,31 @@ def normalize_relative_runtime_path(value: Any, field_name: str) -> str | None:
 def validate_sensor_runtime_config(value: Any, defaults: Mapping[str, Any]) -> SensorRuntimeConfig:
     """Validate discovery overrides before filesystem access or state mutation."""
     conf = normalize_run_conf(value)
-    date_queries = conf.get("date_queries")
-    if date_queries is None:
-        date_value = conf.get("date", defaults.get("date"))
-        date_queries = f"=={date_value}" if date_value else defaults.get("date_queries")
+    has_legacy_override = "date" in conf or "date_queries" in conf
+    configured_filters = (
+        conf.get("date_filters")
+        if "date_filters" in conf
+        else (None if has_legacy_override else defaults.get("date_filters"))
+    )
+    date_filters = normalize_date_filters(
+        configured_filters,
+        legacy_date=conf.get("date", defaults.get("date") if not has_legacy_override else None),
+        legacy_queries=conf.get(
+            "date_queries",
+            defaults.get("date_queries") if not has_legacy_override else None,
+        ),
+    )
     policy_value = conf.get(
         "monitoring_policy",
         conf.get("policy", defaults.get("policy", "folder-driven")),
     )
     return SensorRuntimeConfig(
         raw=conf,
-        monitoring_folders=conf.get("monitoring_folders", defaults.get("monitoring_folders")),
+        monitoring_folders=normalize_monitoring_folders(
+            conf.get("monitoring_folders", defaults.get("monitoring_folders"))
+        ),
         level=parse_runtime_int(conf.get("level", defaults.get("level", 1)), "level", minimum=1),
-        date_queries=date_queries,
+        date_filters=date_filters,
         idle_seconds=parse_runtime_int(
             conf.get("idle_seconds", defaults.get("idle_seconds", 20)),
             "idle_seconds",
@@ -148,7 +286,10 @@ def validate_sensor_runtime_config(value: Any, defaults: Mapping[str, Any]) -> S
             conf.get("ready_marker", defaults.get("ready_marker")),
             "ready_marker",
         ),
-        only_basename=conf.get("only_basename", defaults.get("only_basename")),
+        only_basename=_normalize_optional_string(
+            conf.get("only_basename", defaults.get("only_basename")),
+            "only_basename",
+        ),
         prefer_deepest=parse_runtime_bool(
             conf.get("prefer_deepest", defaults.get("prefer_deepest", True)),
             "prefer_deepest",
