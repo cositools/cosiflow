@@ -3,6 +3,19 @@
 #  Base: OracleLinux 8 | Works on amd64 and arm64
 # =============================================================================
 
+FROM alpine/git AS gcn-schema
+
+ARG GCN_SCHEMA_REF=478395f5a5ff575b0519b0c54491f3365d1d0aac
+
+WORKDIR /schemas
+
+RUN git init \
+    && git remote add origin https://github.com/cositools/gcn-schema.git \
+    && git sparse-checkout init --cone \
+    && git sparse-checkout set gcn/notices/cosi gcn/notices/core \
+    && git fetch --depth=1 origin "${GCN_SCHEMA_REF}" \
+    && git checkout FETCH_HEAD
+
 FROM oraclelinux:8 AS oracle8
 
 # ------------------------------ Base dependencies ------------------------------
@@ -83,6 +96,8 @@ COPY validate_runtime_secrets.py /home/gamma/validate_runtime_secrets.py
 COPY reencrypt_airflow_secrets.py /home/gamma/reencrypt_airflow_secrets.py
 COPY configure_rbac.py /home/gamma/configure_rbac.py
 COPY module_config.py /home/gamma/module_config.py
+COPY --from=gcn-schema /schemas/gcn/notices/cosi /home/gamma/gcn-schema/gcn/notices/cosi
+COPY --from=gcn-schema /schemas/gcn/notices/core /home/gamma/gcn-schema/gcn/notices/core
 
 # Fix ownership
 RUN chown -R "${UID}:${GID}" /home/gamma

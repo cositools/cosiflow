@@ -6,12 +6,16 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import pymysql
 from pymysql.connections import Connection
 
 from app.config import Settings
+from gcn_shared.storage import (
+    ensure_inbound_schema,
+    insert_inbound_notice as insert_shared_inbound_notice,
+    queue_outbound_notice as queue_shared_outbound_notice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,130 +54,20 @@ class NoticeStore:
             with conn.cursor() as cur:
                 for statement in statements:
                     cur.execute(statement)
+            ensure_inbound_schema(conn, self.settings.db_name)
         logger.info("GCN MySQL schema is ready")
 
     def insert_inbound_notice(self, notice: dict[str, Any]) -> int:
-        columns = [
-            "notice_uuid",
-            "source",
-            "topic",
-            "kafka_partition",
-            "kafka_offset",
-            "kafka_key",
-            "kafka_timestamp",
-            "content_type",
-            "payload_sha256",
-            "raw_payload",
-            "payload_json",
-            "parse_status",
-            "validation_status",
-            "validation_errors",
-            "schema_url",
-            "schema_version",
-            "mission",
-            "instrument",
-            "alert_type",
-            "alert_tense",
-            "event_name",
-            "event_ids",
-            "trigger_time",
-            "alert_datetime",
-            "ra_deg",
-            "dec_deg",
-            "ra_dec_error_json",
-            "healpix_url",
-            "classification_json",
-            "packet_type",
-            "packet_type_name",
-            "trig_id",
-            "sequence_num",
-            "isotime",
-        ]
-        values = {column: notice.get(column) for column in columns}
-        values["notice_uuid"] = values["notice_uuid"] or str(uuid4())
-        for json_column in [
-            "payload_json",
-            "validation_errors",
-            "event_ids",
-            "ra_dec_error_json",
-            "classification_json",
-        ]:
-            values[json_column] = _json_or_none(values[json_column])
-
-        placeholders = ", ".join(["%s"] * len(columns))
-        sql = f"""
-            INSERT INTO gcn_inbound_notices ({", ".join(columns)})
-            VALUES ({placeholders})
-            ON DUPLICATE KEY UPDATE
-              received_at = received_at,
-              id = LAST_INSERT_ID(id)
-        """
         with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, [values[column] for column in columns])
-                return int(cur.lastrowid)
+            return insert_shared_inbound_notice(conn, notice)
 
     def queue_outbound_notice(self, notice: dict[str, Any]) -> int:
-        columns = [
-            "outbox_uuid",
-            "status",
-            "topic",
-            "topic_kind",
-            "payload_json",
-            "payload_sha256",
-            "schema_url",
-            "schema_version",
-            "validation_status",
-            "validation_errors",
-            "mission",
-            "instrument",
-            "alert_type",
-            "alert_tense",
-            "record_number",
-            "event_name",
-            "event_ids",
-            "trigger_time",
-            "alert_datetime",
-            "created_by_dag_id",
-            "dag_run_id",
-            "task_id",
-            "source_pipeline",
-            "source_product_dir",
-            "source_config_path",
-            "priority",
-            "max_attempts",
-            "idempotency_key",
-        ]
-        values = {column: notice.get(column) for column in columns}
-        values["outbox_uuid"] = values["outbox_uuid"] or str(uuid4())
-        values["status"] = values["status"] or "queued"
-        values["topic_kind"] = values["topic_kind"] or "test"
-        values["priority"] = values["priority"] or 0
-        values["max_attempts"] = values["max_attempts"] or self.settings.max_attempts
-        for json_column in ["payload_json", "validation_errors", "event_ids"]:
-            values[json_column] = _json_or_none(values[json_column])
-        if not values["idempotency_key"]:
-            values["idempotency_key"] = values["payload_sha256"]
-
-        placeholders = ", ".join(["%s"] * len(columns))
-        update_columns = [
-            "updated_at = CURRENT_TIMESTAMP(6)",
-            "id = LAST_INSERT_ID(id)",
-            "payload_json = VALUES(payload_json)",
-            "payload_sha256 = VALUES(payload_sha256)",
-            "validation_status = VALUES(validation_status)",
-            "validation_errors = VALUES(validation_errors)",
-            "last_error = NULL",
-        ]
-        sql = f"""
-            INSERT INTO gcn_outbound_notices ({", ".join(columns)})
-            VALUES ({placeholders})
-            ON DUPLICATE KEY UPDATE {", ".join(update_columns)}
-        """
         with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, [values[column] for column in columns])
-                return int(cur.lastrowid)
+            return queue_shared_outbound_notice(
+                conn,
+                notice,
+                default_max_attempts=self.settings.max_attempts,
+            )
 
     def claim_outbound_notices(self, batch_size: int, worker_id: str) -> list[dict[str, Any]]:
         with self.connection() as conn:

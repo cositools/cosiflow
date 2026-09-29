@@ -10,7 +10,7 @@ from typing import Any, Callable
 from app.config import Settings
 from app.db.store import NoticeStore
 from app.kafka.producer import GcnProducer
-from app.parsers.normalization import canonical_json, normalize_json_notice, payload_sha256
+from gcn_shared.payloads import prepare_outbound_notice
 from app.resilience import BackoffPolicy
 from app.schemas.validator import CosiNoticeValidator, enforce_prototype_safety
 
@@ -108,28 +108,15 @@ class OutboxService:
         metadata: dict[str, Any] | None = None,
     ) -> int:
         topic = topic or self.settings.outbound_topic_default
-        validation_errors = self.validator.validate(payload)
-        safety_errors = enforce_prototype_safety(
+        notice = prepare_outbound_notice(
             payload,
-            topic,
-            self.settings.topic_allowlist,
-            self.settings.require_test_topics,
+            topic=topic,
+            validator=self.validator,
+            allowlist=self.settings.topic_allowlist,
+            require_test_topics=self.settings.require_test_topics,
+            idempotency_key=idempotency_key,
+            metadata=metadata,
         )
-        all_errors = validation_errors + [{"message": error, "guard": "prototype_safety"} for error in safety_errors]
-        normalized = normalize_json_notice(payload)
-        canonical = canonical_json(payload)
-        notice = {
-            **normalized,
-            **(metadata or {}),
-            "status": "invalid" if all_errors else "queued",
-            "topic": topic,
-            "topic_kind": "test",
-            "payload_json": payload,
-            "payload_sha256": payload_sha256(canonical),
-            "validation_status": "invalid" if all_errors else "valid",
-            "validation_errors": all_errors or None,
-            "idempotency_key": idempotency_key or payload_sha256(canonical),
-        }
         return self.store.queue_outbound_notice(notice)
 
     def _publish_row(self, row: dict[str, Any]) -> None:

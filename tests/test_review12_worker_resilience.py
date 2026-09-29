@@ -11,8 +11,10 @@ from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GCN_CLIENT_ROOT = REPO_ROOT / "gcn-client"
-if str(GCN_CLIENT_ROOT) not in sys.path:
-    sys.path.insert(0, str(GCN_CLIENT_ROOT))
+PLUGINS_ROOT = REPO_ROOT / "plugins"
+for path in (PLUGINS_ROOT, GCN_CLIENT_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 try:
     import pymysql  # noqa: F401

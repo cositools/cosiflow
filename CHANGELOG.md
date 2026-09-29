@@ -61,6 +61,11 @@ branch after `v0.2.0`; these changes are not part of a release yet.
 
 ### Fixed
 
+- GCN worker, CLI, and manual plugin injection now share one payload and
+  persistence contract. Inbound payloads retain their exact bytes, XML DTDs
+  and entities fail closed, test topics require an exact segment, manual inbox
+  injection deduplicates deterministically, and outbox idempotency keys can no
+  longer rewrite existing audit rows.
 - Folder-driven COSIDAG discovery now keeps independent stability observations
   per candidate, so an earlier changing folder no longer starves a later ready
   folder. One shared hierarchical inventory also replaces recursive rescans of

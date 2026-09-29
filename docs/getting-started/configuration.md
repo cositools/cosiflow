@@ -97,8 +97,12 @@ GCN_DRY_RUN=true
 GCN_REQUIRE_TEST_TOPICS=true
 ```
 
-The allowlist contains only COSI test topics. Do not enable real publication
-without the producer authorization and review described in the
+The allowlist contains only synthetic COSI test topics. Membership is exact,
+and `GCN_REQUIRE_TEST_TOPICS=true` additionally requires a dot-delimited
+segment equal to `test`; names such as `latest` or `contest` do not pass. An
+empty allowlist fails closed. These defaults support local validation even
+when no real GCN topic has been assigned. Do not enable real publication
+without an approved topic, producer authorization, and the review described in the
 [GCN client reference](../reference/gcn-client.md#publishing-outside-dry-run-mode).
 
 ## Credential rotation

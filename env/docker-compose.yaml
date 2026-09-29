@@ -50,6 +50,11 @@ x-airflow-runtime-environment: &airflow-runtime-environment
   GCN_HEARTBEAT_DEGRADED_SECONDS: ${GCN_HEARTBEAT_DEGRADED_SECONDS:-30}
   GCN_HEARTBEAT_OFFLINE_SECONDS: ${GCN_HEARTBEAT_OFFLINE_SECONDS:-90}
   GCN_MAX_ATTEMPTS: ${GCN_MAX_ATTEMPTS:-3}
+  GCN_DRY_RUN: ${GCN_DRY_RUN:-true}
+  GCN_REQUIRE_TEST_TOPICS: ${GCN_REQUIRE_TEST_TOPICS:-true}
+  GCN_TOPIC_ALLOWLIST: ${GCN_TOPIC_ALLOWLIST:-gcn.notices.cosi.test.alert,gcn.notices.cosi.bgo.test.alert,gcn.notices.cosi.ged.test.alert}
+  GCN_SCHEMA_ROOT: ${GCN_SCHEMA_ROOT:-/home/gamma/gcn-schema}
+  GCN_COSI_ALERT_SCHEMA: ${GCN_COSI_ALERT_SCHEMA:-/home/gamma/gcn-schema/gcn/notices/cosi/alert.schema.json}
 
 x-gcn-client-environment: &gcn-client-environment
   GCN_DB_HOST: gcn-mysql
@@ -123,8 +128,8 @@ services:
   gcn-client:
     image: cosiflow-gcn-client:prototype
     build:
-      context: ../gcn-client
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: gcn-client/Dockerfile
     container_name: cosi_gcn_client
     environment:
       <<: *gcn-client-environment

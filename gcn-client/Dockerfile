@@ -19,13 +19,14 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY requirements.txt /app/requirements.txt
+COPY gcn-client/requirements.txt /app/requirements.txt
 
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r /app/requirements.txt
 
-COPY app /app/app
-COPY examples /app/examples
+COPY gcn-client/app /app/app
+COPY gcn-client/examples /app/examples
+COPY plugins/gcn_shared /app/gcn_shared
 
 COPY --from=gcn-schema \
     /schemas/gcn/notices/cosi \

@@ -1,8 +1,8 @@
 x-client: &client
   image: cosiflow-gcn-client:review12-test
   build:
-    context: ../../gcn-client
-    dockerfile: Dockerfile
+    context: ../..
+    dockerfile: gcn-client/Dockerfile
   environment: &client-environment
     GCN_DB_HOST: mysql
     GCN_DB_PORT: "3306"

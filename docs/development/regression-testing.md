@@ -48,6 +48,8 @@ report an explicit skip when that dependency is unavailable.
 | `tests/integration/test_review8_postgres.py` | Reviews 8 and 23 | Real PostgreSQL uniqueness, reschedule-safe stability observations, bounded enqueue, concurrent queue claims, one automatic retry, terminal failure, audited manual retry, idempotent finalization, and reset isolation |
 | `tests/test_review12_worker_resilience.py` | Review 12 | Worker backoff and failure budgets, poison-row isolation, supervisor fallback, stale heartbeat handling, and Compose restart/healthcheck contracts |
 | `tests/integration/test_review12_mysql.py` | Review 12 | Real MySQL retry scheduling, stale-lock recovery, stale healthcheck failure, and container restart behavior |
+| `tests/test_review25_gcn_payload_integrity.py` | Review 25 | Exact inbound bytes, immutable idempotency, hardened XML parsing, exact topic policy, shared injection paths, and migration contracts |
+| `tests/integration/test_review25_mysql.py` | Review 25 | Real MySQL binary storage, immutable conflict handling, concurrent deduplication, and idempotent inbox migration |
 | `tests/test_review13_module_loader_safety.py` | Review 13 | YAML schema validation, destructive-path confinement, overlapping-environment rejection, traversal and symlink rejection, shell-payload isolation, and mutation-free install/update/remove failures |
 | `tests/integration/review16/test_scheduler_load.sh` | Review 16 | Real LocalExecutor scheduling with two slots, six rescheduling sensors, PostgreSQL task state, and independent ready work |
 | `tests/integration/review28/test_localexecutor_stop.sh` | Review 28 | Real PostgreSQL/LocalExecutor termination of one benchmark-owned run while a concurrent manual run remains active |
@@ -118,6 +120,32 @@ COSIFLOW_RUN_REVIEW12_MYSQL_TESTS=1 \
 
 The suite removes its containers and volumes after the run. It uses synthetic
 test-only credentials and does not connect to GCN or the development database.
+
+## Review 25 GCN payload-integrity tests
+
+The deterministic suite uses synthetic payloads and topics. It verifies exact
+byte hashing, invalid UTF-8 separation, manual-inbox identities, immutable
+outbox keys, fail-closed XML and topic policies, the shared client/plugin path,
+and the schema migration contract:
+
+```bash
+python3 -m unittest tests.test_review25_gcn_payload_integrity -v
+```
+
+The opt-in integration suite reuses the disposable MySQL Compose definition,
+rebuilds the local GCN client image, and exercises the real constraints and
+transactions:
+
+```bash
+COSIFLOW_RUN_REVIEW25_MYSQL_TESTS=1 \
+  python3 -m unittest tests.integration.test_review25_mysql -v
+```
+
+It verifies exact binary storage, identical manual-inbox deduplication,
+conflicting outbox rejection without audit-row mutation, concurrent identical
+inserts, and repeatable migration from the former `LONGTEXT` inbox schema. It
+uses no GCN credentials, assigned production topics, or broker connection and
+removes its containers and volumes after the run.
 
 ## Review 13 module-loader safety tests
 

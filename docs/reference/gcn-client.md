@@ -53,11 +53,12 @@ The receiver in
 2. subscribes to the comma-separated topics in `GCN_CONSUMER_TOPICS`;
 3. reads each Kafka message and records its topic, partition, offset, key, and
    timestamp;
-4. parses JSON notices, extracts a summary from VOEvent XML, or stores
-   unsupported text/raw payloads without discarding them;
-5. normalizes common fields such as mission, instrument, event time, sky
+4. hashes and stores the exact Kafka bytes before strict UTF-8 decoding;
+5. parses JSON notices, extracts a summary from VOEvent XML, or stores
+   unsupported binary/text payloads without discarding them;
+6. normalizes common fields such as mission, instrument, event time, sky
    coordinates, classification, and HEALPix URL;
-6. inserts the result into `gcn_inbound_notices`.
+7. inserts the result into `gcn_inbound_notices`.
 
 Automatic Kafka commits are disabled. When `GCN_CONSUMER_COMMIT=true`, the
 worker commits a message synchronously only after the database insert returns.
@@ -69,6 +70,11 @@ The `(topic, kafka_partition, kafka_offset)` unique key makes the receiver
 idempotent when Kafka redelivers a message. COSI notices that identify the COSI
 schema are validated; notices from other missions remain available with
 `validation_status = 'not_applicable'`.
+
+Invalid UTF-8 is never decoded with replacement. The original bytes and their
+SHA-256 remain authoritative, while the row is classified as binary/raw with a
+bounded diagnostic. VOEvent parsing rejects DTD and entity declarations before
+building the XML tree and never performs external resource access.
 
 ### Kafka producer
 
@@ -92,8 +98,16 @@ transactional-outbox-style workflow:
    without stopping later rows in the batch;
 8. expired worker locks are recovered after the configured timeout.
 
-The outbox `idempotency_key` prevents the same pipeline task/result from
-creating duplicate logical notices.
+The outbox `idempotency_key` is immutable. Retrying the same key, topic, and
+payload returns the existing row without changing its status, timestamps,
+validation result, payload, or delivery history. Reusing the key for another
+topic or payload fails explicitly. When no key is supplied, the client derives
+one from the topic and canonical payload hash, so the same content on two
+destinations remains two distinct logical notices.
+
+This enqueue identity does not provide exactly-once Kafka delivery. The
+at-least-once boundary after broker acknowledgement remains the responsibility
+of the delivery workflow described below.
 
 ## MySQL schema
 
@@ -103,19 +117,36 @@ contains **five tables**:
 
 | Table | Role | Important data |
 | --- | --- | --- |
-| `gcn_inbound_notices` | Durable inbox for alerts received from GCN | Kafka position, original payload, parsed JSON, normalized event fields, parsing and validation status |
+| `gcn_inbound_notices` | Durable inbox for alerts received from GCN | Kafka position, binary-safe original payload, manual idempotency key, parsed JSON, normalized event fields, parsing and validation status |
 | `gcn_outbound_notices` | Durable outbox for COSI alerts awaiting publication | Topic, payload, schema/validation state, DAG provenance, priority, retry state, idempotency key, publication result |
 | `gcn_delivery_attempts` | Audit trail for every outbox attempt | Attempt number, dry-run flag, Kafka metadata, error class/message, start and finish times |
 | `gcn_client_heartbeats` | Last-known worker health/status | Component name (`inbound` or `outbox`), status, update time, and JSON details |
 | `gcn_client_lifecycle_events` | Application lifecycle audit | Start, stopping, and component-failure events with timestamps |
 
-`gcn_inbound_notices` preserves `raw_payload` even if parsing fails and also
-stores indexed columns used by science queries. `gcn_outbound_notices` keeps
+`gcn_inbound_notices` preserves `raw_payload` as a `LONGBLOB` even if decoding
+or parsing fails and also stores indexed columns used by science queries.
+Kafka rows deduplicate by topic/partition/offset. Manual injection derives a
+separate key from topic and exact payload bytes unless the operator supplies an
+explicit key. `gcn_outbound_notices` keeps
 both the complete JSON payload and pipeline provenance such as `dag_run_id`,
 `task_id`, `source_product_dir`, and `source_config_path`.
 
 The client initializes these tables automatically when
 `GCN_INIT_DB_ON_START=true`, which is the default.
+Initialization also migrates an existing inbox from textual raw storage to
+binary-safe storage and adds the nullable manual-injection key idempotently.
+
+## Shared injection path
+
+The GCN client, its CLI, and the Airflow Notices Explorer use the same
+Airflow-independent package under `plugins/gcn_shared/` for payload preparation,
+validation, topic policy, and insert-or-compare persistence. Manual injection
+therefore has the same JSON/VOEvent parsing, COSI schema validation, raw-byte
+handling, and idempotency behavior as worker-driven ingestion.
+
+The Airflow image contains the same pinned COSI/Core schema bundle as the GCN
+client image. If that bundle is unavailable, manual injection fails closed;
+the plugin does not insert an unchecked row.
 
 ## Configuration
 
@@ -128,7 +159,9 @@ The most important groups are:
 - `GCN_CONSUMER_TOPICS`, `GCN_CONSUMER_GROUP_ID`,
   `GCN_CONSUMER_ENABLED`: inbound subscriptions;
 - `GCN_PRODUCER_ENABLED`, `GCN_DRY_RUN`, `GCN_TOPIC_ALLOWLIST`,
-  `GCN_REQUIRE_TEST_TOPICS`: outbound publication and safety controls;
+  `GCN_REQUIRE_TEST_TOPICS`: outbound publication and safety controls. The
+  allowlist is exact, and the optional test-topic guard requires a
+  dot-delimited segment equal to `test` rather than a substring;
 - `GCN_DB_HOST`, `GCN_DB_PORT`, `GCN_DB_NAME`, `GCN_DB_USER`,
   `GCN_DB_PASSWORD`: MySQL connection;
 - `GCN_SCHEMA_ROOT`, `GCN_COSI_ALERT_SCHEMA`: local schema validation.

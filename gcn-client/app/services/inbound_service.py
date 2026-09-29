@@ -140,12 +140,19 @@ class InboundService:
         finally:
             self._close_consumer(consumer)
 
-    def inject(self, raw_payload: str, topic: str, source: str = "injection") -> int:
+    def inject(
+        self,
+        raw_payload: str | bytes,
+        topic: str,
+        source: str = "injection",
+        idempotency_key: str | None = None,
+    ) -> int:
         notice = parse_notice_payload(
             raw_payload,
             topic=topic,
             source=source,
             validator=self.validator,
+            idempotency_key=idempotency_key,
         )
         return self.store.insert_inbound_notice(notice)
 
@@ -182,10 +189,10 @@ class InboundService:
 
     def _handle_message(self, message) -> None:
         raw_value = message.value()
-        if isinstance(raw_value, bytes):
-            raw_payload = raw_value.decode("utf-8", errors="replace")
-        else:
-            raw_payload = str(raw_value)
+        if not isinstance(raw_value, (str, bytes, bytearray, memoryview)):
+            raise TypeError(
+                f"Kafka payload must be bytes or text, got {type(raw_value).__name__}"
+            )
 
         timestamp = None
         try:
@@ -196,7 +203,7 @@ class InboundService:
             timestamp = None
 
         notice = parse_notice_payload(
-            raw_payload,
+            raw_value,
             topic=message.topic(),
             source="kafka",
             validator=self.validator,

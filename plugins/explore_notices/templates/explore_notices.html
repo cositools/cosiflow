@@ -345,6 +345,9 @@
             <label>Source
               <input type="text" name="source" value="manual" required>
             </label>
+            <label>Idempotency Key
+              <input type="text" name="idempotency_key" placeholder="Optional; derived from topic and payload">
+            </label>
           </div>
           <label>Payload
             <textarea name="payload" placeholder='{"$schema":"https://gcn.nasa.gov/schema/main/gcn/notices/cosi/alert.schema.json","mission":"COSI"}' required></textarea>

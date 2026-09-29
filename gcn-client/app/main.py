@@ -120,6 +120,7 @@ def main() -> None:
     inject.add_argument("--file", required=True)
     inject.add_argument("--topic", required=True)
     inject.add_argument("--source", default="injection")
+    inject.add_argument("--idempotency-key")
 
     queue_parser = sub.add_parser("queue-outbound")
     queue_parser.add_argument("--file", required=True)
@@ -180,7 +181,14 @@ def main() -> None:
         count = outbox.process_once()
         logger.info("Processed %s outbound notice(s)", count)
     elif args.command == "inject-inbound":
-        print(inbound.inject(_read_text(args.file), topic=args.topic, source=args.source))
+        print(
+            inbound.inject(
+                _read_bytes(args.file),
+                topic=args.topic,
+                source=args.source,
+                idempotency_key=args.idempotency_key,
+            )
+        )
     elif args.command == "queue-outbound":
         payload = json.loads(_read_text(args.file))
         print(outbox.queue_payload(payload, topic=args.topic, idempotency_key=args.idempotency_key))
@@ -188,6 +196,11 @@ def main() -> None:
 
 def _read_text(path: str) -> str:
     with open(path, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _read_bytes(path: str) -> bytes:
+    with open(path, "rb") as handle:
         return handle.read()
 
 

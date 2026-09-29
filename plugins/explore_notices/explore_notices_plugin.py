@@ -1,19 +1,27 @@
 """Airflow plugin for browsing GCN notices stored by the COSIflow GCN client."""
 
-import hashlib
+import base64
 import json
 import logging
 import os
 import re
 from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 from urllib.parse import urlencode
-from uuid import uuid4
 
 import pymysql
 from airflow.plugins_manager import AirflowPlugin
 from flask import Blueprint, flash, redirect, request, url_for
 from flask_appbuilder import BaseView, expose
 from explore_notices.heartbeat_status import aggregate_status, classify_heartbeat
+from gcn_shared import (
+    CosiNoticeValidator,
+    insert_inbound_notice,
+    prepare_inbound_notice,
+    prepare_outbound_notice,
+    queue_outbound_notice,
+)
 from shared_auth import (
     ACTION_CREATE,
     ACTION_READ,
@@ -67,84 +75,6 @@ def _json_pretty(value):
         return str(value)
 
 
-def _payload_sha256(value):
-    if isinstance(value, str):
-        value = value.encode("utf-8")
-    return hashlib.sha256(value).hexdigest()
-
-
-def _canonical_json(payload):
-    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
-
-
-def _json_or_none(value):
-    if value in (None, ""):
-        return None
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, separators=(",", ":"), sort_keys=True)
-
-
-def _schema_version(schema_url):
-    if not schema_url:
-        return None
-    text = str(schema_url)
-    marker = "/schema/"
-    if marker not in text:
-        return None
-    tail = text.split(marker, 1)[1]
-    return tail.split("/", 1)[0] if "/" in tail else tail
-
-
-def _parse_iso_datetime(value):
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value.isoformat(sep=" ", timespec="microseconds")
-    text = str(value).strip()
-    if text.endswith("Z"):
-        text = f"{text[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed.isoformat(sep=" ", timespec="microseconds")
-
-
-def _string_or_json(value):
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    return _canonical_json(value)
-
-
-def _normalize_json_notice(payload):
-    event_ids = payload.get("id")
-    if event_ids is not None and not isinstance(event_ids, list):
-        event_ids = [event_ids]
-    return {
-        "schema_url": payload.get("$schema"),
-        "schema_version": _schema_version(payload.get("$schema")),
-        "mission": payload.get("mission"),
-        "instrument": payload.get("instrument"),
-        "alert_type": payload.get("alert_type"),
-        "alert_tense": payload.get("alert_tense"),
-        "event_name": _string_or_json(payload.get("event_name")),
-        "event_ids": event_ids,
-        "trigger_time": _parse_iso_datetime(payload.get("trigger_time")),
-        "alert_datetime": _parse_iso_datetime(payload.get("alert_datetime")),
-        "ra_deg": payload.get("ra"),
-        "dec_deg": payload.get("dec"),
-        "ra_dec_error_json": payload.get("ra_dec_error"),
-        "healpix_url": payload.get("healpix_url"),
-        "classification_json": payload.get("classification"),
-        "record_number": payload.get("record_number"),
-    }
-
-
 def _normalize_topics(values):
     topics = []
     seen = set()
@@ -164,6 +94,31 @@ def _csv_env(name, default=""):
 
 def _configured_consumer_topics():
     return _csv_env("GCN_CONSUMER_TOPICS")
+
+
+def _bool_env(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+@lru_cache(maxsize=4)
+def _cosi_validator(schema_root_text, schema_path_text):
+    schema_root = Path(schema_root_text)
+    schema_path = Path(schema_path_text)
+    if not schema_root.is_dir() or not schema_path.is_file():
+        raise RuntimeError("GCN schema bundle is unavailable; manual injection is disabled")
+    return CosiNoticeValidator(schema_root, schema_path)
+
+
+def _configured_validator():
+    schema_root = os.environ.get("GCN_SCHEMA_ROOT", "/home/gamma/gcn-schema")
+    schema_path = os.environ.get(
+        "GCN_COSI_ALERT_SCHEMA",
+        f"{schema_root}/gcn/notices/cosi/alert.schema.json",
+    )
+    return _cosi_validator(schema_root, schema_path)
 
 
 def _subscribed_topics(heartbeats):
@@ -338,6 +293,16 @@ def _parse_classic_text(raw_payload):
     return fields
 
 
+def _raw_payload_display(raw_payload):
+    if isinstance(raw_payload, (bytes, bytearray, memoryview)):
+        raw_bytes = bytes(raw_payload)
+        try:
+            return raw_bytes.decode("utf-8", errors="strict"), "UTF-8"
+        except UnicodeDecodeError:
+            return base64.b64encode(raw_bytes).decode("ascii"), "base64"
+    return str(raw_payload or ""), "text"
+
+
 def _topic_parts(topic):
     """Infer mission and instrument from topic suffixes such as FERMI_GBM_POS_TEST."""
     suffix = str(topic or "").rsplit(".", 1)[-1]
@@ -380,12 +345,15 @@ def _format_position(ra_deg, dec_deg):
 
 def _enrich_notice_display(notice):
     """Add display-only fields without mutating persisted notice data."""
-    fields = _parse_classic_text(notice.get("raw_payload"))
+    raw_display, raw_encoding = _raw_payload_display(notice.get("raw_payload"))
+    notice["raw_payload_display"] = raw_display
+    notice["raw_payload_encoding"] = raw_encoding
+    fields = _parse_classic_text(raw_display)
     topic_mission, topic_instrument = _topic_parts(notice.get("topic"))
     notice_type = fields.get("NOTICE_TYPE")
     trigger_num = _clean_trigger_id(fields.get("TRIGGER_NUM") or notice.get("trig_id"))
-    inferred_ra = _parse_degrees(notice.get("raw_payload"), "GRB_RA")
-    inferred_dec = _parse_degrees(notice.get("raw_payload"), "GRB_DEC")
+    inferred_ra = _parse_degrees(raw_display, "GRB_RA")
+    inferred_dec = _parse_degrees(raw_display, "GRB_DEC")
 
     if not notice.get("mission"):
         notice["mission"] = topic_mission
@@ -521,7 +489,7 @@ def _fetch_gcn_service_status(heartbeats):
     }
 
 
-def _inject_inbound_notice(raw_payload, topic, source):
+def _inject_inbound_notice(raw_payload, topic, source, idempotency_key=None):
     raw_payload = str(raw_payload or "")
     topic = str(topic or "").strip()
     source = str(source or "manual").strip() or "manual"
@@ -535,77 +503,23 @@ def _inject_inbound_notice(raw_payload, topic, source):
     if not raw_payload.strip():
         raise ValueError("Inbox payload is required.")
 
-    payload_json = None
-    normalized = {}
-    content_type = "unknown"
-    parse_status = "raw_only"
-    validation_status = "not_applicable"
-    validation_errors = None
+    notice = prepare_inbound_notice(
+        raw_payload,
+        topic=topic,
+        source=source,
+        validator=_configured_validator(),
+        idempotency_key=idempotency_key,
+    )
+    conn = _connect()
     try:
-        parsed = json.loads(raw_payload)
-        content_type = "json"
-        if not isinstance(parsed, dict):
-            parse_status = "failed"
-            validation_status = "invalid"
-            validation_errors = [{"message": "JSON notice payload must be an object"}]
-        else:
-            payload_json = parsed
-            normalized = _normalize_json_notice(parsed)
-            parse_status = "parsed"
-            validation_status = "not_checked"
-    except json.JSONDecodeError as exc:
-        validation_errors = [{"message": str(exc), "parser": "manual_json"}]
-        content_type = "text" if topic.startswith("gcn.classic.text.") else "unknown"
-
-    row = {
-        "notice_uuid": str(uuid4()),
-        "source": source,
-        "topic": topic,
-        "content_type": content_type,
-        "payload_sha256": _payload_sha256(raw_payload),
-        "raw_payload": raw_payload,
-        "payload_json": payload_json,
-        "parse_status": parse_status,
-        "validation_status": validation_status,
-        "validation_errors": validation_errors,
-        **normalized,
-    }
-    columns = [
-        "notice_uuid",
-        "source",
-        "topic",
-        "content_type",
-        "payload_sha256",
-        "raw_payload",
-        "payload_json",
-        "parse_status",
-        "validation_status",
-        "validation_errors",
-        "schema_url",
-        "schema_version",
-        "mission",
-        "instrument",
-        "alert_type",
-        "alert_tense",
-        "event_name",
-        "event_ids",
-        "trigger_time",
-        "alert_datetime",
-        "ra_deg",
-        "dec_deg",
-        "ra_dec_error_json",
-        "healpix_url",
-        "classification_json",
-    ]
-    for json_column in ["payload_json", "validation_errors", "event_ids", "ra_dec_error_json", "classification_json"]:
-        row[json_column] = _json_or_none(row.get(json_column))
-    placeholders = ", ".join(["%s"] * len(columns))
-    sql = f"INSERT INTO gcn_inbound_notices ({', '.join(columns)}) VALUES ({placeholders})"
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, [row.get(column) for column in columns])
-            conn.commit()
-            return int(cur.lastrowid)
+        notice_id = insert_inbound_notice(conn, notice)
+        conn.commit()
+        return notice_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _queue_manual_outbound_notice(raw_payload, topic, idempotency_key=None):
@@ -622,78 +536,36 @@ def _queue_manual_outbound_notice(raw_payload, topic, idempotency_key=None):
     if not isinstance(payload, dict):
         raise ValueError("Outbox payload must be a JSON object.")
 
-    canonical = _canonical_json(payload)
-    payload_hash = _payload_sha256(canonical)
-    normalized = _normalize_json_notice(payload)
-    key = str(idempotency_key or "").strip() or f"manual:{topic}:{payload_hash}"
-    row = {
-        "outbox_uuid": str(uuid4()),
-        "status": "queued",
-        "topic": topic,
-        "topic_kind": "test" if "test" in topic.lower() else "manual",
-        "payload_json": canonical,
-        "payload_sha256": payload_hash,
-        "validation_status": "not_checked",
-        "validation_errors": None,
-        "created_by_dag_id": "manual",
-        "dag_run_id": f"manual__{datetime.utcnow().isoformat(timespec='seconds')}",
-        "task_id": "manual_injection",
-        "source_pipeline": "manual",
-        "priority": 0,
-        "max_attempts": int(os.environ.get("GCN_MAX_ATTEMPTS", "3")),
-        "idempotency_key": key,
-        **normalized,
-    }
-    columns = [
-        "outbox_uuid",
-        "status",
-        "topic",
-        "topic_kind",
-        "payload_json",
-        "payload_sha256",
-        "schema_url",
-        "schema_version",
-        "validation_status",
-        "validation_errors",
-        "mission",
-        "instrument",
-        "alert_type",
-        "alert_tense",
-        "record_number",
-        "event_name",
-        "event_ids",
-        "trigger_time",
-        "alert_datetime",
-        "created_by_dag_id",
-        "dag_run_id",
-        "task_id",
-        "source_pipeline",
-        "priority",
-        "max_attempts",
-        "idempotency_key",
-    ]
-    for json_column in ["payload_json", "validation_errors", "event_ids"]:
-        row[json_column] = _json_or_none(row.get(json_column))
-    placeholders = ", ".join(["%s"] * len(columns))
-    update_columns = [
-        "updated_at = CURRENT_TIMESTAMP(6)",
-        "id = LAST_INSERT_ID(id)",
-        "payload_json = VALUES(payload_json)",
-        "payload_sha256 = VALUES(payload_sha256)",
-        "validation_status = VALUES(validation_status)",
-        "validation_errors = VALUES(validation_errors)",
-        "last_error = NULL",
-    ]
-    sql = f"""
-        INSERT INTO gcn_outbound_notices ({", ".join(columns)})
-        VALUES ({placeholders})
-        ON DUPLICATE KEY UPDATE {", ".join(update_columns)}
-    """
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, [row.get(column) for column in columns])
-            conn.commit()
-            return int(cur.lastrowid)
+    notice = prepare_outbound_notice(
+        payload,
+        topic=topic,
+        validator=_configured_validator(),
+        allowlist=_csv_env("GCN_TOPIC_ALLOWLIST"),
+        require_test_topics=_bool_env("GCN_REQUIRE_TEST_TOPICS", True),
+        idempotency_key=idempotency_key,
+        metadata={
+            "created_by_dag_id": "manual",
+            "dag_run_id": f"manual__{datetime.utcnow().isoformat(timespec='seconds')}",
+            "task_id": "manual_injection",
+            "source_pipeline": "manual",
+            "priority": 0,
+            "max_attempts": int(os.environ.get("GCN_MAX_ATTEMPTS", "3")),
+        },
+    )
+    conn = _connect()
+    try:
+        notice_id = queue_outbound_notice(
+            conn,
+            notice,
+            default_max_attempts=int(os.environ.get("GCN_MAX_ATTEMPTS", "3")),
+        )
+        conn.commit()
+        return notice_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _page_url(page, filters):
@@ -756,6 +628,7 @@ class ExploreNoticesView(BaseView):
                 request.form.get("payload", ""),
                 topic,
                 request.form.get("source", "manual"),
+                request.form.get("idempotency_key", ""),
             )
             logger.info(
                 "cosiflow_mutation user=%s action=%s resource=%s result=success",
