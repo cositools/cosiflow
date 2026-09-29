@@ -15,8 +15,19 @@ from airflow.plugins_manager import AirflowPlugin
 from flask import Blueprint, flash, redirect, request, url_for
 from flask_appbuilder import BaseView, expose
 from explore_notices.heartbeat_status import aggregate_status, classify_heartbeat
+from explore_notices.query_limits import (
+    MAX_DIMENSION_VALUES,
+    MAX_PAGE_SIZE,
+    MAX_RESULT_WINDOW,
+    NOTICE_PREVIEW_BYTES,
+    normalize_topics,
+    query_int,
+    query_text,
+    validate_result_window,
+)
 from gcn_shared import (
     CosiNoticeValidator,
+    enforce_payload_size,
     insert_inbound_notice,
     prepare_inbound_notice,
     prepare_outbound_notice,
@@ -75,21 +86,19 @@ def _json_pretty(value):
         return str(value)
 
 
-def _normalize_topics(values):
-    topics = []
-    seen = set()
-    for value in values:
-        for topic in value.split(","):
-            topic = topic.strip()
-            if topic and topic not in seen:
-                topics.append(topic)
-                seen.add(topic)
-    return topics
-
-
 def _csv_env(name, default=""):
     raw = os.environ.get(name, default)
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _positive_int_env(name, default):
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer") from exc
+    if value <= 0:
+        raise RuntimeError(f"{name} must be positive")
+    return value
 
 
 def _configured_consumer_topics():
@@ -141,14 +150,6 @@ def _subscribed_topics(heartbeats):
                 topics.append(topic)
                 seen.add(topic)
     return topics
-
-
-def _bounded_int(value, default, minimum, maximum):
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        return default
-    return min(max(number, minimum), maximum)
 
 
 def _notice_where(topics, validation_status, content_type):
@@ -206,7 +207,8 @@ def _fetch_notices(limit, offset, topics, validation_status, content_type):
           id, received_at, source, topic, kafka_offset, content_type,
           parse_status, validation_status, mission, instrument,
           alert_type, alert_tense, event_name, trig_id, isotime,
-          trigger_time, ra_deg, dec_deg, raw_payload
+          trigger_time, ra_deg, dec_deg,
+          LEFT(raw_payload, {NOTICE_PREVIEW_BYTES}) AS raw_payload_preview
         FROM gcn_inbound_notices
         {where_sql}
         ORDER BY received_at DESC
@@ -258,11 +260,12 @@ def _fetch_outbound_topics():
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT topic, COUNT(*) AS notice_count
                 FROM gcn_outbound_notices
                 GROUP BY topic
                 ORDER BY topic
+                LIMIT {MAX_DIMENSION_VALUES}
                 """
             )
             return cur.fetchall()
@@ -272,12 +275,13 @@ def _fetch_outbound_dags():
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT created_by_dag_id AS dag_id, COUNT(*) AS notice_count
                 FROM gcn_outbound_notices
                 WHERE created_by_dag_id IS NOT NULL
                 GROUP BY created_by_dag_id
                 ORDER BY created_by_dag_id
+                LIMIT {MAX_DIMENSION_VALUES}
                 """
             )
             return cur.fetchall()
@@ -345,7 +349,10 @@ def _format_position(ra_deg, dec_deg):
 
 def _enrich_notice_display(notice):
     """Add display-only fields without mutating persisted notice data."""
-    raw_display, raw_encoding = _raw_payload_display(notice.get("raw_payload"))
+    raw_value = notice.get("raw_payload")
+    if raw_value is None:
+        raw_value = notice.get("raw_payload_preview")
+    raw_display, raw_encoding = _raw_payload_display(raw_value)
     notice["raw_payload_display"] = raw_display
     notice["raw_payload_encoding"] = raw_encoding
     fields = _parse_classic_text(raw_display)
@@ -378,11 +385,12 @@ def _fetch_topics():
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT topic, COUNT(*) AS notice_count
                 FROM gcn_inbound_notices
                 GROUP BY topic
                 ORDER BY topic
+                LIMIT {MAX_DIMENSION_VALUES}
                 """
             )
             return cur.fetchall()
@@ -509,6 +517,9 @@ def _inject_inbound_notice(raw_payload, topic, source, idempotency_key=None):
         source=source,
         validator=_configured_validator(),
         idempotency_key=idempotency_key,
+        max_payload_bytes=_positive_int_env(
+            "GCN_MAX_INBOUND_PAYLOAD_BYTES", 1048576
+        ),
     )
     conn = _connect()
     try:
@@ -529,6 +540,14 @@ def _queue_manual_outbound_notice(raw_payload, topic, idempotency_key=None):
         raise ValueError("Outbox topic is required.")
     if not raw_payload.strip():
         raise ValueError("Outbox JSON payload is required.")
+    max_payload_bytes = _positive_int_env(
+        "GCN_MAX_OUTBOUND_PAYLOAD_BYTES", 1048576
+    )
+    enforce_payload_size(
+        raw_payload,
+        max_payload_bytes,
+        label="Outbound submitted JSON payload",
+    )
     try:
         payload = json.loads(raw_payload)
     except json.JSONDecodeError as exc:
@@ -551,6 +570,7 @@ def _queue_manual_outbound_notice(raw_payload, topic, idempotency_key=None):
             "priority": 0,
             "max_attempts": int(os.environ.get("GCN_MAX_ATTEMPTS", "3")),
         },
+        max_payload_bytes=max_payload_bytes,
     )
     conn = _connect()
     try:
@@ -596,6 +616,7 @@ def _page_url(page, filters):
 
 def _pagination(page, limit, total_count, filters):
     total_pages = max(1, (total_count + limit - 1) // limit)
+    total_pages = min(total_pages, max(1, MAX_RESULT_WINDOW // limit))
     page = min(max(page, 1), total_pages)
     start = ((page - 1) * limit) + 1 if total_count else 0
     end = min(page * limit, total_count)
@@ -680,15 +701,35 @@ class ExploreNoticesView(BaseView):
         tab = request.args.get("tab", "inbox").strip().lower()
         if tab not in {"inbox", "outbox"}:
             tab = "inbox"
-        limit = _bounded_int(request.args.get("limit"), 15, 1, 500)
-        page = _bounded_int(request.args.get("page"), 1, 1, 1000000)
-        topics = _normalize_topics(request.args.getlist("topic"))
-        validation_status = request.args.get("validation_status", "").strip()
-        content_type = request.args.get("content_type", "").strip()
-        outbox_status = request.args.get("outbox_status", "").strip()
-        dag_id = request.args.get("dag_id", "").strip()
-        task_id = request.args.get("task_id", "").strip()
-        outbox_topic = request.args.get("outbox_topic", "").strip()
+        try:
+            limit = query_int(
+                request.args.get("limit"), 15, 1, MAX_PAGE_SIZE, "limit"
+            )
+            page = query_int(
+                request.args.get("page"),
+                1,
+                1,
+                MAX_RESULT_WINDOW,
+                "page",
+            )
+            validate_result_window(page, limit)
+            topics = normalize_topics(request.args.getlist("topic"))
+            validation_status = query_text(
+                request.args.get("validation_status"), 32, "validation_status"
+            )
+            content_type = query_text(
+                request.args.get("content_type"), 32, "content_type"
+            )
+            outbox_status = query_text(
+                request.args.get("outbox_status"), 32, "outbox_status"
+            )
+            dag_id = query_text(request.args.get("dag_id"), 255, "dag_id")
+            task_id = query_text(request.args.get("task_id"), 255, "task_id")
+            outbox_topic = query_text(
+                request.args.get("outbox_topic"), 255, "outbox_topic"
+            )
+        except ValueError as exc:
+            return f"Invalid Notices Explorer query: {exc}", 400
         filters = {
             "tab": tab,
             "limit": limit,

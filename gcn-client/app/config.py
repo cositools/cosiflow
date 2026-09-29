@@ -89,8 +89,11 @@ class Settings:
     outbox_retry_initial_seconds: float
     outbox_retry_max_seconds: float
     outbox_lock_timeout_seconds: int
+    heartbeat_interval_seconds: float
     heartbeat_degraded_seconds: float
     heartbeat_offline_seconds: float
+    max_inbound_payload_bytes: int
+    max_outbound_payload_bytes: int
     watchdog_interval_seconds: float
     watchdog_start_grace_seconds: float
 
@@ -137,6 +140,9 @@ def load_settings() -> Settings:
             "GCN_OUTBOX_RETRY_INITIAL_SECONDS"
         )
 
+    heartbeat_interval_seconds = _positive_float_env(
+        "GCN_HEARTBEAT_INTERVAL_SECONDS", "10"
+    )
     heartbeat_degraded_seconds = _positive_float_env(
         "GCN_HEARTBEAT_DEGRADED_SECONDS", "30"
     )
@@ -146,6 +152,11 @@ def load_settings() -> Settings:
     if heartbeat_offline_seconds <= heartbeat_degraded_seconds:
         raise ConfigurationError(
             "GCN_HEARTBEAT_OFFLINE_SECONDS must be greater than "
+            "GCN_HEARTBEAT_DEGRADED_SECONDS"
+        )
+    if heartbeat_interval_seconds >= heartbeat_degraded_seconds:
+        raise ConfigurationError(
+            "GCN_HEARTBEAT_INTERVAL_SECONDS must be less than "
             "GCN_HEARTBEAT_DEGRADED_SECONDS"
         )
 
@@ -194,8 +205,15 @@ def load_settings() -> Settings:
         outbox_lock_timeout_seconds=_positive_int_env(
             "GCN_OUTBOX_LOCK_TIMEOUT_SECONDS", "300"
         ),
+        heartbeat_interval_seconds=heartbeat_interval_seconds,
         heartbeat_degraded_seconds=heartbeat_degraded_seconds,
         heartbeat_offline_seconds=heartbeat_offline_seconds,
+        max_inbound_payload_bytes=_positive_int_env(
+            "GCN_MAX_INBOUND_PAYLOAD_BYTES", "1048576"
+        ),
+        max_outbound_payload_bytes=_positive_int_env(
+            "GCN_MAX_OUTBOUND_PAYLOAD_BYTES", "1048576"
+        ),
         watchdog_interval_seconds=_positive_float_env(
             "GCN_WATCHDOG_INTERVAL_SECONDS", "5"
         ),

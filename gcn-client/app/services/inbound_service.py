@@ -153,6 +153,7 @@ class InboundService:
             source=source,
             validator=self.validator,
             idempotency_key=idempotency_key,
+            max_payload_bytes=self.settings.max_inbound_payload_bytes,
         )
         return self.store.insert_inbound_notice(notice)
 
@@ -211,6 +212,7 @@ class InboundService:
             kafka_offset=message.offset(),
             kafka_key=message.key(),
             kafka_timestamp=timestamp,
+            max_payload_bytes=self.settings.max_inbound_payload_bytes,
         )
         notice_id = self.store.insert_inbound_notice(notice)
         logger.info("Stored inbound notice id=%s topic=%s offset=%s", notice_id, message.topic(), message.offset())

@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import pymysql
 from pymysql.connections import Connection
 
 from app.config import Settings
+from app.db.migration_runner import migrate_schema
 from gcn_shared.storage import (
-    ensure_inbound_schema,
     insert_inbound_notice as insert_shared_inbound_notice,
     queue_outbound_notice as queue_shared_outbound_notice,
 )
@@ -21,8 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 class NoticeStore:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, *, monotonic=time.monotonic):
         self.settings = settings
+        self._monotonic = monotonic
+        self._heartbeat_lock = threading.Lock()
+        self._last_heartbeats: dict[str, tuple[str, str | None, float]] = {}
 
     @contextmanager
     def connection(self):
@@ -47,14 +51,8 @@ class NoticeStore:
             conn.close()
 
     def init_schema(self) -> None:
-        schema_path = Path(__file__).with_name("schema.sql")
-        sql = schema_path.read_text(encoding="utf-8")
-        statements = [part.strip() for part in sql.split(";") if part.strip()]
         with self.connection() as conn:
-            with conn.cursor() as cur:
-                for statement in statements:
-                    cur.execute(statement)
-            ensure_inbound_schema(conn, self.settings.db_name)
+            migrate_schema(conn, self.settings.db_name)
         logger.info("GCN MySQL schema is ready")
 
     def insert_inbound_notice(self, notice: dict[str, Any]) -> int:
@@ -325,20 +323,39 @@ class NoticeStore:
                     ),
                 )
 
-    def heartbeat(self, component: str, status: str, details: dict[str, Any] | None = None) -> None:
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO gcn_client_heartbeats (component, status, details_json)
-                    VALUES (%s, %s, %s)
-                    ON DUPLICATE KEY UPDATE
-                      updated_at = CURRENT_TIMESTAMP(6),
-                      status = VALUES(status),
-                      details_json = VALUES(details_json)
-                    """,
-                    (component, status, _json_or_none(details)),
-                )
+    def heartbeat(
+        self,
+        component: str,
+        status: str,
+        details: dict[str, Any] | None = None,
+    ) -> bool:
+        details_json = _json_or_none(details)
+        with self._heartbeat_lock:
+            now = self._monotonic()
+            previous = self._last_heartbeats.get(component)
+            interval = float(getattr(self.settings, "heartbeat_interval_seconds", 10.0))
+            if (
+                previous is not None
+                and previous[0] == status
+                and previous[1] == details_json
+                and now - previous[2] < interval
+            ):
+                return False
+            with self.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO gcn_client_heartbeats (component, status, details_json)
+                        VALUES (%s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                          updated_at = CURRENT_TIMESTAMP(6),
+                          status = VALUES(status),
+                          details_json = VALUES(details_json)
+                        """,
+                        (component, status, details_json),
+                    )
+            self._last_heartbeats[component] = (status, details_json, now)
+            return True
 
     def fetch_heartbeats(self) -> list[dict[str, Any]]:
         with self.connection() as conn:

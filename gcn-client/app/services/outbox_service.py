@@ -116,6 +116,7 @@ class OutboxService:
             require_test_topics=self.settings.require_test_topics,
             idempotency_key=idempotency_key,
             metadata=metadata,
+            max_payload_bytes=self.settings.max_outbound_payload_bytes,
         )
         return self.store.queue_outbound_notice(notice)
 

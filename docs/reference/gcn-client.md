@@ -111,9 +111,8 @@ of the delivery workflow described below.
 
 ## MySQL schema
 
-The schema in
-[`gcn-client/app/db/schema.sql`](https://github.com/cositools/cosiflow/blob/dev-review/gcn-client/app/db/schema.sql)
-contains **five tables**:
+The versioned SQL files under `gcn-client/app/db/migrations/` create **five
+application tables** plus the migration ledger:
 
 | Table | Role | Important data |
 | --- | --- | --- |
@@ -122,6 +121,7 @@ contains **five tables**:
 | `gcn_delivery_attempts` | Audit trail for every outbox attempt | Attempt number, dry-run flag, Kafka metadata, error class/message, start and finish times |
 | `gcn_client_heartbeats` | Last-known worker health/status | Component name (`inbound` or `outbox`), status, update time, and JSON details |
 | `gcn_client_lifecycle_events` | Application lifecycle audit | Start, stopping, and component-failure events with timestamps |
+| `gcn_schema_migrations` | Applied schema revision ledger | Ordered version, description, SHA-256 checksum, and application time |
 
 `gcn_inbound_notices` preserves `raw_payload` as a `LONGBLOB` even if decoding
 or parsing fails and also stores indexed columns used by science queries.
@@ -131,10 +131,20 @@ explicit key. `gcn_outbound_notices` keeps
 both the complete JSON payload and pipeline provenance such as `dag_run_id`,
 `task_id`, `source_product_dir`, and `source_config_path`.
 
-The client initializes these tables automatically when
-`GCN_INIT_DB_ON_START=true`, which is the default.
-Initialization also migrates an existing inbox from textual raw storage to
-binary-safe storage and adds the nullable manual-injection key idempotently.
+The client initializes or upgrades these tables automatically when
+`GCN_INIT_DB_ON_START=true`, which is the default. The migration runner takes a
+MySQL advisory lock, validates the checksum of every recorded revision, and
+applies pending files in order. It recognizes empty databases, the legacy
+textual inbox schema, and the binary-safe Review 25 schema. An incomplete or
+unknown schema fails startup instead of being marked current.
+
+Existing textual inbox payloads are converted to binary-safe storage without
+deleting rows. The nullable manual-injection key and its unique index are then
+added. Repeating `init-db` is a no-op after checksum and schema verification.
+Applied migration files are immutable: add a new numbered file for a later
+change instead of editing an existing revision. MySQL DDL may commit implicitly,
+so take a database backup before an upgrade; rollback uses that backup plus the
+matching application version rather than a destructive automatic downgrade.
 
 ## Shared injection path
 
@@ -165,6 +175,9 @@ The most important groups are:
 - `GCN_DB_HOST`, `GCN_DB_PORT`, `GCN_DB_NAME`, `GCN_DB_USER`,
   `GCN_DB_PASSWORD`: MySQL connection;
 - `GCN_SCHEMA_ROOT`, `GCN_COSI_ALERT_SCHEMA`: local schema validation.
+- `GCN_MAX_INBOUND_PAYLOAD_BYTES`, `GCN_MAX_OUTBOUND_PAYLOAD_BYTES`: byte
+  limits enforced before parsing/validation and persistence. Both default to
+  1 MiB. Outbound submissions and their canonical JSON representation must fit.
 
 Worker resilience uses these optional settings:
 
@@ -177,12 +190,17 @@ Worker resilience uses these optional settings:
 | `GCN_OUTBOX_RETRY_INITIAL_SECONDS` | `5` | First persisted delivery retry delay |
 | `GCN_OUTBOX_RETRY_MAX_SECONDS` | `300` | Maximum persisted delivery retry delay |
 | `GCN_OUTBOX_LOCK_TIMEOUT_SECONDS` | `300` | Age after which an abandoned outbox lock is recovered |
+| `GCN_HEARTBEAT_INTERVAL_SECONDS` | `10` | Minimum interval between unchanged heartbeat writes |
 | `GCN_HEARTBEAT_DEGRADED_SECONDS` | `30` | Age that makes the external healthcheck degraded |
 | `GCN_HEARTBEAT_OFFLINE_SECONDS` | `90` | Age that makes a worker offline |
 | `GCN_WATCHDOG_INTERVAL_SECONDS` | `5` | Main-process watchdog interval |
 | `GCN_WATCHDOG_START_GRACE_SECONDS` | `30` | Startup grace before watchdog checks |
 
-The maximum worker backoff must remain below the offline heartbeat threshold.
+The heartbeat interval must be positive and lower than the degraded threshold;
+invalid combinations fail configuration loading. Status or detail changes are
+written immediately, while identical heartbeats inside the interval do not
+open a database connection. The maximum worker backoff must remain below the
+offline heartbeat threshold.
 The outbox lock timeout must exceed the expected maximum duration of one
 publish attempt.
 

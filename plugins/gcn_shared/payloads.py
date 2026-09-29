@@ -8,6 +8,29 @@ from .validation import enforce_prototype_safety, topic_kind
 from .xml_notice import extract_voevent_summary
 
 
+DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024
+
+
+class PayloadTooLargeError(ValueError):
+    """Raised before parsing when a payload exceeds its configured byte limit."""
+
+
+def enforce_payload_size(
+    raw_payload: str | bytes | bytearray | memoryview,
+    max_payload_bytes: int,
+    *,
+    label: str = "Payload",
+) -> bytes:
+    if max_payload_bytes <= 0:
+        raise ValueError("max_payload_bytes must be positive")
+    raw_bytes = payload_bytes(raw_payload)
+    if len(raw_bytes) > max_payload_bytes:
+        raise PayloadTooLargeError(
+            f"{label} is {len(raw_bytes)} bytes; maximum is {max_payload_bytes} bytes"
+        )
+    return raw_bytes
+
+
 def prepare_inbound_notice(
     raw_payload: str | bytes | bytearray | memoryview,
     *,
@@ -19,8 +42,13 @@ def prepare_inbound_notice(
     kafka_key: bytes | None = None,
     kafka_timestamp: str | None = None,
     idempotency_key: str | None = None,
+    max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,
 ) -> dict[str, Any]:
-    raw_bytes = payload_bytes(raw_payload)
+    raw_bytes = enforce_payload_size(
+        raw_payload,
+        max_payload_bytes,
+        label="Inbound payload",
+    )
     payload_hash = payload_sha256(raw_bytes)
     base: dict[str, Any] = {
         "source": source,
@@ -94,12 +122,19 @@ def prepare_outbound_notice(
     require_test_topics: bool,
     idempotency_key: str | None = None,
     metadata: dict[str, Any] | None = None,
+    max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,
 ) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TypeError("Outbound payload must be a JSON object")
     topic = str(topic or "").strip()
     if not topic:
         raise ValueError("Outbox topic is required")
+    canonical = canonical_json(payload)
+    canonical_bytes = enforce_payload_size(
+        canonical,
+        max_payload_bytes,
+        label="Outbound canonical JSON payload",
+    )
     validation_errors = validator.validate(payload)
     safety_errors = enforce_prototype_safety(
         payload,
@@ -111,8 +146,7 @@ def prepare_outbound_notice(
         {"message": error, "guard": "prototype_safety"}
         for error in safety_errors
     ]
-    canonical = canonical_json(payload)
-    payload_hash = payload_sha256(canonical)
+    payload_hash = payload_sha256(canonical_bytes)
     key = str(idempotency_key or "").strip() or f"outbound:{topic}:{payload_hash}"
     return {
         **normalize_json_notice(payload),

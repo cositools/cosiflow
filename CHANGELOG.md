@@ -23,6 +23,9 @@ branch after `v0.2.0`; these changes are not part of a release yet.
 - Added Graphviz to the Airflow image for optional benchmark DAG graph exports.
 - Added deterministic COSIDAG filesystem-readiness tests and a synthetic
   multi-scale scan benchmark.
+- Added ordered, checksummed GCN schema migrations with a persistent revision
+  ledger, advisory-lock serialization, and verified bootstrap for legacy and
+  Review 25 databases.
 
 ### Changed
 
@@ -60,6 +63,12 @@ branch after `v0.2.0`; these changes are not part of a release yet.
   pattern, and use constant-time unavailable-path membership.
 
 ### Fixed
+
+- Unchanged GCN worker heartbeats are now coalesced to a configurable interval,
+  while status transitions remain immediate. Shared byte limits reject
+  oversized inbound and outbound payloads before parsing or storage, and the
+  Notices Explorer bounds result windows, filters, selector queries, and raw
+  payload previews.
 
 - GCN worker, CLI, and manual plugin injection now share one payload and
   persistence contract. Inbound payloads retain their exact bytes, XML DTDs

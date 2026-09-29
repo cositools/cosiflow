@@ -49,13 +49,21 @@ The list view supports:
 - configurable page size through the `limit` query parameter;
 - server-side pagination through the `page` query parameter.
 
+The server accepts at most 100 rows per page, a 10,000-row result window, 20
+topic filters, and filter text no longer than the matching database column.
+Requests outside those boundaries receive HTTP 400; values are not silently
+clamped. Topic and DAG selector queries return at most 500 grouped values.
+
 Selected topics are serialized as repeated query parameters:
 
 ```text
 /explore-notices/?topic=gcn.classic.text.FERMI_GBM_POS_TEST&topic=gcn.classic.text.SWIFT_BAT_GRB_POS_TEST&limit=15&page=1
 ```
 
-The backend preserves all active filters when building pagination links.
+The backend preserves all active filters when building pagination links. Inbox
+collection queries read at most an 8 KiB raw-payload preview for classic-text
+display enrichment. The complete `LONGBLOB` is fetched only by the authorized
+single-notice detail route.
 
 ## Derived Display Fields
 
@@ -68,7 +76,17 @@ To keep the UI useful without requiring a database backfill, the plugin derives 
 - `Time` from `GRB_DATE` and `GRB_TIME`.
 - `Position` from `GRB_RA` and `GRB_DEC`.
 
-These derived values are only used for display. They do not update rows in `gcn_inbound_notices`.
+These derived values are only used for display. They do not update rows in
+`gcn_inbound_notices`. Fields beyond the bounded list preview remain available
+on the detail page.
+
+## Payload limits
+
+Manual inbox and outbox forms use the same byte-limit contract as the GCN
+client and CLI. `GCN_MAX_INBOUND_PAYLOAD_BYTES` bounds the submitted inbound
+UTF-8 bytes. `GCN_MAX_OUTBOUND_PAYLOAD_BYTES` bounds both submitted JSON text
+and canonical JSON. Oversized input is rejected before JSON/XML parsing,
+validation, or database access.
 
 ## Outbox Notice List
 
@@ -85,6 +103,7 @@ For local prototype runs, `dry_run_published` is the expected success state when
 ## Files
 
 - `explore_notices_plugin.py`: Flask/AppBuilder view, SQL queries, pagination, and notice display enrichment.
+- `query_limits.py`: dependency-free validation for page, result-window, filter, and preview limits.
 - `templates/explore_notices.html`: inbox/outbox tabbed list view, filters, topic chip selector, pagination controls.
 - `templates/explore_notice_detail.html`: detail view for a single notice.
 - `templates/explore_outbox_detail.html`: detail view for an outbound notice and its delivery attempts.

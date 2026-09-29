@@ -19,7 +19,6 @@ from gcn_shared.payloads import (  # noqa: E402
 )
 from gcn_shared.storage import (  # noqa: E402
     IdempotencyConflictError,
-    ensure_inbound_schema,
     insert_inbound_notice,
     queue_outbound_notice,
 )
@@ -234,26 +233,6 @@ class StorageTests(unittest.TestCase):
         }
         self.assertEqual(insert_inbound_notice(FakeConnection(FakeCursor(existing)), notice), 9)
 
-    def test_schema_migration_is_conditional_and_idempotent(self):
-        legacy = FakeCursor(
-            {},
-            schema_answers=[{"DATA_TYPE": "longtext"}, {"count": 0}, {"count": 0}],
-        )
-        ensure_inbound_schema(FakeConnection(legacy), "gcn")
-        sql = "\n".join(statement for statement, _params in legacy.executed)
-        self.assertIn("MODIFY COLUMN raw_payload LONGBLOB", sql)
-        self.assertIn("ADD COLUMN idempotency_key", sql)
-        self.assertIn("ADD UNIQUE KEY uq_inbound_idempotency_key", sql)
-
-        current = FakeCursor(
-            {},
-            schema_answers=[{"DATA_TYPE": "longblob"}, {"count": 1}, {"count": 1}],
-        )
-        ensure_inbound_schema(FakeConnection(current), "gcn")
-        current_sql = "\n".join(statement for statement, _params in current.executed)
-        self.assertNotIn("ALTER TABLE", current_sql)
-
-
 class SharedPathSourceTests(unittest.TestCase):
     def test_client_and_plugin_use_shared_payload_and_storage_paths(self):
         plugin = (REPO_ROOT / "plugins/explore_notices/explore_notices_plugin.py").read_text()
@@ -269,12 +248,15 @@ class SharedPathSourceTests(unittest.TestCase):
         self.assertIn("prepare_outbound_notice", outbox)
 
     def test_schema_and_cli_are_binary_safe(self):
-        schema = (REPO_ROOT / "gcn-client/app/db/schema.sql").read_text()
+        schema = (
+            REPO_ROOT
+            / "gcn-client/app/db/migrations/002_review25_inbound_integrity.sql"
+        ).read_text()
         main = (REPO_ROOT / "gcn-client/app/main.py").read_text()
         service = (REPO_ROOT / "gcn-client/app/services/inbound_service.py").read_text()
         self.assertIn("raw_payload LONGBLOB NOT NULL", schema)
         self.assertIn("uq_inbound_idempotency_key", schema)
-        self.assertIn("_read_bytes(args.file)", main)
+        self.assertIn("_read_bytes(args.file, settings.max_inbound_payload_bytes)", main)
         self.assertNotIn('decode("utf-8", errors="replace")', service)
 
     def test_defaults_cannot_publish_real_gcn_messages(self):

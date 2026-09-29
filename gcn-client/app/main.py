@@ -183,25 +183,29 @@ def main() -> None:
     elif args.command == "inject-inbound":
         print(
             inbound.inject(
-                _read_bytes(args.file),
+                _read_bytes(args.file, settings.max_inbound_payload_bytes),
                 topic=args.topic,
                 source=args.source,
                 idempotency_key=args.idempotency_key,
             )
         )
     elif args.command == "queue-outbound":
-        payload = json.loads(_read_text(args.file))
+        payload = json.loads(_read_text(args.file, settings.max_outbound_payload_bytes))
         print(outbox.queue_payload(payload, topic=args.topic, idempotency_key=args.idempotency_key))
 
 
-def _read_text(path: str) -> str:
-    with open(path, "r", encoding="utf-8") as handle:
-        return handle.read()
+def _read_text(path: str, max_bytes: int) -> str:
+    return _read_bytes(path, max_bytes).decode("utf-8", errors="strict")
 
 
-def _read_bytes(path: str) -> bytes:
+def _read_bytes(path: str, max_bytes: int) -> bytes:
+    if max_bytes <= 0:
+        raise ValueError("max_bytes must be positive")
     with open(path, "rb") as handle:
-        return handle.read()
+        data = handle.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError(f"Payload exceeds the configured {max_bytes}-byte limit")
+    return data
 
 
 if __name__ == "__main__":

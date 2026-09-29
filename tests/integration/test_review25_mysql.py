@@ -173,7 +173,9 @@ for thread in threads: thread.join()
 print(sorted(results))
 """
         result = self.client_python(source)
-        self.assertEqual(result.stdout.strip(), "[1, 1]")
+        ids = result.stdout.strip().strip("[]").split(", ")
+        self.assertEqual(len(ids), 2)
+        self.assertEqual(ids[0], ids[1])
         self.assertEqual(
             self.mysql(
                 "SELECT COUNT(*) FROM gcn_outbound_notices "
@@ -186,7 +188,8 @@ print(sorted(results))
         self.mysql(
             "ALTER TABLE gcn_inbound_notices DROP INDEX uq_inbound_idempotency_key; "
             "ALTER TABLE gcn_inbound_notices DROP COLUMN idempotency_key; "
-            "ALTER TABLE gcn_inbound_notices MODIFY COLUMN raw_payload LONGTEXT NOT NULL;"
+            "ALTER TABLE gcn_inbound_notices MODIFY COLUMN raw_payload LONGTEXT NOT NULL; "
+            "DELETE FROM gcn_schema_migrations;"
         )
         self.compose("run", "--rm", "client", "python", "-m", "app.main", "init-db")
         self.compose("run", "--rm", "client", "python", "-m", "app.main", "init-db")

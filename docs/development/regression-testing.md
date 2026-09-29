@@ -50,6 +50,8 @@ report an explicit skip when that dependency is unavailable.
 | `tests/integration/test_review12_mysql.py` | Review 12 | Real MySQL retry scheduling, stale-lock recovery, stale healthcheck failure, and container restart behavior |
 | `tests/test_review25_gcn_payload_integrity.py` | Review 25 | Exact inbound bytes, immutable idempotency, hardened XML parsing, exact topic policy, shared injection paths, and migration contracts |
 | `tests/integration/test_review25_mysql.py` | Review 25 | Real MySQL binary storage, immutable conflict handling, concurrent deduplication, and idempotent inbox migration |
+| `tests/test_review26_gcn_storage_limits.py` | Review 26 | Heartbeat coalescing, SQL migration parsing/checksums, payload byte boundaries, query limits, and configuration contracts |
+| `tests/integration/test_review26_mysql.py` | Review 26 | Empty/current/legacy schema migration, checksum drift rejection, data preservation, replay, and concurrent initialization |
 | `tests/test_review13_module_loader_safety.py` | Review 13 | YAML schema validation, destructive-path confinement, overlapping-environment rejection, traversal and symlink rejection, shell-payload isolation, and mutation-free install/update/remove failures |
 | `tests/integration/review16/test_scheduler_load.sh` | Review 16 | Real LocalExecutor scheduling with two slots, six rescheduling sensors, PostgreSQL task state, and independent ready work |
 | `tests/integration/review28/test_localexecutor_stop.sh` | Review 28 | Real PostgreSQL/LocalExecutor termination of one benchmark-owned run while a concurrent manual run remains active |
@@ -146,6 +148,32 @@ conflicting outbox rejection without audit-row mutation, concurrent identical
 inserts, and repeatable migration from the former `LONGTEXT` inbox schema. It
 uses no GCN credentials, assigned production topics, or broker connection and
 removes its containers and volumes after the run.
+
+## Review 26 GCN storage and limit tests
+
+The deterministic suite injects a monotonic clock and fake database connection
+to prove that unchanged heartbeat calls produce at most one write per interval
+while state changes write immediately. It also checks exact payload byte
+boundaries, SQL scripts containing quoted semicolons and custom delimiters,
+ordered migration checksums, and rejection of excessive query windows and
+filters:
+
+```bash
+python3 -m unittest tests.test_review26_gcn_storage_limits -v
+```
+
+The optional MySQL 8.4 suite uses an isolated Compose project. It verifies a
+fresh migration, replay, bootstrap of an existing Review 25 schema, upgrade of
+a legacy textual schema without losing a sentinel notice, fail-closed checksum
+drift, and serialization of concurrent initializers:
+
+```bash
+COSIFLOW_RUN_REVIEW26_MYSQL_TESTS=1 \
+  python3 -m unittest tests.integration.test_review26_mysql -v
+```
+
+The suite uses synthetic credentials, does not connect to GCN, and removes its
+containers and volumes after the run.
 
 ## Review 13 module-loader safety tests
 

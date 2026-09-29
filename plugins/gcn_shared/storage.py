@@ -156,60 +156,6 @@ def queue_outbound_notice(conn, notice: dict[str, Any], *, default_max_attempts:
     return notice_id
 
 
-def ensure_inbound_schema(conn, database_name: str) -> None:
-    """Apply the binary-payload/manual-idempotency migration idempotently."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT DATA_TYPE
-            FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = %s
-              AND TABLE_NAME = 'gcn_inbound_notices'
-              AND COLUMN_NAME = 'raw_payload'
-            """,
-            (database_name,),
-        )
-        row = cur.fetchone()
-        data_type = _row_value(row, "DATA_TYPE")
-        if data_type not in {"blob", "mediumblob", "longblob"}:
-            cur.execute(
-                "ALTER TABLE gcn_inbound_notices "
-                "MODIFY COLUMN raw_payload LONGBLOB NOT NULL"
-            )
-
-        cur.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = %s
-              AND TABLE_NAME = 'gcn_inbound_notices'
-              AND COLUMN_NAME = 'idempotency_key'
-            """,
-            (database_name,),
-        )
-        if int(_row_value(cur.fetchone(), "count") or 0) == 0:
-            cur.execute(
-                "ALTER TABLE gcn_inbound_notices "
-                "ADD COLUMN idempotency_key VARCHAR(512) NULL AFTER kafka_timestamp"
-            )
-
-        cur.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM information_schema.STATISTICS
-            WHERE TABLE_SCHEMA = %s
-              AND TABLE_NAME = 'gcn_inbound_notices'
-              AND INDEX_NAME = 'uq_inbound_idempotency_key'
-            """,
-            (database_name,),
-        )
-        if int(_row_value(cur.fetchone(), "count") or 0) == 0:
-            cur.execute(
-                "ALTER TABLE gcn_inbound_notices "
-                "ADD UNIQUE KEY uq_inbound_idempotency_key (idempotency_key)"
-            )
-
-
 def json_or_none(value: Any) -> str | None:
     if value is None:
         return None
@@ -237,14 +183,6 @@ def _same_outbound_identity(existing: dict[str, Any], proposed: dict[str, Any]) 
         and _canonical_json_value(existing.get("payload_json"))
         == _canonical_json_value(proposed.get("payload_json"))
     )
-
-
-def _row_value(row: Any, key: str) -> Any:
-    if isinstance(row, dict):
-        return row.get(key)
-    if isinstance(row, (tuple, list)) and row:
-        return row[0]
-    return None
 
 
 def _as_bytes(value: Any) -> bytes:
