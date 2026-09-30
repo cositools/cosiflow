@@ -8,7 +8,7 @@ import logging
 from email.utils import parseaddr
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 from airflow import settings
 from airflow.utils.session import provide_session

@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pymysql
-from pymysql.connections import Connection
 
 from app.config import Settings
 from app.db.migration_runner import migrate_schema

@@ -158,6 +158,13 @@ The Airflow image contains the same pinned COSI/Core schema bundle as the GCN
 client image. If that bundle is unavailable, manual injection fails closed;
 the plugin does not insert an unchecked row.
 
+`plugins/gcn_shared/storage.py` is the only owner of the inbox and outbox
+identity inserts. The worker's `NoticeStore` remains a runtime facade for
+connections, claims, retries, attempts, heartbeats, and lifecycle events; its
+inbox/outbox enqueue methods delegate to the shared insert-or-compare
+primitives. The Notices Explorer delegates to the same primitives and does not
+carry a second copy of the insert SQL.
+
 ## Configuration
 
 Configuration is read from environment variables in

@@ -17,6 +17,9 @@ The local Airflow route is:
 /mailhog
 ```
 
+This AppBuilder view is the only supported local redirect route. The plugin
+does not register a Flask Blueprint at the Airflow site root `/`.
+
 ## Target URL
 
 The redirect target is read from:

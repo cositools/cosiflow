@@ -9,7 +9,6 @@ from airflow.plugins_manager import AirflowPlugin
 from airflow.models import BaseOperator
 from flask import Blueprint, send_from_directory, jsonify, abort, url_for
 from flask_appbuilder import BaseView, expose
-from jinja2 import Environment
 from shared_auth import ACTION_READ, SCIENTIFIC_DATA, require_cosiflow_permission
 from shared_ui import add_shared_templates
 from werkzeug.exceptions import HTTPException

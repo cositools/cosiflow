@@ -72,6 +72,19 @@ fast-transient-analysis-pipeline/
         └── fast_transient_pipeline/
 ```
 
+### Cross-repository Python contracts
+
+Module DAGs are external consumers of the Python files mounted at
+`/home/gamma/airflow/modules`. Public imports therefore cannot be classified as
+dead code by searching the COSIflow repository alone. In particular, the FasTP
+`cosidag_GeD.py`, `cosidag_BGO.py`, and `cosidag_ARMselection.py` DAGs import
+`COSIDAG` and the module-level `cfg` compatibility helper.
+
+Before removing or renaming an exported helper, search the configured
+`modules_pool` repositories, run their DAG-import checks, and deploy producer
+and consumer changes together. Retain a compatibility shim when an atomic
+cross-repository migration is not available.
+
 ## Install a module
 
 With the COSIflow stack running:

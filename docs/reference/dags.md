@@ -28,6 +28,13 @@ A COSIDAG can wire the following task pattern:
 4. Custom scientific tasks provided by `build_custom`.
 5. `show_results`.
 
+The module-level `cfg(key, default=None)` function is also part of the supported
+cross-repository contract. FasTP DAGs import it while Airflow parses the module.
+It resolves configuration in this order: Airflow Variable, environment
+variable, then the supplied default. Do not remove or rename exported symbols
+after an internal-only reference search: check every configured
+`modules_pool` repository and run its DAG-import validation first.
+
 The shared XCom contract is:
 
 | Key | Produced by | Meaning |

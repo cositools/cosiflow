@@ -38,7 +38,6 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 from airflow import DAG
 from airflow.exceptions import AirflowException, AirflowFailException, DagRunAlreadyExists
-from airflow.models import Variable
 from airflow.models.param import Param
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
@@ -112,47 +111,23 @@ _BASE_DEFAULT_ARGS = {
 LOGGER = logging.getLogger(__name__)
 _MISSING_MONITORING_FOLDERS = object()
 
-# --- Public config helpers (Airflow Variable -> ENV -> default) -----------------
-try:
-    from airflow.models import Variable as _AFVariable
-except Exception:
-    _AFVariable = None
-
 
 def cfg(key: str, default=None):
-    """Read config from Airflow Variable, then ENV, else default."""
-    val = None
-    if _AFVariable is not None:
-        try:
-            val = _AFVariable.get(key)
-        except Exception:
-            val = None
-    if val is None:
-        val = os.environ.get(key, default)
-    return val
+    """Return an Airflow Variable, environment value, or fallback default.
 
-
-def cfg_int(key: str, default: int) -> int:
-    v = cfg(key, default)
+    This small compatibility API is consumed by the external FasTP DAG module.
+    Keep it dependency-light and at module scope so DAG files can resolve their
+    configuration while Airflow parses them.
+    """
     try:
-        return int(v)
+        from airflow.models import Variable as AirflowVariable
+
+        value = AirflowVariable.get(key, default_var=None)
     except Exception:
-        return default
-
-
-def cfg_float(key: str, default: float) -> float:
-    v = cfg(key, default)
-    try:
-        return float(v)
-    except Exception:
-        return default
-
-
-def cfg_bool(key: str, default: bool = False) -> bool:
-    v = cfg(key, None)
-    if v is None:
-        return default
-    return parse_runtime_bool(v, key)
+        value = None
+    if value is None:
+        value = os.environ.get(key, default)
+    return value
 
 
 def _param(default, description: str, **schema) -> Param:

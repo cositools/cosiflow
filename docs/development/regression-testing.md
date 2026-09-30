@@ -43,6 +43,7 @@ report an explicit skip when that dependency is unavailable.
 | `tests/security/test_review21_container_isolation.py` | Review 21 | Service-scoped environments, narrow mounts, read-only code, dedicated module pool, and explicit development/X11 overrides |
 | `tests/test_review28_benchmark_safety.py` | Review 28 | Cleanup dual opt-in and path confinement, all-target preflight, success/timeout exit semantics, run ownership, and bounded stop verification |
 | `tests/test_issue18_contracts.py` | Review 18 | Removal of the unused paths module and the supported COSIDAG import contract |
+| `tests/test_review30_dead_code_cleanup.py` | Review 30 | Route inventory, single ownership of GCN identity inserts, the cross-repository `cfg` compatibility contract, removal of obsolete typed helpers/imports, and tombstones for legacy MailHog and path contracts |
 | `tests/test_review8_cosidag_state.py` | Review 8 | Runtime retrigger identity/configuration, transactional schema, claim/finalization wiring, migration, and reset-plugin contracts |
 | `tests/test_review23_cosidag_queue_contract.py` | Review 23 | Structured and legacy date validation, safe file patterns, canonical confinement, reschedule-safe stability state, bounded queue/refill contracts, retry policy, manual-retry audit, and honest Airflow Params |
 | `tests/integration/test_review8_postgres.py` | Reviews 8 and 23 | Real PostgreSQL uniqueness, reschedule-safe stability observations, bounded enqueue, concurrent queue claims, one automatic retry, terminal failure, audited manual retry, idempotent finalization, and reset isolation |
@@ -171,6 +172,36 @@ conflicting outbox rejection without audit-row mutation, concurrent identical
 inserts, and repeatable migration from the former `LONGTEXT` inbox schema. It
 uses no GCN credentials, assigned production topics, or broker connection and
 removes its containers and volumes after the run.
+
+## Review 30 dead-code and ownership tests
+
+The Review 30 suite is a dependency-free static contract. It inventories all
+AppBuilder routes against the explicit authorization policy, rejects direct
+Flask routes in plugin sources, and keeps the supported MailHog redirect below
+`/mailhog`. It also verifies that `plugins/gcn_shared/storage.py` remains the
+only owner of inbox/outbox identity inserts and that the GCN client and Notices
+Explorer delegate to those primitives.
+
+The same suite prevents the removed path module, `PathInfo` fallback,
+`COSIFLOW_DATA_ROOT`, and obsolete typed configuration helpers from returning.
+It deliberately retains and exercises the module-level `cfg` function because
+the external FasTP DAGs import it while Airflow parses `cosidag_GeD.py`,
+`cosidag_BGO.py`, and `cosidag_ARMselection.py`.
+
+```bash
+python3 -m unittest tests.test_review30_dead_code_cleanup -v
+```
+
+Run it together with the Review 18, 24, and 25 suites when changing COSIDAG
+paths, plugin routing, or GCN persistence boundaries. Test ownership and CI
+promotion remain governed by [Review 14](https://github.com/cositools/cosiflow/issues/15).
+
+Before removing or renaming a module-level symbol, search both the COSIflow
+repository and every repository mounted under `modules_pool`. An internal
+zero-reference result is not sufficient evidence that a symbol is dead: DAG
+modules are independent consumers and their imports are evaluated by the
+Airflow scheduler. Any intentional contract removal must update all consumers
+in the same change window and include a DAG-import validation.
 
 ## Review 26 GCN storage and limit tests
 
