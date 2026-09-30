@@ -48,6 +48,20 @@ CLI_BUILD_DOCKER=false
 CLI_ENV_SELECTION=""
 PATH_IMAGES_CONFIGURED=false
 
+# Normalized configuration snapshot. Parallel arrays keep compatibility with
+# the Bash 3.2 shipped by macOS; associative arrays and eval are deliberately
+# avoided.
+CONFIG_INSTALL_MODE=""
+CONFIG_DEFAULT_ENVIRONMENT=""
+CONFIG_ENV_NAMES=()
+CONFIG_ENV_REQUIREMENTS=()
+CONFIG_ENV_REQUIREMENTS_NO_DEPS=()
+CONFIG_ENV_VENV_PATHS=()
+CONFIG_ENV_ENABLED=()
+CONFIG_ENV_DESCRIPTIONS=()
+CONFIG_ENV_PYTHON_VERSIONS=()
+ENVS_TO_CREATE=()
+
 ##########################################################################
 # HELPER FUNCTIONS
 ##########################################################################
@@ -55,6 +69,13 @@ PATH_IMAGES_CONFIGURED=false
 # Helper to run docker exec as airflow user
 dexec() {
     docker exec -u "$CONTAINER_USER" "$CONTAINER_NAME" "$@"
+}
+
+# Run a container command as the managed user while forwarding stdin. This is
+# used to create files with gamma ownership without interpolating data in a
+# shell command string.
+dexec_stdin() {
+    docker exec -u "$CONTAINER_USER" -i "$CONTAINER_NAME" "$@"
 }
 
 # define a macro `log` for printing messages with color green
@@ -189,50 +210,123 @@ prepare_yaml_config() {
     relative="${resolved#"$MODULE_PATH"/}"
     YAML_CONFIG="$resolved"
     CONTAINER_YAML_CONFIG="$CONTAINER_MODULES_ROOT/$MODULE_NAME/$relative"
-    if ! config_helper validate; then
-        error "Module configuration validation failed."
-    fi
 }
 
 config_value() {
-    config_helper get "$1"
+    case "$1" in
+        install_mode) printf '%s\n' "$CONFIG_INSTALL_MODE" ;;
+        paths.dags) printf '%s\n' "$PATH_DAGS" ;;
+        paths.pipeline) printf '%s\n' "$PATH_PIPELINE" ;;
+        paths.images) printf '%s\n' "$PATH_IMAGES" ;;
+        *) return 1 ;;
+    esac
 }
 
 list_yaml_envs() {
-    config_helper list-environments
+    printf '%s\n' "${CONFIG_ENV_NAMES[@]}"
+}
+
+config_environment_index() {
+    local env_name="$1"
+    local index
+    for ((index = 0; index < ${#CONFIG_ENV_NAMES[@]}; index++)); do
+        if [ "${CONFIG_ENV_NAMES[$index]}" = "$env_name" ]; then
+            printf '%s\n' "$index"
+            return 0
+        fi
+    done
+    return 1
 }
 
 config_environment_value() {
     local env_name="$1"
     local field="$2"
+    local index
     validate_identifier "$env_name" "Environment name"
-    config_helper get-environment "$env_name" "$field"
+    index=$(config_environment_index "$env_name") || return 1
+    case "$field" in
+        requirements) printf '%s\n' "${CONFIG_ENV_REQUIREMENTS[$index]}" ;;
+        requirements_no_deps) printf '%s\n' "${CONFIG_ENV_REQUIREMENTS_NO_DEPS[$index]}" ;;
+        venv_path) printf '%s\n' "${CONFIG_ENV_VENV_PATHS[$index]}" ;;
+        enabled) printf '%s\n' "${CONFIG_ENV_ENABLED[$index]}" ;;
+        description) printf '%s\n' "${CONFIG_ENV_DESCRIPTIONS[$index]}" ;;
+        python_version) printf '%s\n' "${CONFIG_ENV_PYTHON_VERSIONS[$index]}" ;;
+        *) return 1 ;;
+    esac
 }
 
-load_yaml_config() {
-    local install_mode
-    local value
+load_yaml_config_snapshot() {
+    local snapshot_file
+    local snapshot_fields=()
+    local field
+    local index=0
+    local env_count
+    local env_index
 
     if [ -z "$YAML_CONFIG" ]; then
         return 1
     fi
-    if ! install_mode=$(config_value install_mode); then
-        return 1
+
+    snapshot_file=$(mktemp "${TMPDIR:-/tmp}/cosiflow-config.XXXXXX") || \
+        error "Cannot create configuration snapshot."
+    if ! config_helper snapshot > "$snapshot_file"; then
+        rm -f -- "$snapshot_file"
+        error "Module configuration validation failed."
     fi
-    case "$install_mode" in
+    while IFS= read -r -d '' field; do
+        snapshot_fields+=("$field")
+    done < "$snapshot_file"
+    rm -f -- "$snapshot_file"
+
+    if [ "${snapshot_fields[0]:-}" != "1" ]; then
+        error "Unsupported module configuration snapshot."
+    fi
+
+    index=1
+    CONFIG_INSTALL_MODE="${snapshot_fields[$index]}"; ((index++))
+    if [ -n "${snapshot_fields[$index]}" ]; then PATH_DAGS="${snapshot_fields[$index]}"; fi; ((index++))
+    if [ -n "${snapshot_fields[$index]}" ]; then PATH_PIPELINE="${snapshot_fields[$index]}"; fi; ((index++))
+    if [ -n "${snapshot_fields[$index]}" ]; then
+        PATH_IMAGES="${snapshot_fields[$index]}"
+        PATH_IMAGES_CONFIGURED=true
+    fi
+    ((index++))
+    CONFIG_DEFAULT_ENVIRONMENT="${snapshot_fields[$index]}"; ((index++))
+    env_count="${snapshot_fields[$index]}"; ((index++))
+    if [[ ! "$env_count" =~ ^[0-9]+$ ]]; then
+        error "Invalid environment count in configuration snapshot."
+    fi
+
+    CONFIG_ENV_NAMES=()
+    CONFIG_ENV_REQUIREMENTS=()
+    CONFIG_ENV_REQUIREMENTS_NO_DEPS=()
+    CONFIG_ENV_VENV_PATHS=()
+    CONFIG_ENV_ENABLED=()
+    CONFIG_ENV_DESCRIPTIONS=()
+    CONFIG_ENV_PYTHON_VERSIONS=()
+    for ((env_index = 0; env_index < env_count; env_index++)); do
+        if [ $((index + 6)) -ge ${#snapshot_fields[@]} ]; then
+            error "Incomplete module configuration snapshot."
+        fi
+        CONFIG_ENV_NAMES+=("${snapshot_fields[$index]}"); ((index++))
+        CONFIG_ENV_REQUIREMENTS+=("${snapshot_fields[$index]}"); ((index++))
+        CONFIG_ENV_REQUIREMENTS_NO_DEPS+=("${snapshot_fields[$index]}"); ((index++))
+        CONFIG_ENV_VENV_PATHS+=("${snapshot_fields[$index]}"); ((index++))
+        CONFIG_ENV_ENABLED+=("${snapshot_fields[$index]}"); ((index++))
+        CONFIG_ENV_DESCRIPTIONS+=("${snapshot_fields[$index]}"); ((index++))
+        CONFIG_ENV_PYTHON_VERSIONS+=("${snapshot_fields[$index]}"); ((index++))
+    done
+    if [ "$index" -ne "${#snapshot_fields[@]}" ]; then
+        error "Unexpected data in module configuration snapshot."
+    fi
+
+    case "$CONFIG_INSTALL_MODE" in
         container) BUILD_DOCKER=true; CREATE_ENV=false ;;
         environment) BUILD_DOCKER=false; CREATE_ENV=true ;;
         both) BUILD_DOCKER=true; CREATE_ENV=true ;;
         none|"") BUILD_DOCKER=false; CREATE_ENV=false ;;
-        *) error "Unsupported install mode after validation: $install_mode" ;;
+        *) error "Unsupported install mode after validation: $CONFIG_INSTALL_MODE" ;;
     esac
-
-    if value=$(config_value paths.dags) && [ -n "$value" ]; then PATH_DAGS="$value"; fi
-    if value=$(config_value paths.pipeline) && [ -n "$value" ]; then PATH_PIPELINE="$value"; fi
-    if value=$(config_value paths.images) && [ -n "$value" ]; then
-        PATH_IMAGES="$value"
-        PATH_IMAGES_CONFIGURED=true
-    fi
 }
 
 validate_container_venv_path() {
@@ -408,7 +502,7 @@ elif [ -d "$MODULE_PATH" ]; then
     fi
 fi
 if [ -n "$YAML_CONFIG" ]; then
-    load_yaml_config || error "Failed to load validated module configuration."
+    load_yaml_config_snapshot || error "Failed to load validated module configuration."
 fi
 
 # Command-line flags override validated YAML defaults.
@@ -423,6 +517,56 @@ if [ "$CLI_CREATE_ENV" = true ]; then CREATE_ENV=true; fi
 if [ "$CLI_BUILD_DOCKER" = true ]; then BUILD_DOCKER=true; fi
 if [ -n "$CLI_ENV_SELECTION" ]; then ENV_SELECTION="$CLI_ENV_SELECTION"; fi
 
+resolve_environment_plan() {
+    local env_name
+    local enabled
+    local selected_envs=()
+    local existing
+
+    ENVS_TO_CREATE=()
+    if [ "$CREATE_ENV" != true ] || [ "$ACTION" = "remove" ]; then
+        return 0
+    fi
+    if [ -z "$YAML_CONFIG" ]; then
+        if [ -n "$ENV_SELECTION" ]; then
+            error "-E requires a validated module YAML configuration."
+        fi
+        return 0
+    fi
+
+    if [ "$ENV_SELECTION" = "all" ]; then
+        ENVS_TO_CREATE=("${CONFIG_ENV_NAMES[@]}")
+    elif [ -n "$ENV_SELECTION" ]; then
+        IFS=',' read -ra selected_envs <<< "$ENV_SELECTION"
+        for env_name in "${selected_envs[@]}"; do
+            env_name=$(printf '%s' "$env_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            validate_identifier "$env_name" "Selected environment name"
+            config_environment_index "$env_name" >/dev/null || \
+                error "Selected environment is not configured: $env_name"
+            for existing in "${ENVS_TO_CREATE[@]}"; do
+                if [ "$existing" = "$env_name" ]; then
+                    error "Selected environment is duplicated: $env_name"
+                fi
+            done
+            ENVS_TO_CREATE+=("$env_name")
+        done
+    else
+        for env_name in "${CONFIG_ENV_NAMES[@]}"; do
+            enabled=$(config_environment_value "$env_name" enabled) || \
+                error "Cannot read enabled flag for '$env_name'."
+            if [ "$enabled" = "true" ]; then
+                ENVS_TO_CREATE+=("$env_name")
+            fi
+        done
+    fi
+
+    if [ ${#ENVS_TO_CREATE[@]} -eq 0 ]; then
+        error "Environment installation requested but no environments were selected. Use -E or enable at least one environment in YAML."
+    fi
+}
+
+resolve_environment_plan
+
 # Function to create a single Python virtual environment
 # Optional 4th argument: python_version (e.g. 3.11) to use python3.11 -m venv; if empty, uses python3
 # Optional 5th argument: requirements_no_deps file path; if set, installed after main requirements with pip --no-deps
@@ -433,6 +577,16 @@ create_single_env() {
     local python_version="${4:-}"
     local requirements_no_deps_file="${5:-}"
     local safe_venv_path
+    local activate_script="/home/gamma/activate_${env_name}.sh"
+    local temp_activate=""
+
+    cleanup_failed_environment() {
+        if [ -n "$temp_activate" ]; then
+            rm -f -- "$temp_activate"
+        fi
+        safe_remove_venv "$venv_path" >/dev/null 2>&1 || true
+        dexec rm -f -- "$activate_script" >/dev/null 2>&1 || true
+    }
 
     validate_identifier "$env_name" "Environment name"
     if ! safe_venv_path=$(validate_container_venv_path "$venv_path"); then
@@ -458,89 +612,95 @@ create_single_env() {
     # stale editable VCS checkouts under <venv>/src. Always recreate managed
     # environments so changes of repository URL or pinned revision are applied
     # non-interactively and reproducibly.
-    safe_remove_venv "$venv_path" || error "Refusing unsafe environment removal."
-    dexec "$python_bin" -m venv "$venv_path"
-
-    if [ $? -ne 0 ]; then
-        error "    Failed to create virtual environment for '$env_name'."
+    if ! safe_remove_venv "$venv_path"; then
+        return 1
+    fi
+    if ! dexec "$python_bin" -m venv "$venv_path"; then
+        cleanup_failed_environment
+        return 1
     fi
 
     # Bootstrap packaging tools before installing requirements.
     # Python 3.12 removed pkgutil.ImpImporter; old setuptools/pkg_resources
     # releases still reference it and fail at import time.
     log "   - Bootstrapping pip/setuptools/wheel..."
-    dexec "$venv_path/bin/python" -m ensurepip --upgrade
-    if [ $? -ne 0 ]; then
-        error "   - Failed to bootstrap pip with ensurepip for '$env_name'."
+    if ! dexec "$venv_path/bin/python" -m ensurepip --upgrade; then
+        cleanup_failed_environment
+        return 1
     fi
 
-    dexec "$venv_path/bin/python" -m pip install --no-cache-dir --upgrade "pip" "setuptools>=68" "wheel"
-    if [ $? -ne 0 ]; then
-        error "   - Failed to upgrade pip/setuptools/wheel for '$env_name'."
+    if ! dexec "$venv_path/bin/python" -m pip install --no-cache-dir --upgrade "pip" "setuptools>=68" "wheel"; then
+        cleanup_failed_environment
+        return 1
     fi
-    
-    # Copy requirements file to container
-    local temp_req="/tmp/requirements_${env_name}.txt"
-    log "   - Copying requirements file to container..."
-    docker cp "$requirements_file" "$CONTAINER_NAME:$temp_req"
-    
-    if [ $? -ne 0 ]; then
-        error "   - Failed to copy requirements file."
-    fi
-    
+
     # Install packages
     log "   - Installing packages..."
-    dexec "$venv_path/bin/python" -m pip install --no-cache-dir -r "$temp_req"
-    
-    local install_status=$?
-    
-    # Cleanup main requirements
-    dexec rm -f -- "$temp_req"
-    
-    if [ $install_status -ne 0 ]; then
-        error "   - Failed to install packages for '$env_name'."
+    if ! dexec "$venv_path/bin/python" -m pip install --no-cache-dir -r "$requirements_file"; then
+        cleanup_failed_environment
+        return 1
     fi
 
-    dexec "$venv_path/bin/python" -c "import pkg_resources" 2>/dev/null
-    if [ $? -ne 0 ]; then
-        error "   - pkg_resources is not importable in '$env_name' after installing setuptools."
-    fi
-    
     # Optional: install extra requirements with --no-deps (e.g. to avoid dependency conflicts)
-    if [ -n "$requirements_no_deps_file" ] && [ -f "$requirements_no_deps_file" ]; then
-        local temp_nodeps="/tmp/requirements_${env_name}_nodeps.txt"
+    if [ -n "$requirements_no_deps_file" ]; then
         log "   - Installing extra packages (--no-deps)..."
-        docker cp "$requirements_no_deps_file" "$CONTAINER_NAME:$temp_nodeps"
-        if [ $? -ne 0 ]; then
-            error "   - Failed to copy no-deps requirements file."
-        fi
-
-        dexec "$venv_path/bin/python" -m pip install --no-cache-dir --no-deps -r "$temp_nodeps"
-        local nodeps_install_status=$?
-        dexec rm -f -- "$temp_nodeps"
-
-        if [ $nodeps_install_status -ne 0 ]; then
-            error "   - Failed to install no-deps packages for '$env_name'."
+        if ! dexec "$venv_path/bin/python" -m pip install --no-cache-dir --no-deps -r "$requirements_no_deps_file"; then
+            cleanup_failed_environment
+            return 1
         fi
     fi
-    
+
+    if ! dexec test -x "$venv_path/bin/python"; then
+        cleanup_failed_environment
+        return 1
+    fi
+    if ! dexec "$venv_path/bin/python" -c \
+        'import os, sys; raise SystemExit(0 if os.path.realpath(sys.prefix) == os.path.realpath(sys.argv[1]) else 1)' \
+        "$venv_path"; then
+        cleanup_failed_environment
+        return 1
+    fi
+    if ! dexec "$venv_path/bin/python" -m pip check; then
+        cleanup_failed_environment
+        return 1
+    fi
+
     # Create activation helper script for this environment
-    local activate_script="/home/gamma/activate_${env_name}.sh"
-    local temp_activate
-    temp_activate=$(mktemp "${TMPDIR:-/tmp}/cosiflow-activate-${env_name}.XXXXXX") || error "Cannot create activation helper."
-    {
+    if ! temp_activate=$(mktemp "${TMPDIR:-/tmp}/cosiflow-activate-${env_name}.XXXXXX"); then
+        cleanup_failed_environment
+        return 1
+    fi
+    if ! {
         printf '%s\n' '#!/bin/bash'
         printf '# Helper script to activate the %s virtual environment\n' "$env_name"
         printf 'source %q\n' "$venv_path/bin/activate"
         printf '%s\n' 'echo "   - Activated Python environment: $VIRTUAL_ENV"'
         printf '%s\n' 'echo "       - Python path: $(command -v python)"'
-    } > "$temp_activate"
-    if ! docker cp "$temp_activate" "$CONTAINER_NAME:$activate_script"; then
+    } > "$temp_activate"; then
+        cleanup_failed_environment
+        return 1
+    fi
+    if ! dexec_stdin tee "$activate_script" < "$temp_activate" >/dev/null; then
         rm -f -- "$temp_activate"
-        error "Failed to copy activation helper for '$env_name'."
+        cleanup_failed_environment
+        return 1
     fi
     rm -f -- "$temp_activate"
-    dexec chmod +x -- "$activate_script" || error "Failed to make activation helper executable."
+    temp_activate=""
+    if ! dexec chmod +x -- "$activate_script"; then
+        cleanup_failed_environment
+        return 1
+    fi
+    if ! dexec bash -n "$activate_script"; then
+        cleanup_failed_environment
+        return 1
+    fi
+    if ! dexec bash --noprofile --norc -c \
+        'source "$1" >/dev/null && [ "$VIRTUAL_ENV" = "$2" ] && [ "$(command -v python)" = "$2/bin/python" ]' \
+        bash "$activate_script" "$venv_path"; then
+        cleanup_failed_environment
+        return 1
+    fi
     
     log "   - Environment '$env_name' created successfully."
     log "       - Activate with: source $activate_script"
@@ -554,7 +714,9 @@ create_configured_environment() {
     local req_path
     local req_no_deps
     local requirements_file
+    local requirements_relative
     local requirements_nodeps_file=""
+    local requirements_nodeps_relative
     local venv_path
     local description
     local python_version
@@ -562,9 +724,13 @@ create_configured_environment() {
     validate_identifier "$env_name" "Environment name"
     req_path=$(config_environment_value "$env_name" requirements) || return 1
     requirements_file=$(resolve_module_path "$req_path" file "Requirements file for $env_name") || return 1
+    requirements_relative=$(module_relative_path "$requirements_file") || return 1
+    requirements_file="$CONTAINER_MODULES_ROOT/$MODULE_NAME/$requirements_relative"
     req_no_deps=$(config_environment_value "$env_name" requirements_no_deps) || return 1
     if [ -n "$req_no_deps" ]; then
         requirements_nodeps_file=$(resolve_module_path "$req_no_deps" file "No-deps requirements file for $env_name") || return 1
+        requirements_nodeps_relative=$(module_relative_path "$requirements_nodeps_file") || return 1
+        requirements_nodeps_file="$CONTAINER_MODULES_ROOT/$MODULE_NAME/$requirements_nodeps_relative"
     fi
     venv_path=$(config_environment_value "$env_name" venv_path) || return 1
     description=$(config_environment_value "$env_name" description) || return 1
@@ -584,12 +750,40 @@ create_configured_environment() {
 require_development_mounts() {
     dexec test -w /home/gamma/airflow/dags || \
         error "DAG directory is read-only. Restart with docker-compose.development.yaml."
-    dexec test -w /home/gamma/airflow/pipeline || \
-        error "Pipeline directory is read-only. Restart with docker-compose.development.yaml."
+    if [ -n "$PATH_PIPELINE" ]; then
+        dexec test -w /home/gamma/airflow/pipeline || \
+            error "Pipeline directory is read-only. Restart with docker-compose.development.yaml."
+    fi
     if [ "$CREATE_ENV" = true ]; then
         dexec test -w "$CONTAINER_VENV_ROOT" || \
             error "Environment directory is read-only. Restart with docker-compose.development.yaml."
     fi
+}
+
+verify_container_link() {
+    local link_path="$1"
+    local expected_target="$2"
+    local resolved
+
+    dexec test -L "$link_path" || return 1
+    dexec test -e "$link_path" || return 1
+    resolved=$(dexec realpath -- "$link_path") || return 1
+    [ "$resolved" = "$expected_target" ]
+}
+
+remove_container_path() {
+    local path="$1"
+
+    dexec rm -f -- "$path" || return 1
+    dexec test ! -e "$path" || return 1
+    dexec test ! -L "$path" || return 1
+}
+
+verify_container_path_absent() {
+    local path="$1"
+
+    dexec test ! -e "$path" || return 1
+    dexec test ! -L "$path" || return 1
 }
 
 log "\n1.     Action: $ACTION module '$MODULE_NAME'"
@@ -641,13 +835,15 @@ if [ "$ACTION" == "remove" ]; then
     
     # Remove DAGs link
     log "   - Removing DAGs link..."
-    dexec rm -f -- "/home/gamma/airflow/dags/${MODULE_NAME}${EXTENSION_MODULE}" 2>/dev/null
+    remove_container_path "/home/gamma/airflow/dags/${MODULE_NAME}${EXTENSION_MODULE}" || \
+        error "Failed to remove DAGs link."
     log "   - DAGs link removed."
     
     # Remove Pipeline scripts link (only if pipeline path was configured)
     if [ -n "$PATH_PIPELINE" ]; then
         log "   - Removing Pipeline scripts link..."
-        dexec rm -f -- "/home/gamma/airflow/pipeline/${MODULE_NAME}${EXTENSION_MODULE}" 2>/dev/null
+        remove_container_path "/home/gamma/airflow/pipeline/${MODULE_NAME}${EXTENSION_MODULE}" || \
+            error "Failed to remove Pipeline scripts link."
         log "   - Pipeline scripts link removed."
     fi
     
@@ -660,8 +856,9 @@ if [ "$ACTION" == "remove" ]; then
                     venv_path=$(config_environment_value "$env_name" "venv_path") || error "Cannot read environment path."
                     activate_script="/home/gamma/activate_${env_name}.sh"
 
-                    safe_remove_venv "$venv_path" 2>/dev/null || error "Refusing unsafe environment removal."
-                    dexec rm -f -- "$activate_script" 2>/dev/null
+                    safe_remove_venv "$venv_path" || error "Failed to remove environment '$env_name'."
+                    verify_container_path_absent "$venv_path" || error "Environment '$env_name' still exists after removal."
+                    remove_container_path "$activate_script" || error "Failed to remove activation helper for '$env_name'."
                     log "   - Removed environment '$env_name'"
                 done
             else
@@ -669,8 +866,9 @@ if [ "$ACTION" == "remove" ]; then
             fi
         else
             # Legacy: remove default cosipy environment
-            safe_remove_venv "$VENV_PATH" 2>/dev/null || error "Refusing unsafe legacy environment removal."
-            dexec rm -f -- /home/gamma/activate_cosipy.sh 2>/dev/null
+            safe_remove_venv "$VENV_PATH" || error "Failed to remove legacy environment."
+            verify_container_path_absent "$VENV_PATH" || error "Legacy environment still exists after removal."
+            remove_container_path /home/gamma/activate_cosipy.sh || error "Failed to remove legacy activation helper."
             log "   - Removed default Python environment."
         fi
     else
@@ -680,11 +878,12 @@ if [ "$ACTION" == "remove" ]; then
     # Remove Docker image (if configured)
     if [ "$remove_container" = true ]; then
         log "   - Removing Docker image..."
-        docker rmi -f "${MODULE_NAME}:latest" 2>/dev/null
-        if [ $? -eq 0 ]; then
+        docker info >/dev/null 2>&1 || error "Docker daemon is unavailable; image removal was not verified."
+        if docker image inspect "${MODULE_NAME}:latest" >/dev/null 2>&1; then
+            docker rmi -f "${MODULE_NAME}:latest" >/dev/null || error "Failed to remove image ${MODULE_NAME}:latest."
             log "   - Removed image ${MODULE_NAME}:latest."
         else
-            warning "   - Image ${MODULE_NAME}:latest not found or already removed."
+            log "   - Image ${MODULE_NAME}:latest is already absent."
         fi
     else
         log "   - Skipping Docker image (not configured)."
@@ -718,28 +917,32 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
 
     # 1. Link DAGs (Airflow needs the DAG definition)
     log "   - Linking DAGs..."
-    dexec ln -sfn -- \
+    if ! dexec ln -sfn -- \
         "$CONTAINER_MODULES_ROOT/$MODULE_NAME/$PATH_DAGS" \
-        "/home/gamma/airflow/dags/${MODULE_NAME}${EXTENSION_MODULE}"
-    
-    if [ $? -eq 0 ]; then
-        log "   - DAGs linked."
-    else
+        "/home/gamma/airflow/dags/${MODULE_NAME}${EXTENSION_MODULE}"; then
         error "Failed to link DAGs."
     fi
+    if ! verify_container_link \
+        "/home/gamma/airflow/dags/${MODULE_NAME}${EXTENSION_MODULE}" \
+        "$CONTAINER_MODULES_ROOT/$MODULE_NAME/$PATH_DAGS"; then
+        error "Failed to link DAGs."
+    fi
+    log "   - DAGs linked."
 
     # 2. Link Pipeline scripts (only if pipeline path is configured)
     if [ -n "$PATH_PIPELINE" ]; then
         log "   - Linking Pipeline scripts..."
-        dexec ln -sfn -- \
+        if ! dexec ln -sfn -- \
             "$CONTAINER_MODULES_ROOT/$MODULE_NAME/$PATH_PIPELINE" \
-            "/home/gamma/airflow/pipeline/${MODULE_NAME}${EXTENSION_MODULE}"
-        
-        if [ $? -eq 0 ]; then
-            log "   - Pipeline scripts linked."
-        else
+            "/home/gamma/airflow/pipeline/${MODULE_NAME}${EXTENSION_MODULE}"; then
             error "Failed to link Pipeline scripts."
         fi
+        if ! verify_container_link \
+            "/home/gamma/airflow/pipeline/${MODULE_NAME}${EXTENSION_MODULE}" \
+            "$CONTAINER_MODULES_ROOT/$MODULE_NAME/$PATH_PIPELINE"; then
+            error "Failed to link Pipeline scripts."
+        fi
+        log "   - Pipeline scripts linked."
     else
         log "   - Skipping Pipeline scripts (not configured)."
     fi
@@ -752,95 +955,18 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
             log "3.  Creating Python Virtual Environment(s)..."
         fi
         
-        # Check if YAML config exists and -E flag was used (multi-env mode)
-        if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ] && [ -n "$ENV_SELECTION" ]; then
-            log "   - Using multi-environment mode with $(basename "$YAML_CONFIG")"
-
-            # Determine which environments to create
-            envs_to_create=()
-
-            if [ "$ENV_SELECTION" = "all" ]; then
-                while IFS= read -r env_name; do
-                    [ -n "$env_name" ] && envs_to_create+=("$env_name")
-                done < <(list_yaml_envs)
-            else
-                IFS=',' read -ra envs_to_create <<< "$ENV_SELECTION"
-            fi
-
-            if [ ${#envs_to_create[@]} -eq 0 ]; then
-                warning "   - No environments found or specified."
-                log "       Skipping environment creation."
-            else
-                success_count=0
-                fail_count=0
-
-                for env_name in "${envs_to_create[@]}"; do
-                    env_name=$(printf '%s' "$env_name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-                    validate_identifier "$env_name" "Selected environment name"
-                    if create_configured_environment "$env_name"; then
-                        ((success_count++))
-                    else
-                        ((fail_count++))
-                    fi
-                    echo ""
-                done
-                
-                log "   - Summary: $success_count environment(s) created successfully"
-                if [ $fail_count -gt 0 ]; then
-                    warning "   - $fail_count environment(s) failed"
+        if [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ]; then
+            log "   - Using $(basename "$YAML_CONFIG")"
+            log "   - Environment plan: ${ENVS_TO_CREATE[*]}"
+            success_count=0
+            for env_name in "${ENVS_TO_CREATE[@]}"; do
+                if ! create_configured_environment "$env_name"; then
+                    error "Failed to create a usable environment for '$env_name'. Partial state was removed."
                 fi
-            fi
-            
-        elif [ -n "$YAML_CONFIG" ] && [ -f "$YAML_CONFIG" ] && [ -z "$ENV_SELECTION" ]; then
-            # YAML exists but no -E flag: use enabled environments
-            log "   - Using $(basename "$YAML_CONFIG") (installing enabled environments)"
-
-            all_envs=()
-            while IFS= read -r env_name; do
-                [ -n "$env_name" ] && all_envs+=("$env_name")
-            done < <(list_yaml_envs)
-
-            if [ ${#all_envs[@]} -eq 0 ]; then
-                warning "   - No environments found in YAML file: $YAML_CONFIG"
-            else
-                log "   - Found ${#all_envs[@]} environment(s): ${all_envs[*]}"
-            fi
-            
-            envs_to_create=()
-
-            for env_name in "${all_envs[@]}"; do
-                enabled=$(config_environment_value "$env_name" enabled) || error "Cannot read enabled flag for '$env_name'."
-                if [ "$enabled" = "true" ]; then
-                    envs_to_create+=("$env_name")
-                fi
+                success_count=$((success_count + 1))
+                echo ""
             done
-            
-            if [ ${#envs_to_create[@]} -eq 0 ]; then
-                if [ ${#all_envs[@]} -eq 0 ]; then
-                    warning "   - No environments found in YAML."
-                else
-                    warning "   - No enabled environments found in YAML (found ${#all_envs[@]} environment(s) but none are enabled)."
-                fi
-                log "       Use -E flag to specify environments or enable them in YAML."
-            else
-                success_count=0
-                fail_count=0
-
-                for env_name in "${envs_to_create[@]}"; do
-                    if create_configured_environment "$env_name"; then
-                        ((success_count++))
-                    else
-                        ((fail_count++))
-                    fi
-                    echo ""
-                done
-                
-                log "   - Summary: $success_count environment(s) created successfully"
-                if [ $fail_count -gt 0 ]; then
-                    warning "   - $fail_count environment(s) failed"
-                fi
-            fi
-            
+            log "   - Summary: $success_count environment(s) created and verified"
         else
             # Legacy mode: single environment with -r flag or default
             log "   - Using legacy single-environment mode"
@@ -848,11 +974,12 @@ if [ "$ACTION" == "install" ] || [ "$ACTION" == "update" ]; then
             if ! REQUIREMENTS_FILE=$(resolve_module_path "$PATH_REQUIREMENTS" file "Legacy requirements file"); then
                 exit 1
             fi
-            if create_single_env "cosipy" "$REQUIREMENTS_FILE" "$VENV_PATH"; then
-                echo ""
-            else
-                exit 1
+            REQUIREMENTS_RELATIVE=$(module_relative_path "$REQUIREMENTS_FILE") || exit 1
+            REQUIREMENTS_FILE="$CONTAINER_MODULES_ROOT/$MODULE_NAME/$REQUIREMENTS_RELATIVE"
+            if ! create_single_env "cosipy" "$REQUIREMENTS_FILE" "$VENV_PATH"; then
+                error "Failed to create a usable legacy environment. Partial state was removed."
             fi
+            echo ""
         fi
     fi
 

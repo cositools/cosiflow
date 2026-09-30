@@ -46,6 +46,26 @@ MailHog SMTP is also bound to `127.0.0.1:1025`. PostgreSQL and GCN MySQL have
 no published host port. Changing `HOST_IP` does not change the Compose bind
 address; the checked-in value is used to construct UI links inside the runtime.
 
+## Notification delivery
+
+Recipient preferences are stored in PostgreSQL and linked to Airflow users; no
+recipient list is versioned. The initialization service applies the COSIflow
+notification migration and gives active Admin users idempotent default
+subscriptions to task and DAG failures. Retry and success subscriptions remain
+explicit opt-ins in the administration view.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AIRFLOW_PUBLIC_BASE_URL` | `http://127.0.0.1:8080` | Public base used by Airflow when constructing task log links; set a reachable URL in shared deployments |
+| `COSIFLOW_ALERT_FALLBACK_RECIPIENTS` | empty | Comma-separated deployment-only fallback used only when subscription lookup fails |
+| `COSIFLOW_ALERT_LOG_TAIL_LINES` | `30` | Maximum lines retained in the email preview |
+| `COSIFLOW_ALERT_LOG_TAIL_BYTES` | `65536` | Maximum bytes read from the end of the current log |
+
+Fallback values must be simple valid email addresses, must not be committed to
+`.env.example`, and do not replace normal database routing. Invalid limits are
+rejected in favor of safe built-in bounds. Details are in
+[Notification subscriptions](../plugins/notification-subscriptions.md).
+
 ## Data paths
 
 | Variable | Container default | Purpose |

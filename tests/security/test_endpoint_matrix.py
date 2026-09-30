@@ -77,6 +77,9 @@ class EndpointPolicyTests(unittest.TestCase):
             "ResetCosidagView.delete_processed_paths",
             "ResetCosidagView.retry_failed_path",
             "RefreshDagsView.refresh_dags",
+            "NotificationSubscriptionsView.save",
+            "NotificationSubscriptionsView.toggle",
+            "NotificationSubscriptionsView.delete",
         }
         for endpoint in mutating_endpoints:
             with self.subTest(endpoint=endpoint):
@@ -107,6 +110,7 @@ class EndpointPolicyTests(unittest.TestCase):
             REPO_ROOT / "plugins/explore_notices/templates/explore_notices.html": 2,
             REPO_ROOT / "plugins/refresh_dags_list/templates/refresh_dags.html": 1,
             REPO_ROOT / "plugins/reset_cosidag_link/templates/reset_cosidag.html": 1,
+            REPO_ROOT / "plugins/notification_subscriptions/templates/notification_subscriptions.html": 3,
         }
         for path, minimum_form_tokens in expectations.items():
             with self.subTest(path=path):

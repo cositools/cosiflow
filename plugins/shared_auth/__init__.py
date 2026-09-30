@@ -22,6 +22,7 @@ SCIENTIFIC_DATA = "COSIflow Scientific Data"
 COSIDAG_STATE = "COSIflow COSIDAG State"
 DAG_CATALOG = "COSIflow DAG Catalog"
 MAIL_SANDBOX = "COSIflow Mail Sandbox"
+NOTIFICATION_SUBSCRIPTIONS = "COSIflow Notification Subscriptions"
 
 PERMISSION_MANIFEST = (
     (ACTION_READ, GCN_NOTICES),
@@ -32,6 +33,8 @@ PERMISSION_MANIFEST = (
     (ACTION_EDIT, COSIDAG_STATE),
     (ACTION_EDIT, DAG_CATALOG),
     (ACTION_READ, MAIL_SANDBOX),
+    (ACTION_READ, NOTIFICATION_SUBSCRIPTIONS),
+    (ACTION_EDIT, NOTIFICATION_SUBSCRIPTIONS),
 )
 
 SCIENTIST_PERMISSIONS = frozenset(
@@ -53,6 +56,7 @@ MENU_MANIFEST = {
             "Refresh DAGs List",
             "Develop Tools",
             "Mailhog",
+            "Notification Subscriptions",
         }
     ),
 }
@@ -78,6 +82,22 @@ ENDPOINT_POLICIES = {
     ("RefreshDagsView.refresh_dags", "POST"): (ACTION_EDIT, DAG_CATALOG),
     ("RefreshDagsView.confirm_refresh", "GET"): (ACTION_EDIT, DAG_CATALOG),
     ("MailhogView.redirect_to_mailhog", "GET"): (ACTION_READ, MAIL_SANDBOX),
+    ("NotificationSubscriptionsView.index", "GET"): (
+        ACTION_READ,
+        NOTIFICATION_SUBSCRIPTIONS,
+    ),
+    ("NotificationSubscriptionsView.save", "POST"): (
+        ACTION_EDIT,
+        NOTIFICATION_SUBSCRIPTIONS,
+    ),
+    ("NotificationSubscriptionsView.toggle", "POST"): (
+        ACTION_EDIT,
+        NOTIFICATION_SUBSCRIPTIONS,
+    ),
+    ("NotificationSubscriptionsView.delete", "POST"): (
+        ACTION_EDIT,
+        NOTIFICATION_SUBSCRIPTIONS,
+    ),
 }
 
 logger = logging.getLogger(__name__)
@@ -194,6 +214,7 @@ __all__ = [
     "GCN_OUTBOX",
     "MAIL_SANDBOX",
     "MENU_MANIFEST",
+    "NOTIFICATION_SUBSCRIPTIONS",
     "OPERATOR_PERMISSIONS",
     "PERMISSION_MANIFEST",
     "SCIENTIFIC_DATA",

@@ -64,6 +64,10 @@ branch after `v0.2.0`; these changes are not part of a release yet.
 
 ### Fixed
 
+- The module loader now freezes one validated configuration snapshot, resolves
+  multi-environment selection before mutation, verifies links, environments,
+  activation helpers, and removals, and fails closed with local cleanup when a
+  lifecycle step does not establish its postcondition.
 - Unchanged GCN worker heartbeats are now coalesced to a configurable interval,
   while status transitions remain immediate. Shared byte limits reject
   oversized inbound and outbound payloads before parsing or storage, and the

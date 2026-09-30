@@ -410,9 +410,23 @@ available when `COSIFLOW_HOME_URL` (or the configured `home_env_var`) is present
 It points to the detected folder in Data Explorer, uses `COSI_DATA_DIR` as the
 filesystem root, and safely URL-encodes folder names.
 
-## Failures and MailHog
+## Email notifications and MailHog
 
-COSIDAG tasks inherit the shared failure callback and Airflow SMTP settings.
-The local Compose stack routes generated email to MailHog. Open it from
-**Develop Tools → Mailhog**; the plugin provides a menu redirect and does not add
-per-task email links.
+COSIDAG owns one custom notification path for task failure, retry, and success,
+and for DAG failure and success. Native task email flags are disabled to avoid
+duplicate delivery. Recipients come from database-backed subscriptions linked
+to active Airflow users; success events are supported but have no default
+subscription. Scheduling, queued, and started events are not notification
+events.
+
+The callback uses the current task-instance log URL, attempt, and mapped-task
+index. Its local preview is confined to Airflow's log root, bounded by bytes and
+lines, and fully HTML-escaped. Failure to load configuration, query recipients,
+read a log, render content, or send SMTP is logged and never replaces the task's
+original failure.
+
+Operators manage routing from **Develop Tools → Notification Subscriptions**.
+The local Compose stack routes generated email to MailHog, available from
+**Develop Tools → Mailhog**. See
+[Notification subscriptions](../plugins/notification-subscriptions.md) for
+events, filters, defaults, and deployment fallback behavior.

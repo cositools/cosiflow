@@ -1,0 +1,110 @@
+{% extends "airflow/main.html" %}
+
+{% block title %}Notification Subscriptions - Airflow{% endblock %}
+
+{% block content %}
+{% include "cosiflow_ui/styles.html" %}
+<div class="cosiflow-page cosiflow-page--contained">
+  <div class="cosiflow-title-row">
+    <div>
+      <h2 class="cosiflow-page-title">Notification Subscriptions</h2>
+      <p class="cosiflow-muted">Select active Airflow users and the COSIflow events they should receive. Success notifications are opt-in.</p>
+    </div>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category if category != 'error' else 'danger' }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  {% if can_edit %}
+  <div class="panel panel-default">
+    <div class="panel-heading"><strong>Add or update a subscription</strong></div>
+    <div class="panel-body">
+      <form method="post" action="{{ url_for('NotificationSubscriptionsView.save') }}">
+        {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>{% endif %}
+        <div class="row">
+          <div class="form-group col-md-4">
+            <label for="user_id">Airflow user</label>
+            <select class="form-control" id="user_id" name="user_id" required>
+              <option value="" disabled selected>Select a user...</option>
+              {% for user in users %}
+              <option value="{{ user.id }}" {% if not user.selectable %}disabled{% endif %}>
+                {{ user.username }} — {{ user.email or 'no email' }}{% if not user.active %} (inactive){% endif %}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group col-md-4">
+            <label for="event_type">Event</label>
+            <select class="form-control" id="event_type" name="event_type" required>
+              {% for event in supported_events %}<option value="{{ event }}">{{ event }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="form-group col-md-4">
+            <label class="control-label">State</label>
+            <div class="checkbox"><label><input type="checkbox" name="enabled" checked> Enabled</label></div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="form-group col-md-4">
+            <label for="dag_pattern">DAG pattern</label>
+            <input class="form-control" id="dag_pattern" name="dag_pattern" value="*" maxlength="250" required>
+          </div>
+          <div class="form-group col-md-4">
+            <label for="task_pattern">Task pattern</label>
+            <input class="form-control" id="task_pattern" name="task_pattern" value="*" maxlength="250" required>
+          </div>
+          <div class="form-group col-md-4">
+            <label for="operator_pattern">Operator pattern</label>
+            <input class="form-control" id="operator_pattern" name="operator_pattern" value="*" maxlength="250" required>
+          </div>
+        </div>
+        <p class="help-block">Patterns use shell-style matching. Use <code>*</code> for every value.</p>
+        <button type="submit" class="btn btn-primary">Save subscription</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="panel panel-default">
+    <div class="panel-heading"><strong>Configured subscriptions</strong> <span class="badge">{{ subscriptions|length }}</span></div>
+    <div class="table-responsive">
+      <table class="table table-striped table-hover" style="margin-bottom:0;">
+        <thead>
+          <tr><th>User</th><th>Event</th><th>DAG</th><th>Task</th><th>Operator</th><th>State</th><th>Updated by</th>{% if can_edit %}<th>Actions</th>{% endif %}</tr>
+        </thead>
+        <tbody>
+          {% for item in subscriptions %}
+          <tr>
+            <td>{{ item.username }}<br><small class="cosiflow-muted">{{ item.email }}</small>{% if not item.active %}<br><span class="label label-warning">inactive user</span>{% endif %}</td>
+            <td><code>{{ item.event_type }}</code></td>
+            <td><code>{{ item.dag_pattern }}</code></td>
+            <td><code>{{ item.task_pattern }}</code></td>
+            <td><code>{{ item.operator_pattern }}</code></td>
+            <td>{% if item.enabled %}<span class="label label-success">enabled</span>{% else %}<span class="label label-default">disabled</span>{% endif %}</td>
+            <td>{{ item.updated_by }}</td>
+            {% if can_edit %}
+            <td style="white-space:nowrap;">
+              <form method="post" action="{{ url_for('NotificationSubscriptionsView.toggle', subscription_id=item.id) }}" style="display:inline;">
+                {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>{% endif %}
+                <input type="hidden" name="enabled" value="{{ 'false' if item.enabled else 'true' }}">
+                <button type="submit" class="btn btn-default btn-xs">{{ 'Disable' if item.enabled else 'Enable' }}</button>
+              </form>
+              <form method="post" action="{{ url_for('NotificationSubscriptionsView.delete', subscription_id=item.id) }}" style="display:inline;">
+                {% if csrf_token %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>{% endif %}
+                <button type="submit" class="btn btn-danger btn-xs" onclick="return confirm('Delete this notification subscription?');">Delete</button>
+              </form>
+            </td>
+            {% endif %}
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="text-center cosiflow-muted">No notification subscriptions are configured.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

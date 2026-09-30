@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 import types
@@ -248,6 +249,22 @@ class ConfigurationTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             with self.assertRaises(ConfigurationError):
                 load_settings()
+
+
+class PluginDiscoveryTests(unittest.TestCase):
+    def test_shared_package_is_importable_but_ignored_as_an_airflow_plugin(self):
+        ignore_file = PLUGINS_ROOT / ".airflowignore"
+        patterns = [
+            line.strip()
+            for line in ignore_file.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+
+        self.assertTrue(
+            any(re.search(pattern, "gcn_shared") for pattern in patterns),
+            "gcn_shared must not be scanned as a standalone Airflow plugin",
+        )
+        self.assertIn("gcn_shared", sys.modules)
 
 
 if __name__ == "__main__":

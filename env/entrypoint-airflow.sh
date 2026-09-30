@@ -21,6 +21,10 @@ configure_runtime() {
     )"
     export AIRFLOW__EMAIL__EMAIL_BACKEND=airflow.utils.email.send_email_smtp
 
+    if [ -n "${AIRFLOW_PUBLIC_BASE_URL:-}" ]; then
+        export AIRFLOW__WEBSERVER__BASE_URL="$AIRFLOW_PUBLIC_BASE_URL"
+    fi
+
     if [ -n "${ALERT_EMAIL_SENDER:-}" ]; then
         export AIRFLOW__SMTP__SMTP_MAIL_FROM="$ALERT_EMAIL_SENDER"
     fi
@@ -48,6 +52,9 @@ run_init() {
     python /home/gamma/airflow/modules/cosidag_state.py migrate \
         --sql /home/gamma/migrations/001_cosidag_state.sql
     log "COSIDAG transactional state schema and legacy migration completed."
+    python /home/gamma/airflow/modules/notification_subscriptions.py migrate \
+        --sql /home/gamma/migrations/002_notification_subscriptions.sql
+    log "Notification subscription schema migration completed."
     python /home/gamma/reencrypt_airflow_secrets.py
     airflow sync-perm
 
@@ -69,6 +76,8 @@ run_init() {
 
     python /home/gamma/configure_rbac.py
     log "COSIflow roles and permissions reconciled and verified."
+    python /home/gamma/airflow/modules/notification_subscriptions.py seed-admin
+    log "Default administrator failure subscriptions reconciled."
 }
 
 run_runtime() {

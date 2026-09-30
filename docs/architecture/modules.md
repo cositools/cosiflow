@@ -135,8 +135,10 @@ The hot-loader checks, in order:
 An explicit `-c` path overrides auto-detection, but it must resolve to a regular
 file inside the selected module. The loader uses PyYAML from the running
 Airflow environment, rejects duplicate keys and schema/type errors, and
-validates the complete configuration before creating links, environments, or
-images.
+loads one normalized snapshot before creating links, environments, or images.
+The source YAML is not reparsed during the operation, so one invocation cannot
+mix values from different versions of a concurrently edited file. Command-line
+overrides are applied once to that snapshot.
 
 Example:
 
@@ -183,6 +185,34 @@ default_environment: analysis
 `default_environment` is useful metadata for module documentation and code, but
 the current hot-loader does not select environments from it. Selection is based
 on `enabled` or `-E`.
+
+When environment creation is requested, the effective selection must contain
+at least one configured environment. A configuration in `environment` or
+`both` mode with no enabled environment exits non-zero before links are
+created. Use `-E name1,name2` for an explicit subset or `-E all` for every
+configured environment. Duplicate and unknown selections are rejected.
+
+### Lifecycle and success checks
+
+The loader reports a step as successful only after checking its result:
+
+- DAG and pipeline links must exist inside the container and resolve to the
+  expected module directories;
+- a managed environment must contain an executable interpreter, report the
+  configured environment as `sys.prefix`, and pass `python -m pip check`;
+- the activation helper is written as the `gamma` user, checked with
+  `bash -n`, and sourced in a clean Bash process to verify `VIRTUAL_ENV` and
+  the selected `python` path;
+- removal verifies that links, environments, and activation helpers are
+  absent before reporting success;
+- an already absent image is an idempotent success, while an unavailable
+  Docker daemon or a failed image removal is an error.
+
+Environment creation is fail-fast. If creation or validation fails, the
+partial environment and its activation helper are removed and the loader exits
+non-zero without printing the final `ready` message. Repeating install/update
+recreates the managed environments; repeating remove succeeds only after
+confirming that the managed artifacts are absent.
 
 ### Loader safety boundaries
 

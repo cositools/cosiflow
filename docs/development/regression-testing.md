@@ -52,7 +52,10 @@ report an explicit skip when that dependency is unavailable.
 | `tests/integration/test_review25_mysql.py` | Review 25 | Real MySQL binary storage, immutable conflict handling, concurrent deduplication, and idempotent inbox migration |
 | `tests/test_review26_gcn_storage_limits.py` | Review 26 | Heartbeat coalescing, SQL migration parsing/checksums, payload byte boundaries, query limits, and configuration contracts |
 | `tests/integration/test_review26_mysql.py` | Review 26 | Empty/current/legacy schema migration, checksum drift rejection, data preservation, replay, and concurrent initialization |
+| `tests/test_review27_failure_notifications.py` | Review 27 | No-throw callback behavior, current attempt/map log resolution, bounded non-UTF-8 tails, complete HTML escaping, URL validation, subscription filtering, opt-in success, and removal of tracked recipients |
+| `tests/integration/test_review27_postgres.py` | Review 27 | Real PostgreSQL migration/seed idempotency, active-user recipient lookup, success opt-in, and user-deletion cascade |
 | `tests/test_review13_module_loader_safety.py` | Review 13 | YAML schema validation, destructive-path confinement, overlapping-environment rejection, traversal and symlink rejection, shell-payload isolation, and mutation-free install/update/remove failures |
+| `tests/test_review29_module_loader_lifecycle.py` | Review 29 | Single-snapshot configuration, enabled and explicit multi-environment selection, fail-closed command handling, activation-shell validation, cleanup, and repeatable install/remove behavior |
 | `tests/integration/review16/test_scheduler_load.sh` | Review 16 | Real LocalExecutor scheduling with two slots, six rescheduling sensors, PostgreSQL task state, and independent ready work |
 | `tests/integration/review28/test_localexecutor_stop.sh` | Review 28 | Real PostgreSQL/LocalExecutor termination of one benchmark-owned run while a concurrent manual run remains active |
 | `tests/integration/test_review21_container_isolation.py` | Review 21 | Negative in-container access checks for repository roots, `.env`, X11, and read-only code mounts |
@@ -60,6 +63,26 @@ report an explicit skip when that dependency is unavailable.
 `tests/security/support.py` and `tests/security/auth_support.py` provide
 repository-path, script-loading, and Auth Manager test doubles; they do not
 contain test cases.
+
+## Review 27 notification tests
+
+The Review 27 contract suite runs with the ordinary test command and uses
+Airflow-compatible test doubles. Run it alone with:
+
+```bash
+python3 -m unittest tests.test_review27_failure_notifications -v
+```
+
+The PostgreSQL suite uses the disposable Review 8 Compose fixture and never
+connects to an existing Airflow database:
+
+```bash
+COSIFLOW_RUN_REVIEW27_POSTGRES_TESTS=1 \
+  python3 -m unittest tests.integration.test_review27_postgres -v
+```
+
+It applies and seeds the notification schema twice and removes the isolated
+container and volume after the run.
 
 ## Review 8 transactional-state tests
 
@@ -191,6 +214,25 @@ environment targets. The shell tests verify that invalid input produces no
 mutating Docker call, that removal rejects a missing module and preflights its
 configured paths, and that valid arguments, including supported paths with
 spaces, remain single argv values.
+
+## Review 29 module-loader lifecycle tests
+
+The Review 29 suite extends the Review 13 fake-Docker harness and requires
+PyYAML. It verifies the documented enabled-environment invocation, explicit
+selection order, one configuration snapshot per invocation, empty-selection
+failure before mutation, command-failure propagation, partial-state cleanup,
+activation in a clean Bash process, and repeated install/remove operations:
+
+```bash
+python3 -m unittest \
+  tests.test_review13_module_loader_safety \
+  tests.test_review29_module_loader_lifecycle \
+  -v
+```
+
+The tests use temporary module trees and never modify the running COSIflow
+container. Run them with the supported Airflow image when the host interpreter
+does not provide PyYAML.
 
 ## Review 16 scheduler-scalability tests
 

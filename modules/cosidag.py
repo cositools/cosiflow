@@ -50,7 +50,13 @@ from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 airflow_home = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
 sys.path.append(os.path.join(airflow_home, "callbacks"))
 sys.path.append(os.path.join(airflow_home, "modules"))
-from on_failure_callback import notify_email  # type: ignore
+from on_failure_callback import (  # type: ignore
+    notify_dag_failure,
+    notify_dag_success,
+    notify_email,
+    notify_retry,
+    notify_success,
+)
 
 from date_helper import (  # type: ignore
     _apply_date_queries,
@@ -96,8 +102,11 @@ from cosidag_state import (  # type: ignore
 
 _BASE_DEFAULT_ARGS = {
     "owner": "cosiflow",
-    "email_on_failure": True,
+    "email_on_failure": False,
+    "email_on_retry": False,
     "on_failure_callback": notify_email,  # from callbacks/on_failure_callback.py
+    "on_retry_callback": notify_retry,
+    "on_success_callback": notify_success,
 }
 
 LOGGER = logging.getLogger(__name__)
@@ -520,6 +529,8 @@ class COSIDAG(DAG):
 
         # ensure that DAG receives the final default_args
         kwargs["default_args"] = base
+        kwargs.setdefault("on_failure_callback", notify_dag_failure)
+        kwargs.setdefault("on_success_callback", notify_dag_success)
         policy = normalize_monitoring_policy(policy)
         select_policy = normalize_select_policy(select_policy)
         ready_marker = normalize_relative_runtime_path(ready_marker, "ready_marker")

@@ -270,12 +270,49 @@ def _print_scalar(value: Any) -> None:
     print(value)
 
 
+def _write_snapshot(config: dict[str, Any]) -> None:
+    """Write one NUL-delimited normalized configuration snapshot.
+
+    NUL delimiters preserve empty optional fields without requiring shell
+    evaluation.  All strings have already passed the schema's control-character
+    checks, and the shell loader treats every field as data.
+    """
+
+    fields: list[str] = [
+        "1",
+        config["install_mode"] or "",
+        config["paths"].get("dags", ""),
+        config["paths"].get("pipeline", ""),
+        config["paths"].get("images", ""),
+        config["default_environment"] or "",
+        str(len(config["environments"])),
+    ]
+    for name, environment in config["environments"].items():
+        fields.extend(
+            [
+                name,
+                environment["requirements"],
+                environment.get("requirements_no_deps", ""),
+                environment["venv_path"],
+                "true" if environment["enabled"] else "false",
+                environment.get("description", ""),
+                environment.get("python_version", ""),
+            ]
+        )
+
+    output = sys.stdout.buffer
+    for field in fields:
+        output.write(field.encode("utf-8"))
+        output.write(b"\0")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("validate")
+    subparsers.add_parser("snapshot")
 
     get_parser = subparsers.add_parser("get")
     get_parser.add_argument(
@@ -295,6 +332,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_config(args.config)
         if args.command == "validate":
+            return 0
+        if args.command == "snapshot":
+            _write_snapshot(config)
             return 0
         if args.command == "get":
             if args.field == "install_mode":

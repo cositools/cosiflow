@@ -198,12 +198,19 @@ class ModuleLoaderShellTests(unittest.TestCase):
                 printf '%s\\t' "$@" >> "$FAKE_DOCKER_LOG"
                 printf '\\n' >> "$FAKE_DOCKER_LOG"
                 if [ "$1" != "exec" ]; then
+                    if [ -n "$FAKE_FAIL_COMMAND" ] && [ "$1" = "$FAKE_FAIL_COMMAND" ]; then
+                        exit 42
+                    fi
                     exit 0
                 fi
                 shift
-                if [ "$1" = "-u" ]; then
-                    shift 2
-                fi
+                while [ "$1" = "-u" ] || [ "$1" = "-i" ]; do
+                    if [ "$1" = "-u" ]; then
+                        shift 2
+                    else
+                        shift
+                    fi
+                done
                 shift
                 command="$1"
                 shift
@@ -220,13 +227,33 @@ class ModuleLoaderShellTests(unittest.TestCase):
                     done
                     exec "$FAKE_TEST_PYTHON" "$FAKE_CONFIG_HELPER" "${translated[@]}"
                 fi
+                if [ -n "$FAKE_FAIL_COMMAND" ] && [ "$command" = "$FAKE_FAIL_COMMAND" ]; then
+                    exit 42
+                fi
+                if [ "$command" = "ln" ]; then
+                    target="${@: -2:1}"
+                    link="${@: -1}"
+                    printf '%s\\t%s\\n' "$link" "$target" >> "$FAKE_LINKS_LOG"
+                    exit 0
+                fi
                 if [ "$command" = "realpath" ]; then
                     candidate="${@: -1}"
                     if [ -n "$FAKE_REALPATH_RESULT" ]; then
                         printf '%s\\n' "$FAKE_REALPATH_RESULT"
+                    elif [ -f "$FAKE_LINKS_LOG" ]; then
+                        target="$(awk -F '\\t' -v link="$candidate" '$1 == link {value=$2} END {print value}' "$FAKE_LINKS_LOG")"
+                        if [ -n "$target" ]; then
+                            printf '%s\\n' "$target"
+                        else
+                            printf '%s\\n' "$candidate"
+                        fi
                     else
                         printf '%s\\n' "$candidate"
                     fi
+                    exit 0
+                fi
+                if [ "$command" = "tee" ]; then
+                    cat > "$FAKE_ACTIVATE_CAPTURE"
                     exit 0
                 fi
                 exit 0
@@ -250,6 +277,8 @@ class ModuleLoaderShellTests(unittest.TestCase):
                 "FAKE_WORKSPACE": str(self.modules_root),
                 "FAKE_TEST_PYTHON": sys.executable,
                 "FAKE_CONFIG_HELPER": str(self.env_dir / "module_config.py"),
+                "FAKE_LINKS_LOG": str(self.root / "links.log"),
+                "FAKE_ACTIVATE_CAPTURE": str(self.root / "activate.sh"),
             }
         )
         if extra_env:

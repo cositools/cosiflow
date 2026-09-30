@@ -12,6 +12,7 @@ the route check is authoritative.
 | [Data Explorer](data-explorer.md) | **HEASARC Explorer** | `/heasarcbrowser/` | `can_read / COSIflow Scientific Data` |
 | [Explore Notices](explore-notices.md) | **GCN Notices Explorer** | `/explore-notices/` | read or create capability for the requested action |
 | [MailHog link](mailhog.md) | **Develop Tools → Mailhog** | `/mailhog/` | `can_read / COSIflow Mail Sandbox` |
+| [Notification subscriptions](notification-subscriptions.md) | **Develop Tools → Notification Subscriptions** | `/notification-subscriptions/` | read or edit `COSIflow Notification Subscriptions` |
 | [Refresh DAGs](refresh-dags.md) | **Develop Tools → Refresh DAGs List** | `/refresh_dags/` | `can_edit / COSIflow DAG Catalog` |
 | [Reset COSIDAG](reset-cosidag.md) | **Develop Tools → Reset Cosidag** | `/reset_cosidag/` | read or edit `COSIflow COSIDAG State` |
 
@@ -26,6 +27,8 @@ the route check is authoritative.
 | Edit COSIDAG state | No | No | Yes | FAB Admin |
 | Refresh the DAG catalog | No | No | Yes | FAB Admin |
 | Open the MailHog link | No | No | Yes | FAB Admin |
+| Read notification subscriptions | No | No | Yes | FAB Admin |
+| Edit notification subscriptions | No | No | Yes | FAB Admin |
 
 During `airflow-init`,
 [`env/configure_rbac.py`](https://github.com/cositools/cosiflow/blob/dev-review/env/configure_rbac.py)

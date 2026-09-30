@@ -47,6 +47,7 @@ nav:
       - Data Explorer: plugins/data-explorer.md
       - Explore Notices: plugins/explore-notices.md
       - MailHog link: plugins/mailhog.md
+      - Notification subscriptions: plugins/notification-subscriptions.md
       - Refresh DAGs: plugins/refresh-dags.md
       - Reset COSIDAG: plugins/reset-cosidag.md
       - Shared UI: plugins/shared-ui.md
