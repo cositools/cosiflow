@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-cd /home/gamma
+COSI_RUNTIME_HOME="${COSI_RUNTIME_HOME:-/home/gamma}"
+cd "$COSI_RUNTIME_HOME"
 
 log() {
     printf '\033[32m%s\033[0m\n' "$1"
@@ -14,24 +15,21 @@ error() {
 
 configure_runtime() {
     local scope="$1"
-    python /home/gamma/validate_runtime_secrets.py --scope "$scope"
+    python "$COSI_RUNTIME_HOME/validate_runtime_secrets.py" --scope "$scope"
     export AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="$(
-        python /home/gamma/validate_runtime_secrets.py --scope "$scope" --sqlalchemy-dsn
+        python "$COSI_RUNTIME_HOME/validate_runtime_secrets.py" --scope "$scope" --sqlalchemy-dsn
     )"
     export AIRFLOW__EMAIL__EMAIL_BACKEND=airflow.utils.email.send_email_smtp
-
-    if [ -n "${AIRFLOW_PUBLIC_BASE_URL:-}" ]; then
-        export AIRFLOW__WEBSERVER__BASE_URL="$AIRFLOW_PUBLIC_BASE_URL"
-    fi
 
     if [ -n "${ALERT_EMAIL_SENDER:-}" ]; then
         export AIRFLOW__SMTP__SMTP_MAIL_FROM="$ALERT_EMAIL_SENDER"
     fi
 
     if [ "$scope" = "runtime" ]; then
+        export AIRFLOW__WEBSERVER__BASE_URL="${AIRFLOW_PUBLIC_BASE_URL:-http://${HOST_IP:-127.0.0.1}:${AIRFLOW_WEBUI_PORT}}"
         export MAILHOG_WEBUI_URL="http://${HOST_IP:-127.0.0.1}:${MAILHOG_WEBUI_PORT:-8025}"
-        export COSIFLOW_HOME_URL="http://${HOST_IP:-127.0.0.1}:${AIRFLOW_WEBUI_PORT:-8080}/heasarcbrowser"
+        export COSIFLOW_HOME_URL="${AIRFLOW__WEBSERVER__BASE_URL%/}/heasarcbrowser"
     fi
     mkdir -p "${COSI_DATA_DIR:?COSI_DATA_DIR is required}"/{obs,transient,tdrss,maps,source}
 }
@@ -49,13 +47,13 @@ run_init() {
     configure_runtime init
     log "Validated runtime secrets before database migration."
     airflow db migrate
-    python /home/gamma/airflow/modules/cosidag_state.py migrate \
-        --sql /home/gamma/migrations/001_cosidag_state.sql
+    python "$COSI_RUNTIME_HOME/airflow/modules/cosidag_state.py" migrate \
+        --sql "$COSI_RUNTIME_HOME/migrations/001_cosidag_state.sql"
     log "COSIDAG transactional state schema and legacy migration completed."
-    python /home/gamma/airflow/modules/notification_subscriptions.py migrate \
-        --sql /home/gamma/migrations/002_notification_subscriptions.sql
+    python "$COSI_RUNTIME_HOME/airflow/modules/notification_subscriptions.py" migrate \
+        --sql "$COSI_RUNTIME_HOME/migrations/002_notification_subscriptions.sql"
     log "Notification subscription schema migration completed."
-    python /home/gamma/reencrypt_airflow_secrets.py
+    python "$COSI_RUNTIME_HOME/reencrypt_airflow_secrets.py"
     airflow sync-perm
 
     if admin_exists_exactly; then
@@ -74,29 +72,35 @@ run_init() {
         log "Airflow administrator created."
     fi
 
-    python /home/gamma/configure_rbac.py
+    python "$COSI_RUNTIME_HOME/configure_rbac.py"
     log "COSIflow roles and permissions reconciled and verified."
-    python /home/gamma/airflow/modules/notification_subscriptions.py seed-admin
+    python "$COSI_RUNTIME_HOME/airflow/modules/notification_subscriptions.py" seed-admin
     log "Default administrator failure subscriptions reconciled."
 }
 
-run_runtime() {
+run_webserver() {
     configure_runtime runtime
-    log "Starting Airflow runtime after successful init."
-    airflow webserver --port 8080 &
-    webserver_pid=$!
-    trap 'kill -TERM "$webserver_pid" 2>/dev/null || true' EXIT INT TERM
-    airflow scheduler
+    log "Starting Airflow webserver after successful init."
+    exec airflow webserver --port 8080
+}
+
+run_scheduler() {
+    configure_runtime runtime
+    log "Starting Airflow scheduler after successful init."
+    exec airflow scheduler
 }
 
 case "${1:-}" in
     init)
         run_init
         ;;
-    runtime)
-        run_runtime
+    webserver)
+        run_webserver
+        ;;
+    scheduler)
+        run_scheduler
         ;;
     *)
-        error "Usage: entrypoint-airflow.sh init|runtime"
+        error "Usage: entrypoint-airflow.sh init|webserver|scheduler"
         ;;
 esac

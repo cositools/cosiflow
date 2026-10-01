@@ -122,6 +122,12 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pandas plotly scikit-learn tensorflow inotify_simple PyMySQL graphviz \
     "PyYAML>=6,<7"
 
+# Airflow 2.10.3 can raise a Pendulum/PyO3 PanicException while formatting a
+# stale scheduler heartbeat. Patch the warning at build time so the web UI
+# remains usable and gives operators a clear recovery action.
+COPY --chown=${UID}:${GID} patch_airflow_scheduler_warning.py /home/gamma/patch_airflow_scheduler_warning.py
+RUN python /home/gamma/patch_airflow_scheduler_warning.py
+
 # ------------------------------ Final Setup ------------------------------
 RUN mkdir -p ${HOME}/airflow
 ENV AIRFLOW_HOME=${HOME}/airflow

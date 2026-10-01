@@ -13,6 +13,7 @@ ENV_DIR = REPO_ROOT / "env"
 BASE_COMPOSE = ENV_DIR / "docker-compose.yaml"
 DEVELOPMENT_COMPOSE = ENV_DIR / "docker-compose.development.yaml"
 X11_COMPOSE = ENV_DIR / "docker-compose.x11.yaml"
+RUNTIME_SERVICES = ("airflow-webserver", "airflow-scheduler")
 
 REQUIRED_ENVIRONMENT = {
     "AIRFLOW_ADMIN_PASSWORD": "review21-admin-password",
@@ -59,13 +60,14 @@ class Review21ComposeIsolationTests(unittest.TestCase):
         cls.services = cls.base["services"]
 
     def test_airflow_environment_is_scoped_by_service(self):
-        runtime = self.services["airflow"]["environment"]
         initialization = self.services["airflow-init"]["environment"]
-
-        self.assertNotIn("AIRFLOW_ADMIN_PASSWORD", runtime)
-        self.assertNotIn("AIRFLOW_ADMIN_USERNAME", runtime)
-        self.assertNotIn("AIRFLOW_ADMIN_EMAIL", runtime)
-        self.assertIn("GCN_DB_PASSWORD", runtime)
+        for service_name in RUNTIME_SERVICES:
+            with self.subTest(service=service_name):
+                runtime = self.services[service_name]["environment"]
+                self.assertNotIn("AIRFLOW_ADMIN_PASSWORD", runtime)
+                self.assertNotIn("AIRFLOW_ADMIN_USERNAME", runtime)
+                self.assertNotIn("AIRFLOW_ADMIN_EMAIL", runtime)
+                self.assertIn("GCN_DB_PASSWORD", runtime)
 
         self.assertIn("AIRFLOW_ADMIN_PASSWORD", initialization)
         self.assertNotIn("GCN_DB_PASSWORD", initialization)
@@ -74,16 +76,16 @@ class Review21ComposeIsolationTests(unittest.TestCase):
     def test_base_stack_exposes_no_root_or_x11_mount(self):
         forbidden_targets = {"/shared_dir", "/tmp/.X11-unix"}
         forbidden_sources = {str(REPO_ROOT.resolve()), str(REPO_ROOT.parent.resolve())}
-        for service_name in ("airflow", "airflow-init"):
+        for service_name in (*RUNTIME_SERVICES, "airflow-init"):
             with self.subTest(service=service_name):
                 mounts = self.services[service_name].get("volumes", [])
                 self.assertTrue(forbidden_targets.isdisjoint(m["target"] for m in mounts))
                 self.assertTrue(forbidden_sources.isdisjoint(m["source"] for m in mounts))
 
-        self.assertNotIn("DISPLAY", self.services["airflow"]["environment"])
+        for service_name in RUNTIME_SERVICES:
+            self.assertNotIn("DISPLAY", self.services[service_name]["environment"])
 
     def test_runtime_code_and_configuration_mounts_are_read_only(self):
-        mounts = mounts_by_target(self.services["airflow"])
         read_only_targets = {
             "/home/gamma/envs",
             "/home/gamma/airflow/dags",
@@ -94,12 +96,14 @@ class Review21ComposeIsolationTests(unittest.TestCase):
             "/home/gamma/airflow/modules",
             "/home/gamma/airflow/airflow.cfg",
         }
-        for target in read_only_targets:
-            with self.subTest(target=target):
-                self.assertTrue(mounts[target]["read_only"])
+        for service_name in RUNTIME_SERVICES:
+            mounts = mounts_by_target(self.services[service_name])
+            for target in read_only_targets:
+                with self.subTest(service=service_name, target=target):
+                    self.assertTrue(mounts[target]["read_only"])
 
-        self.assertFalse(mounts["/home/gamma/workspace/data"].get("read_only", False))
-        self.assertFalse(mounts["/home/gamma/airflow/logs"].get("read_only", False))
+            self.assertFalse(mounts["/home/gamma/workspace/data"].get("read_only", False))
+            self.assertFalse(mounts["/home/gamma/airflow/logs"].get("read_only", False))
 
     def test_initialization_has_only_required_mounts_and_database_network(self):
         service = self.services["airflow-init"]
@@ -117,7 +121,7 @@ class Review21ComposeIsolationTests(unittest.TestCase):
 
     def test_development_override_grants_only_documented_write_paths(self):
         config = compose_config(DEVELOPMENT_COMPOSE)
-        mounts = mounts_by_target(config["services"]["airflow"])
+        mounts = mounts_by_target(config["services"]["airflow-scheduler"])
         for target in (
             "/home/gamma/envs",
             "/home/gamma/airflow/dags",
@@ -127,14 +131,20 @@ class Review21ComposeIsolationTests(unittest.TestCase):
                 self.assertFalse(mounts[target].get("read_only", False))
         self.assertTrue(mounts["/shared_dir/test"]["read_only"])
         self.assertNotIn("/shared_dir", mounts)
+        webserver_mounts = mounts_by_target(config["services"]["airflow-webserver"])
+        self.assertTrue(webserver_mounts["/home/gamma/airflow/dags"]["read_only"])
 
     def test_x11_override_is_explicit_and_read_only(self):
         config = compose_config(X11_COMPOSE)
-        airflow = config["services"]["airflow"]
-        self.assertEqual(airflow["environment"]["DISPLAY"], ":99")
-        x11_mount = mounts_by_target(airflow)["/tmp/.X11-unix"]
+        scheduler = config["services"]["airflow-scheduler"]
+        self.assertEqual(scheduler["environment"]["DISPLAY"], ":99")
+        x11_mount = mounts_by_target(scheduler)["/tmp/.X11-unix"]
         self.assertEqual(x11_mount["source"], "/tmp/.X11-unix")
         self.assertTrue(x11_mount["read_only"])
+        self.assertNotIn(
+            "/tmp/.X11-unix",
+            mounts_by_target(config["services"]["airflow-webserver"]),
+        )
 
 
 if __name__ == "__main__":

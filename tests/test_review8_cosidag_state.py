@@ -124,13 +124,13 @@ class TransactionalStateContractTests(unittest.TestCase):
 
     def test_init_applies_schema_before_runtime_starts(self):
         migrate_position = self.entrypoint_source.index("airflow db migrate")
-        state_position = self.entrypoint_source.index("cosidag_state.py migrate")
+        state_position = self.entrypoint_source.index('cosidag_state.py" migrate')
         rbac_position = self.entrypoint_source.index("configure_rbac.py")
         self.assertLess(migrate_position, state_position)
         self.assertLess(state_position, rbac_position)
         self.assertIn("COPY migrations /home/gamma/migrations/", self.dockerfile_source)
         self.assertIn(
-            "/home/gamma/migrations/001_cosidag_state.sql",
+            'migrations/001_cosidag_state.sql"',
             self.entrypoint_source,
         )
 

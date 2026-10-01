@@ -1,6 +1,6 @@
 airflow:
   compose_file: ../env/docker-compose.yaml
-  service: airflow
+  service: airflow-scheduler
   project_directory: ../env
   container_data_root: /home/gamma/workspace/data
   unpause_before_trigger: true
@@ -64,10 +64,10 @@ dags:
 resources:
   docker_stats: true
   containers:
-    - cosi_airflow
+    - cosi_airflow_scheduler
   gpu:
     enabled: false
-    container: cosi_airflow
+    container: cosi_airflow_scheduler
 
 finalization:
   pause_dags: true

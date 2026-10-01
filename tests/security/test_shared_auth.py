@@ -7,11 +7,20 @@ from .auth_support import AUTH_MANAGER_HOLDER, REQUEST, AbortRaised, SHARED_AUTH
 
 
 class FakeAuthManager:
-    def __init__(self, *, logged_in=True, user="user", allowed=False, failure=None):
+    def __init__(
+        self,
+        *,
+        logged_in=True,
+        user="user",
+        allowed=False,
+        failure=None,
+        login_url="/login",
+    ):
         self.logged_in = logged_in
         self.user = user
         self.allowed = allowed
         self.failure = failure
+        self.login_url = login_url
         self.authorization_calls = []
 
     def is_logged_in(self):
@@ -28,7 +37,7 @@ class FakeAuthManager:
         return str(self.user)
 
     def get_url_login(self, next):
-        return f"/login?next={next}"
+        return f"{self.login_url}?next={next}"
 
     def is_authorized_custom_view(self, *, method, resource_name, user):
         self.authorization_calls.append((method, resource_name, user))
@@ -67,6 +76,28 @@ class SharedAuthorizationTests(unittest.TestCase):
         self.assertEqual(view(), ("redirect", "/login?next=/protected"))
         self.assertEqual(side_effects, [])
         self.assertEqual(manager.authorization_calls, [])
+
+    def test_anonymous_redirect_uses_active_backend_and_preserves_base_path(self):
+        REQUEST.full_path = "/airflow/heasarcbrowser/folder/run-1?tab=plots"
+        manager = FakeAuthManager(
+            logged_in=False,
+            login_url="/airflow/oauth-authorized/provider",
+        )
+        self.set_manager(manager)
+        side_effects = []
+        view = self.protected_view(
+            (SHARED_AUTH.ACTION_READ, SHARED_AUTH.SCIENTIFIC_DATA), side_effects
+        )
+
+        self.assertEqual(
+            view(),
+            (
+                "redirect",
+                "/airflow/oauth-authorized/provider?next="
+                "/airflow/heasarcbrowser/folder/run-1?tab=plots",
+            ),
+        )
+        self.assertEqual(side_effects, [])
 
     def test_denied_user_receives_403_before_view_execution(self):
         manager = FakeAuthManager(allowed=False)

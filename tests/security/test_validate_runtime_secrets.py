@@ -27,6 +27,9 @@ def valid_environment() -> dict[str, str]:
         "POSTGRES_DB": "airflow/db",
         "POSTGRES_PASSWORD": "postgres-password-unique-0004",
         "GCN_DB_PASSWORD": "gcn-password-unique-0005",
+        "COSI_DATA_DIR": "/home/gamma/workspace/data",
+        "AIRFLOW_WEBUI_PORT": "8080",
+        "MAILHOG_WEBUI_PORT": "8025",
     }
 
 
@@ -144,6 +147,33 @@ class RuntimeSecretValidationTests(unittest.TestCase):
                 self.assertIn(
                     "POSTGRES_PORT must be an integer between 1 and 65535", errors
                 )
+
+    def test_runtime_ui_ports_must_be_in_range(self):
+        for name in ("AIRFLOW_WEBUI_PORT", "MAILHOG_WEBUI_PORT"):
+            for value in ("not-a-port", "0", "65536"):
+                with self.subTest(name=name, value=value):
+                    environment = valid_environment()
+                    environment[name] = value
+                    with patch.dict(os.environ, environment, clear=True):
+                        errors = VALIDATOR.validate_environment("runtime")
+                    self.assertIn(
+                        f"{name} must be an integer between 1 and 65535", errors
+                    )
+
+    def test_data_directory_must_be_absolute_and_not_root(self):
+        cases = (
+            ("", "COSI_DATA_DIR is required and must not be empty"),
+            ("relative/data", "COSI_DATA_DIR must be an absolute path"),
+            ("/", "COSI_DATA_DIR must not be the filesystem root"),
+            ("//", "COSI_DATA_DIR must not be the filesystem root"),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value):
+                environment = valid_environment()
+                environment["COSI_DATA_DIR"] = value
+                with patch.dict(os.environ, environment, clear=True):
+                    errors = VALIDATOR.validate_environment("runtime")
+                self.assertIn(expected, errors)
 
     def test_sqlalchemy_dsn_escapes_user_password_and_database(self):
         environment = valid_environment()

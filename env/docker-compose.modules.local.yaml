@@ -1,4 +1,4 @@
 services:
-  airflow:
+  airflow-scheduler:
     volumes:
       - ../../fast-transient-analysis-pipeline:/home/gamma/airflow/modules_pool/fast-transient-analysis-pipeline:ro

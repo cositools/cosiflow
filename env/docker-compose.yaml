@@ -33,7 +33,7 @@ x-airflow-runtime-environment: &airflow-runtime-environment
   HOST_IP: 127.0.0.1
   MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}
   AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}
-  AIRFLOW_PUBLIC_BASE_URL: ${AIRFLOW_PUBLIC_BASE_URL:-http://127.0.0.1:8080}
+  AIRFLOW_PUBLIC_BASE_URL: ${AIRFLOW_PUBLIC_BASE_URL:-}
   COSIFLOW_ALERT_FALLBACK_RECIPIENTS: ${COSIFLOW_ALERT_FALLBACK_RECIPIENTS:-}
   COSIFLOW_ALERT_LOG_TAIL_LINES: ${COSIFLOW_ALERT_LOG_TAIL_LINES:-30}
   COSIFLOW_ALERT_LOG_TAIL_BYTES: ${COSIFLOW_ALERT_LOG_TAIL_BYTES:-65536}
@@ -115,6 +115,35 @@ x-airflow-image: &airflow-image
       <<: *build-args
   user: gamma
 
+x-airflow-runtime: &airflow-runtime
+  <<: *airflow-image
+  environment:
+    <<: [*airflow-common-environment, *airflow-runtime-environment]
+  depends_on:
+    airflow-init:
+      condition: service_completed_successfully
+    gcn-mysql:
+      condition: service_healthy
+    mailhog:
+      condition: service_started
+  restart: "on-failure:5"
+  stop_grace_period: 30s
+  volumes:
+    - ../../fast-transient-analysis-pipeline:/home/gamma/airflow/modules_pool/fast-transient-analysis-pipeline:ro
+    - ../../envs:/home/gamma/envs:ro
+    - ../dags:/home/gamma/airflow/dags:ro
+    - ${COSIFLOW_MODULES_HOST_DIR:-../modules-pool}:/home/gamma/airflow/modules_pool:ro
+    - ../plugins:/home/gamma/airflow/plugins:ro
+    - ../pipeline:/home/gamma/airflow/pipeline:ro
+    - ../callbacks:/home/gamma/airflow/callbacks:ro
+    - ../modules:/home/gamma/airflow/modules:ro
+    - ./airflow.cfg:/home/gamma/airflow/airflow.cfg:ro
+    - ../data/heasarc:/home/gamma/workspace/data
+    - ../data/logs:/home/gamma/airflow/logs
+  networks:
+    - application
+    - database
+
 services:
   gcn-mysql:
     image: mysql:8.4
@@ -194,19 +223,10 @@ services:
     networks:
       - database
 
-  airflow:
-    <<: *airflow-image
-    container_name: cosi_airflow
-    environment:
-      <<: [*airflow-common-environment, *airflow-runtime-environment]
-    depends_on:
-      airflow-init:
-        condition: service_completed_successfully
-      gcn-mysql:
-        condition: service_healthy
-      mailhog:
-        condition: service_started
-    entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh", "runtime"]
+  airflow-webserver:
+    <<: *airflow-runtime
+    container_name: cosi_airflow_webserver
+    entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh", "webserver"]
     ports:
       - "127.0.0.1:${AIRFLOW_WEBUI_PORT:-8080}:8080"
     healthcheck:
@@ -215,22 +235,17 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
-    restart: "on-failure:5"
-    volumes:
-      - ../../fast-transient-analysis-pipeline:/home/gamma/airflow/modules_pool/fast-transient-analysis-pipeline:ro
-      - ../../envs:/home/gamma/envs:ro
-      - ../dags:/home/gamma/airflow/dags:ro
-      - ${COSIFLOW_MODULES_HOST_DIR:-../modules-pool}:/home/gamma/airflow/modules_pool:ro
-      - ../plugins:/home/gamma/airflow/plugins:ro
-      - ../pipeline:/home/gamma/airflow/pipeline:ro
-      - ../callbacks:/home/gamma/airflow/callbacks:ro
-      - ../modules:/home/gamma/airflow/modules:ro
-      - ./airflow.cfg:/home/gamma/airflow/airflow.cfg:ro
-      - ../data/heasarc:/home/gamma/workspace/data
-      - ../data/logs:/home/gamma/airflow/logs
-    networks:
-      - application
-      - database
+
+  airflow-scheduler:
+    <<: *airflow-runtime
+    container_name: cosi_airflow_scheduler
+    entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh", "scheduler"]
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$${HOSTNAME}\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   mailhog:
     image: mailhog/mailhog

@@ -14,7 +14,7 @@
 #   -c  path to config file (default: auto-detect in module)
 
 CONTAINER_USER="gamma"
-CONTAINER_NAME="cosi_airflow"
+CONTAINER_NAME="cosi_airflow_scheduler"
 EXTENSION_MODULE=".cfmodule"
 
 # Resolve paths independently of the caller's current directory.

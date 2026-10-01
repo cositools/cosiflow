@@ -31,9 +31,10 @@ its runtime secrets and never prints them. Airflow web, internal API, and
 Fernet keys must be distinct.
 
 Secret validation is service-scoped. `airflow-init` receives the administrator
-password but no GCN database credential. The Airflow runtime receives the GCN
-application credential but no administrator username, email, or password. Each
-database and the GCN client retain only their own credentials.
+password but no GCN database credential. `airflow-webserver` and
+`airflow-scheduler` receive the GCN application credential but no administrator
+username, email, or password. Each database and the GCN client retain only
+their own credentials.
 
 ## Local ports
 
@@ -45,6 +46,8 @@ database and the GCN client retain only their own credentials.
 MailHog SMTP is also bound to `127.0.0.1:1025`. PostgreSQL and GCN MySQL have
 no published host port. Changing `HOST_IP` does not change the Compose bind
 address; the checked-in value is used to construct UI links inside the runtime.
+Both UI port values must be integers from 1 through 65535 or Airflow startup
+fails before either runtime process is executed.
 
 ## Notification delivery
 
@@ -56,7 +59,7 @@ explicit opt-ins in the administration view.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `AIRFLOW_PUBLIC_BASE_URL` | `http://127.0.0.1:8080` | Public base used by Airflow when constructing task log links; set a reachable URL in shared deployments |
+| `AIRFLOW_PUBLIC_BASE_URL` | derived from `HOST_IP` and `AIRFLOW_WEBUI_PORT` | Optional public base used by Airflow when constructing links; set an explicit HTTPS/reverse-proxy URL in shared deployments |
 | `COSIFLOW_ALERT_FALLBACK_RECIPIENTS` | empty | Comma-separated deployment-only fallback used only when subscription lookup fails |
 | `COSIFLOW_ALERT_LOG_TAIL_LINES` | `30` | Maximum lines retained in the email preview |
 | `COSIFLOW_ALERT_LOG_TAIL_BYTES` | `65536` | Maximum bytes read from the end of the current log |
@@ -84,6 +87,11 @@ Compose bind-mounts host `data/heasarc` at the `COSI_DATA_DIR` default and host
 `COSI_LOG_DIR` is a separate environment contract and is not that Airflow log
 mount.
 
+`COSI_DATA_DIR` must be an absolute path and cannot be `/`. The entrypoint
+validates it before creating the `obs`, `transient`, `tdrss`, `maps`, and
+`source` subdirectories. Missing, relative, and filesystem-root values fail
+without starting Airflow.
+
 ## Container mount isolation
 
 The base Compose file exposes only narrow paths:
@@ -91,7 +99,8 @@ The base Compose file exposes only narrow paths:
 | Service | Read-only mounts | Read-write mounts |
 | --- | --- | --- |
 | `airflow-init` | plugins, modules, `airflow.cfg` | scientific data, Airflow logs |
-| `airflow` | managed Python environments, DAGs, dedicated module pool, plugins, pipeline, callbacks, modules, `airflow.cfg` | scientific data, Airflow logs |
+| `airflow-webserver` | managed Python environments, DAGs, dedicated module pool, plugins, pipeline, callbacks, modules, `airflow.cfg` | scientific data, Airflow logs |
+| `airflow-scheduler` | managed Python environments, DAGs, dedicated module pool, plugins, pipeline, callbacks, modules, `airflow.cfg` | scientific data, Airflow logs |
 | `postgres` | none | PostgreSQL data |
 | `gcn-mysql` | none | GCN MySQL data |
 | `gcn-client`, `mailhog` | none | none |
@@ -101,10 +110,11 @@ module source is `modules-pool/`; set `COSIFLOW_MODULES_HOST_DIR` to another
 dedicated directory if needed. That directory must contain only trusted module
 sources and must not contain credentials or unrelated projects.
 
-`docker-compose.development.yaml` explicitly makes DAG, pipeline, and managed
-environment paths writable and mounts `test/` read-only. The separate
-`docker-compose.x11.yaml` override adds `DISPLAY` and the read-only X11 socket.
-Neither capability is present in the base stack.
+`docker-compose.development.yaml` explicitly makes the scheduler's DAG,
+pipeline, and managed-environment paths writable and mounts `test/` read-only.
+The separate `docker-compose.x11.yaml` override adds `DISPLAY` and the read-only
+X11 socket only to the scheduler, where LocalExecutor tasks run. Neither
+capability is present in the base stack.
 
 ## GCN safety defaults
 

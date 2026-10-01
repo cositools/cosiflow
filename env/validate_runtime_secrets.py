@@ -11,6 +11,7 @@ import argparse
 import base64
 import hashlib
 import os
+from pathlib import Path
 from urllib.parse import quote
 
 
@@ -89,6 +90,25 @@ def validate_environment(scope: str = "all") -> list[str]:
             raise ValueError
     except ValueError:
         errors.append("POSTGRES_PORT must be an integer between 1 and 65535")
+
+    data_dir = os.getenv("COSI_DATA_DIR", "")
+    if not data_dir:
+        errors.append("COSI_DATA_DIR is required and must not be empty")
+    else:
+        data_path = Path(data_dir)
+        if not data_path.is_absolute():
+            errors.append("COSI_DATA_DIR must be an absolute path")
+        elif data_path.resolve(strict=False) == Path("/"):
+            errors.append("COSI_DATA_DIR must not be the filesystem root")
+
+    if scope in {"runtime", "all"}:
+        for name in ("AIRFLOW_WEBUI_PORT", "MAILHOG_WEBUI_PORT"):
+            try:
+                port = int(os.getenv(name, ""))
+                if not 1 <= port <= 65535:
+                    raise ValueError
+            except ValueError:
+                errors.append(f"{name} must be an integer between 1 and 65535")
 
     return errors
 

@@ -1,6 +1,6 @@
 # Explicit opt-in for module installation and containerized benchmarks.
 services:
-  airflow:
+  airflow-scheduler:
     volumes:
       - ../../envs:/home/gamma/envs
       - ../dags:/home/gamma/airflow/dags

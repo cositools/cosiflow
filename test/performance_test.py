@@ -240,7 +240,7 @@ class AirflowClient:
         logging_cfg = config.get("logging", {})
         self.test_dir = test_dir
         self.inside_container = inside_container
-        self.service = airflow_cfg.get("service", "airflow")
+        self.service = airflow_cfg.get("service", "airflow-scheduler")
         self.compose_file = resolve_from(test_dir, airflow_cfg.get("compose_file", "../env/docker-compose.yaml"))
         self.project_directory = resolve_from(
             test_dir,

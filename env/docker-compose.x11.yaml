@@ -1,6 +1,6 @@
 # Explicit opt-in for trusted tasks that require access to the host X server.
 services:
-  airflow:
+  airflow-scheduler:
     environment:
       DISPLAY: ${DISPLAY:?DISPLAY is required when the X11 override is enabled}
     volumes:

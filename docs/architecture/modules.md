@@ -395,10 +395,10 @@ defense in depth: direct requests remain protected by route permissions.
 Check the links and parser from inside Airflow:
 
 ```bash
-docker exec -u gamma cosi_airflow \
+docker exec -u gamma cosi_airflow_scheduler \
   ls -la /home/gamma/airflow/dags
 
-docker exec -u gamma cosi_airflow \
+docker exec -u gamma cosi_airflow_scheduler \
   airflow dags list
 ```
 

@@ -32,15 +32,17 @@ report an explicit skip when that dependency is unavailable.
 
 | Path | Owning Review | Protected behavior |
 | --- | --- | --- |
-| `tests/security/test_validate_runtime_secrets.py` | Review 5 | Required values, minimum lengths, revoked-value detection, Airflow key separation, Fernet format, PostgreSQL connection validation, DSN escaping, and prevention of secret disclosure in errors |
+| `tests/security/test_validate_runtime_secrets.py` | Reviews 5 and 22 | Required values, minimum lengths, revoked-value detection, Airflow key separation, Fernet format, PostgreSQL/UI-port/data-root validation, DSN escaping, and prevention of secret disclosure in errors |
 | `tests/security/test_bootstrap_secrets.py` | Review 5 | Secret generation and rotation, preservation of unmanaged configuration, replacement of revoked values, generated-key validity, and `.env` permissions |
 | `tests/security/test_compose_security.py` | Review 5 | Required Compose secrets, Docker-daemon isolation, loopback-only published ports, and internal database networking |
 | `tests/security/test_rotation_guards.py` | Review 5 | Backup confirmation, presence of old credentials, safe generated-password format, and refusal before Docker or database access when preconditions fail |
-| `tests/security/test_shared_auth.py` | Review 6 | Anonymous redirect, fail-closed authorization, absence of pre-authorization side effects, capability checks, and the Viewer/Scientist/Operator/Admin permission matrix |
+| `tests/security/test_shared_auth.py` | Reviews 6 and 22 | Auth Manager-generated anonymous redirects including alternate backends/base paths, fail-closed authorization, absence of pre-authorization side effects, capability checks, and the Viewer/Scientist/Operator/Admin permission matrix |
 | `tests/security/test_endpoint_matrix.py` | Review 6 | Complete route-to-permission coverage, POST-only mutations, least-privilege manifests, and CSRF tokens in mutating forms and requests |
 | `tests/security/test_configure_rbac.py` | Review 6 | Viewer isolation, Scientist/Operator/Admin provisioning, stale-permission removal, verification failures, and idempotent reconciliation |
 | `tests/security/test_review19_data_explorer.py` | Review 19 | Sanitized Data Explorer failures, server-side diagnostics, image isolation, DOM-safe hostile payload handling, same-origin route validation, raster MIME allowlisting, and base64 validation |
 | `tests/security/test_review21_container_isolation.py` | Review 21 | Service-scoped environments, narrow mounts, read-only code, dedicated module pool, and explicit development/X11 overrides |
+| `tests/test_review22_startup_contracts.py` | Review 22 | Split webserver/scheduler services, init gating, service-specific health/restart/stop contracts, direct exit and SIGTERM behavior, custom published ports, and derived/overridden public URLs |
+| `tests/test_review22_scheduler_warning.py` | Review 22 | Fail-closed Airflow template patch, stable scheduler-unavailable message, idempotency, and upstream-template drift detection |
 | `tests/test_review28_benchmark_safety.py` | Review 28 | Cleanup dual opt-in and path confinement, all-target preflight, success/timeout exit semantics, run ownership, and bounded stop verification |
 | `tests/test_issue18_contracts.py` | Review 18 | Removal of the unused paths module and the supported COSIDAG import contract |
 | `tests/test_review30_dead_code_cleanup.py` | Review 30 | Route inventory, single ownership of GCN identity inserts, the cross-repository `cfg` compatibility contract, removal of obsolete typed helpers/imports, and tombstones for legacy MailHog and path contracts |
@@ -64,6 +66,32 @@ report an explicit skip when that dependency is unavailable.
 `tests/security/support.py` and `tests/security/auth_support.py` provide
 repository-path, script-loading, and Auth Manager test doubles; they do not
 contain test cases.
+
+## Review 22 startup-contract tests
+
+The Review 22 suite resolves the base Compose model with default and custom
+ports, verifies the init gate and the independent webserver/scheduler health,
+restart, and stop contracts, and executes the entrypoint against disposable
+process fixtures. The SIGTERM test proves that the scheduler receives the
+container signal directly after `exec`:
+
+```bash
+python3 -m unittest tests.test_review22_startup_contracts -v
+```
+
+The related secret-validation and shared-auth suites cover invalid UI ports,
+unsafe data roots, derived and explicit public URLs, and alternate Auth Manager
+login endpoints.
+
+The scheduler-warning suite protects the Airflow 2.10.3 image patch that avoids
+a Pendulum/PyO3 panic when the stale heartbeat warning is rendered:
+
+```bash
+python3 -m unittest tests.test_review22_scheduler_warning -v
+```
+
+The patch must be idempotent and must fail the image build if the upstream
+template no longer matches the reviewed Airflow version.
 
 ## Review 27 notification tests
 
@@ -320,7 +348,7 @@ the local Airflow image and removes its temporary Compose project and database
 volume after the run:
 
 ```bash
-docker compose -f env/docker-compose.yaml build airflow
+docker compose -f env/docker-compose.yaml build airflow-scheduler
 tests/integration/review16/test_scheduler_load.sh
 ```
 

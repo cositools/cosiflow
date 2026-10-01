@@ -26,7 +26,7 @@ class Review21ContainerIsolationTest(unittest.TestCase):
             "--no-deps",
             "--entrypoint",
             "/bin/bash",
-            "airflow",
+            "airflow-scheduler",
             "-ec",
             """
 test ! -e /shared_dir

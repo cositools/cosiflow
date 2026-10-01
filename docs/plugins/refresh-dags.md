@@ -45,6 +45,7 @@ refresh_dags_list/
 - Only Operator and Admin receive the permission and menu entry.
 - Authorization runs before `subprocess.run`, DAG parsing and `sync_to_db`.
 - The form retains Airflow CSRF protection.
-- The `airflow dags list` command is executed in the context of the Airflow container
+- The `airflow dags list` command is executed in the webserver container that
+  handles the plugin request. The scheduler remains a separate service.
 - The DAG bag refresh may take a few seconds to complete
 - If there are any errors, they will be displayed as a warning message

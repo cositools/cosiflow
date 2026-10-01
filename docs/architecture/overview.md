@@ -8,13 +8,18 @@ module loader.
 ```mermaid
 flowchart LR
     module[Scientific module] --> loader[Module loader]
-    loader --> airflow[Airflow scheduler and webserver]
-    airflow --> postgres[(PostgreSQL metadata)]
-    airflow --> data[(COSI data directories)]
+    loader --> scheduler[Airflow scheduler]
+    loader --> webserver[Airflow webserver]
+    scheduler --> postgres[(PostgreSQL metadata)]
+    webserver --> postgres
+    scheduler --> data[(COSI data directories)]
+    webserver --> data
     kafka[GCN Kafka] --> client[GCN client]
     client --> mysql[(GCN MySQL)]
-    airflow --> mysql
-    airflow --> mailhog[MailHog]
+    scheduler --> mysql
+    webserver --> mysql
+    scheduler --> mailhog[MailHog]
+    webserver --> mailhog
 ```
 
 ## Services
@@ -22,15 +27,18 @@ flowchart LR
 | Service | Responsibility | Host exposure |
 | --- | --- | --- |
 | `airflow-init` | Database migration, secret re-encryption, administrator synchronization, and RBAC provisioning | none; exits after successful initialization |
-| `airflow` | Airflow webserver and scheduler | loopback UI port only |
+| `airflow-webserver` | Airflow operator UI; runs the webserver as PID 1 | loopback UI port only |
+| `airflow-scheduler` | DAG parsing, scheduling, and LocalExecutor task processes; runs the scheduler as PID 1 | none |
 | `postgres` | Airflow metadata database | none |
 | `gcn-client` | Supervised inbound and outbound GCN workers | none |
 | `gcn-mysql` | Durable GCN inbox, outbox, attempts, heartbeats, and lifecycle records | none |
 | `mailhog` | Local SMTP capture and development UI | loopback SMTP and UI ports |
 
-Airflow and the GCN client share the internal application and database networks
-as required. The database network is marked internal. The Airflow container is
-not granted access to a Docker socket.
+Both Airflow runtime services start only after `airflow-init` completes
+successfully. Each service has its own healthcheck, restart policy, and
+30-second graceful-stop window. Airflow and the GCN client share the internal
+application and database networks as required. The database network is marked
+internal. No Airflow container is granted access to a Docker socket.
 
 ## Code and data boundaries
 
