@@ -109,6 +109,9 @@ class RoleProvisioningTests(unittest.TestCase):
             set(SHARED_AUTH.OPERATOR_PERMISSIONS),
         )
         self.assertTrue(set(SHARED_AUTH.PERMISSION_MANIFEST) <= admin_pairs)
+        self.assertNotIn(
+            (SHARED_AUTH.ACTION_MENU_ACCESS, "HEASARC Explorer"), admin_pairs
+        )
         self.assertEqual(result["viewer_cosiflow_permissions"], [])
 
     def test_configure_is_idempotent(self):

@@ -122,6 +122,20 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pandas plotly scikit-learn tensorflow inotify_simple PyMySQL graphviz \
     "PyYAML>=6,<7"
 
+# Replace Airflow's built-in navbar brand with the COSIflow brand. The installer
+# locates site-packages dynamically so this also works on lib/lib64 platforms.
+ARG COSIFLOW_GIT_REF=unknown
+ARG COSIFLOW_GIT_SHA=unknown
+ARG COSIFLOW_GIT_TAG=
+ARG COSIFLOW_GITHUB_URL=https://github.com/cositools/cosiflow
+ENV COSIFLOW_GIT_REF=${COSIFLOW_GIT_REF} \
+    COSIFLOW_GIT_SHA=${COSIFLOW_GIT_SHA} \
+    COSIFLOW_GIT_TAG=${COSIFLOW_GIT_TAG} \
+    COSIFLOW_GITHUB_URL=${COSIFLOW_GITHUB_URL}
+COPY --chown=${UID}:${GID} branding /home/gamma/branding/
+COPY --chown=${UID}:${GID} install_airflow_branding.py /home/gamma/install_airflow_branding.py
+RUN python /home/gamma/install_airflow_branding.py
+
 # Airflow 2.10.3 can raise a Pendulum/PyO3 PanicException while formatting a
 # stale scheduler heartbeat. Patch the warning at build time so the web UI
 # remains usable and gives operators a clear recovery action.

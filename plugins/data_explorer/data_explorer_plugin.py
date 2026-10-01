@@ -35,7 +35,7 @@ heasarc_explorer_bp = add_shared_templates(
 
 
 TOP_LEVEL_MENU_ORDER = (
-    "HEASARC Explorer",
+    "Data Explorer",
     "GCN Notices Explorer",
     "Develop Tools",
 )
@@ -541,7 +541,7 @@ class heasarcExplorerPlugin(AirflowPlugin):
     appbuilder_views = [
         {
             # The name of the view, which will be displayed in the menu
-            "name": "HEASARC Explorer",
+            "name": "Data Explorer",
             # Which Category to put the link in, if you don't want one, set to an empty string
             "category": "",
             "view": HEASARCExplorerView()

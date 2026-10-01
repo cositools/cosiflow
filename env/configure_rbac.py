@@ -29,7 +29,9 @@ MANAGED_ROLES = {
     "Scientist": ("Viewer", SCIENTIST_PERMISSIONS),
     "Operator": ("Op", OPERATOR_PERMISSIONS),
 }
-MANAGED_MENUS = frozenset().union(*MENU_MANIFEST.values())
+ACTIVE_MANAGED_MENUS = frozenset().union(*MENU_MANIFEST.values())
+RETIRED_MANAGED_MENUS = frozenset({"HEASARC Explorer"})
+MANAGED_MENUS = ACTIVE_MANAGED_MENUS | RETIRED_MANAGED_MENUS
 
 
 def permission_pair(permission):
@@ -105,7 +107,7 @@ def verify(security_manager):
             )
         missing_admin_menus = {
             (ACTION_MENU_ACCESS, menu_name)
-            for menu_name in MANAGED_MENUS
+            for menu_name in ACTIVE_MANAGED_MENUS
         } - admin_pairs
         if missing_admin_menus:
             errors.append(
@@ -163,9 +165,11 @@ def configure(security_manager, verify_only=False):
         if admin is None:
             raise RuntimeError("Required Airflow Admin role is missing")
         for pair in set(PERMISSION_MANIFEST) | {
-            (ACTION_MENU_ACCESS, menu_name) for menu_name in MANAGED_MENUS
+            (ACTION_MENU_ACCESS, menu_name) for menu_name in ACTIVE_MANAGED_MENUS
         }:
             add_pair(security_manager, admin, pair)
+        for menu_name in RETIRED_MANAGED_MENUS:
+            remove_pair(security_manager, admin, (ACTION_MENU_ACCESS, menu_name))
         for role_name, (base_name, permissions) in MANAGED_ROLES.items():
             reconcile_role(security_manager, role_name, base_name, permissions)
     verify(security_manager)

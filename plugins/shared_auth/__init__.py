@@ -47,11 +47,11 @@ SCIENTIST_PERMISSIONS = frozenset(
 OPERATOR_PERMISSIONS = frozenset(PERMISSION_MANIFEST)
 
 MENU_MANIFEST = {
-    "Scientist": frozenset({"GCN Notices Explorer", "HEASARC Explorer"}),
+    "Scientist": frozenset({"GCN Notices Explorer", "Data Explorer"}),
     "Operator": frozenset(
         {
             "GCN Notices Explorer",
-            "HEASARC Explorer",
+            "Data Explorer",
             "Reset Cosidag",
             "Refresh DAGs List",
             "Develop Tools",

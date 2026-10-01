@@ -113,6 +113,10 @@ x-airflow-image: &airflow-image
     dockerfile: Dockerfile.airflow
     args:
       <<: *build-args
+      COSIFLOW_GIT_REF: ${COSIFLOW_GIT_REF:-unknown}
+      COSIFLOW_GIT_SHA: ${COSIFLOW_GIT_SHA:-unknown}
+      COSIFLOW_GIT_TAG: ${COSIFLOW_GIT_TAG:-}
+      COSIFLOW_GITHUB_URL: ${COSIFLOW_GITHUB_URL:-https://github.com/cositools/cosiflow}
   user: gamma
 
 x-airflow-runtime: &airflow-runtime
