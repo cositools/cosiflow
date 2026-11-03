@@ -37,6 +37,11 @@ x-airflow-runtime-environment: &airflow-runtime-environment
   COSIFLOW_ALERT_FALLBACK_RECIPIENTS: ${COSIFLOW_ALERT_FALLBACK_RECIPIENTS:-}
   COSIFLOW_ALERT_LOG_TAIL_LINES: ${COSIFLOW_ALERT_LOG_TAIL_LINES:-30}
   COSIFLOW_ALERT_LOG_TAIL_BYTES: ${COSIFLOW_ALERT_LOG_TAIL_BYTES:-65536}
+  COSI_BEARS_ENABLED: ${COSI_BEARS_ENABLED:-false}
+  COSI_BEARS_HOST: ${COSI_BEARS_HOST:-}
+  COSI_BEARS_PORT: ${COSI_BEARS_PORT:-}
+  COSI_BEARS_CLIENT_ID: ${COSI_BEARS_CLIENT_ID:-}
+  COSI_BEARS_FACILITY: ${COSI_BEARS_FACILITY:-}
   AIRFLOW__SMTP__SMTP_HOST: mailhog
   AIRFLOW__SMTP__SMTP_PORT: "1025"
   AIRFLOW__SMTP__SMTP_MAIL_FROM: donotreply@cosiflow.alert.errors.it
@@ -142,6 +147,8 @@ x-airflow-runtime: &airflow-runtime
     - ../callbacks:/home/gamma/airflow/callbacks:ro
     - ../modules:/home/gamma/airflow/modules:ro
     - ./airflow.cfg:/home/gamma/airflow/airflow.cfg:ro
+    # Optional SSL BEARS client checkout (contains bears.py); placeholder by default.
+    - ${COSIFLOW_BEARS_CLIENT_HOST_DIR:-./bears-client}:/home/gamma/airflow/bears-client:ro
     - ../data/heasarc:/home/gamma/workspace/data
     - ../data/logs:/home/gamma/airflow/logs
   networks:

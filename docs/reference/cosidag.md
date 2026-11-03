@@ -430,3 +430,18 @@ The local Compose stack routes generated email to MailHog, available from
 **Develop Tools → Mailhog**. See
 [Notification subscriptions](../plugins/notification-subscriptions.md) for
 events, filters, defaults, and deployment fallback behavior.
+
+## BEARS task messages
+
+Beside email, every COSIDAG task sends a generic BEARS failure alert after its
+final attempt, for example
+`[ERROR]:[COSIFLOW]:TASK_FAILED: dag=...; task=...; run=...; try=...; reason=...; log=...`.
+
+Pipelines own their success or summary messages. Call `send_bears_message`
+from a final task, using the pipeline's own source and event names:
+
+```python
+from bears_notifications import send_bears_message  # type: ignore
+
+send_bears_message("INFO", "BACKEND_COMPLETE", f"input={l0}; l2_files={n}", source="BACKEND")
+```
