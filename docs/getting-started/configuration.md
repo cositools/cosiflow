@@ -69,6 +69,25 @@ Fallback values must be simple valid email addresses, must not be committed to
 rejected in favor of safe built-in bounds. Details are in
 [Notification subscriptions](../plugins/notification-subscriptions.md).
 
+### BEARS task messages
+
+COSIDAG sends a `TASK_FAILED` message through the BEARS server whenever a task fails (after its final attempt), naming the failed step. Pipelines can send their own messages, such as a completion summary, with `send_bears_message` from `callbacks/bears_notifications.py`. BEARS routes and delivers the alert (email, SMS).
+
+Messages use the form
+`[LEVEL]:[SOURCE]:EVENT: ......` 
+
+The SSL client is not bundled; point `COSIFLOW_BEARS_CLIENT_HOST_DIR` at a checkout that contains
+`bears.py`. Without it, or with `COSI_BEARS_ENABLED=false`, the callbacks do nothing.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `COSI_BEARS_ENABLED` | `false` | Set `true` to send BEARS messages |
+| `COSI_BEARS_HOST` | empty | BEARS server host |
+| `COSI_BEARS_PORT` | empty | BEARS server port |
+| `COSI_BEARS_CLIENT_ID` | empty | BEARS client ID |
+| `COSI_BEARS_FACILITY` | empty | BEARS facility |
+| `COSIFLOW_BEARS_CLIENT_HOST_DIR` | `./bears-client` (placeholder) | Host directory containing SSL's `bears.py` |
+
 ## Data paths
 
 | Variable | Container default | Purpose |
@@ -99,8 +118,8 @@ The base Compose file exposes only narrow paths:
 | Service | Read-only mounts | Read-write mounts |
 | --- | --- | --- |
 | `airflow-init` | plugins, modules, `airflow.cfg` | scientific data, Airflow logs |
-| `airflow-webserver` | managed Python environments, DAGs, dedicated module pool, plugins, pipeline, callbacks, modules, `airflow.cfg` | scientific data, Airflow logs |
-| `airflow-scheduler` | managed Python environments, DAGs, dedicated module pool, plugins, pipeline, callbacks, modules, `airflow.cfg` | scientific data, Airflow logs |
+| `airflow-webserver` | managed Python environments, DAGs, dedicated module pool, plugins, pipeline, callbacks, modules, `airflow.cfg`, BEARS client | scientific data, Airflow logs |
+| `airflow-scheduler` | managed Python environments, DAGs, dedicated module pool, plugins, pipeline, callbacks, modules, `airflow.cfg`, BEARS client | scientific data, Airflow logs |
 | `postgres` | none | PostgreSQL data |
 | `gcn-mysql` | none | GCN MySQL data |
 | `gcn-client`, `mailhog` | none | none |

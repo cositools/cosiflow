@@ -156,7 +156,7 @@ class Review27SubscriptionTests(unittest.TestCase):
         source = (REPO_ROOT / "modules/cosidag.py").read_text()
         self.assertIn('"email_on_failure": False', source)
         self.assertIn('"email_on_retry": False', source)
-        self.assertIn('"on_failure_callback": notify_email', source)
+        self.assertIn('"on_failure_callback": [notify_email, bears_task_failure]', source)
         self.assertIn('"on_retry_callback": notify_retry', source)
         self.assertIn('"on_success_callback": notify_success', source)
         self.assertIn('kwargs.setdefault("on_failure_callback", notify_dag_failure)', source)

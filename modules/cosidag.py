@@ -57,6 +57,8 @@ from on_failure_callback import (  # type: ignore
     notify_success,
 )
 
+from bears_notifications import bears_task_failure  # type: ignore
+
 from date_helper import (  # type: ignore
     _apply_date_queries,
     _looks_like_date_folder,
@@ -103,7 +105,7 @@ _BASE_DEFAULT_ARGS = {
     "owner": "cosiflow",
     "email_on_failure": False,
     "email_on_retry": False,
-    "on_failure_callback": notify_email,  # from callbacks/on_failure_callback.py
+    "on_failure_callback": [notify_email, bears_task_failure], # from callbacks/on_failure_callback.py, and # from callbacks/bears_notifications.py
     "on_retry_callback": notify_retry,
     "on_success_callback": notify_success,
 }
