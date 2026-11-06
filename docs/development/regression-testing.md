@@ -500,3 +500,22 @@ Production-only checks remain outside this suite. They include SSO mapping,
 production secret delivery, TLS and ingress, monitoring, backup and restore,
 failover, rollback, and representative end-to-end workflow execution on the
 target environment.
+
+
+## Execution-profile port regressions
+
+`tests/test_cosidag_execution.py` covers exact site routing without pipeline
+source changes, optional SDK imports, precedence/conflicts and placement
+validation. `tests/test_kubernetes_configuration.py` renders application
+resources offline and checks shared interpreter/data paths, site parameters
+and the separation of init, module installation and runtime. These tests do
+not start scientific DAGs or validate a Kubernetes installation. Optional
+SDK/Airflow graph checks report a skip if those dependencies are unavailable.
+
+```bash
+python3 -m unittest tests.test_cosidag_execution tests.test_kubernetes_configuration -v
+```
+
+The PostgreSQL integration regression also exercises reacquiring a claim for
+the same DagRun without increasing the processing attempt count. Run that
+integration suite only as part of the separately scheduled acceptance phase.

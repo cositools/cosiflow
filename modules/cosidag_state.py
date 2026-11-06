@@ -216,27 +216,61 @@ def enqueue_candidates(
 
 @provide_session
 def claim_next_path(dag_id: str, owner_run_id: str, *, session=None) -> dict[str, Any] | None:
-    """Atomically claim one eligible queue item using PostgreSQL SKIP LOCKED."""
+    """Atomically resume this run's claim or claim one eligible queue item.
+
+    A worker can disappear after persisting a claim but before Airflow records
+    the sensor task as successful.  A retry of that same DagRun must therefore
+    receive its existing claim again; another DagRun must still be unable to
+    steal it.  Existing claims have precedence over new queue items and do not
+    consume another processing attempt.
+    """
     statement = text(
         f"""
-        WITH next_item AS (
+        WITH own_claim AS (
+            SELECT dag_id, path, 0 AS claim_rank
+            FROM {STATE_TABLE}
+            WHERE dag_id = :dag_id
+              AND status = 'claimed'
+              AND owner_run_id = :owner_run_id
+            ORDER BY claimed_at NULLS FIRST, path
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+        ), queued_item AS (
             SELECT dag_id, path
             FROM {STATE_TABLE}
             WHERE dag_id = :dag_id
               AND status = 'queued'
               AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {STATE_TABLE}
+                  WHERE dag_id = :dag_id
+                    AND status = 'claimed'
+                    AND owner_run_id = :owner_run_id
+              )
             ORDER BY queued_at NULLS FIRST, queue_priority, path
             FOR UPDATE SKIP LOCKED
+            LIMIT 1
+        ), next_item AS (
+            SELECT dag_id, path, claim_rank
+            FROM own_claim
+            UNION ALL
+            SELECT dag_id, path, 1 AS claim_rank
+            FROM queued_item
+            ORDER BY claim_rank
             LIMIT 1
         )
         UPDATE {STATE_TABLE} AS state
         SET status = 'claimed',
             owner_run_id = :owner_run_id,
-            claimed_at = CURRENT_TIMESTAMP,
+            claimed_at = CASE WHEN next_item.claim_rank = 0
+                THEN state.claimed_at ELSE CURRENT_TIMESTAMP END,
             completed_at = NULL,
             updated_at = CURRENT_TIMESTAMP,
-            attempt_count = state.attempt_count + 1,
-            last_error = NULL
+            attempt_count = CASE WHEN next_item.claim_rank = 0
+                THEN state.attempt_count ELSE state.attempt_count + 1 END,
+            last_error = CASE WHEN next_item.claim_rank = 0
+                THEN state.last_error ELSE NULL END
         FROM next_item
         WHERE state.dag_id = next_item.dag_id AND state.path = next_item.path
         RETURNING state.path, state.observed_path, state.monitoring_policy,

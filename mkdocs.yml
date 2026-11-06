@@ -35,6 +35,7 @@ nav:
   - Getting started:
       - Installation: getting-started/installation.md
       - Configuration: getting-started/configuration.md
+      - Optional Kubernetes: getting-started/kubernetes.md
   - Architecture:
       - Overview: architecture/overview.md
       - Modules: architecture/modules.md
@@ -53,4 +54,5 @@ nav:
       - Shared UI: plugins/shared-ui.md
   - Development:
       - Regression testing: development/regression-testing.md
+      - Local FasTP acceptance: development/fastp-local-acceptance.md
       - Performance testing: development/performance-testing.md

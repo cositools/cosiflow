@@ -64,6 +64,8 @@ from date_helper import (  # type: ignore
     normalize_date_filters,
     serialize_date_filters,
 )
+from cosidag_execution import execution_defaults, resolve_execution_profile  # type: ignore
+
 from cosidag_runtime import (  # type: ignore
     automatic_retrigger_run_id,
     build_successor_conf,
@@ -457,6 +459,7 @@ class COSIDAG(DAG):
         policy: str = "folder-driven",  # "folder-driven" | "file-driven"
         tags: Optional[list[str]] = None,
         default_args_extra: Optional[dict] = None,
+        task_execution: Optional[dict] = None,
         auto_retrig: bool = True,
         max_retrig_runs: Optional[int] = None,
         claim_stale_seconds: int = 86400,
@@ -501,6 +504,12 @@ class COSIDAG(DAG):
             base.update(kwargs["default_args"])  # allows override from caller
         if default_args_extra:
             base.update(default_args_extra)  # extensions/override requested
+
+        # Site profiles route existing pipeline DAGs without changing their source.
+        # With no profile configured the previous LocalExecutor path is unchanged.
+        execution_dag_id = str(kwargs.get("dag_id", dag_args[0] if dag_args else ""))
+        execution_profile = resolve_execution_profile(execution_dag_id, task_execution)
+        base = execution_defaults(execution_dag_id, execution_profile, base)
 
         # ensure that DAG receives the final default_args
         kwargs["default_args"] = base

@@ -89,6 +89,12 @@ class TransactionalStateContractTests(unittest.TestCase):
         self.assertIn("AND owner_run_id = :owner_run_id", self.state_source)
         self.assertIn("completed_at = COALESCE", self.state_source)
 
+    def test_same_run_reacquires_claim_before_selecting_a_queued_path(self):
+        self.assertIn("WITH own_claim AS", self.state_source)
+        self.assertIn("owner_run_id = :owner_run_id", self.state_source)
+        self.assertIn("ORDER BY claim_rank", self.state_source)
+        self.assertIn("THEN state.attempt_count ELSE state.attempt_count + 1", self.state_source)
+
     def test_sensor_claims_before_xcom_and_never_writes_legacy_variable(self):
         claim_position = self.cosidag_source.index("claimed = claim_next_path(")
         xcom_position = self.cosidag_source.index(

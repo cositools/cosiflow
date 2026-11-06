@@ -136,7 +136,8 @@ class QueueSourceContractTests(unittest.TestCase):
 
     def test_queue_claim_is_skip_locked_and_owner_scoped(self):
         self.assertIn("FOR UPDATE SKIP LOCKED", self.state)
-        self.assertIn("attempt_count = state.attempt_count + 1", self.state)
+        self.assertIn("THEN state.attempt_count ELSE state.attempt_count + 1", self.state)
+        self.assertIn("WITH own_claim AS", self.state)
         self.assertIn("owner_run_id=:owner_run_id", self.state)
 
     def test_refill_is_threshold_and_batch_bounded(self):

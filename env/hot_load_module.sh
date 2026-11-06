@@ -13,6 +13,9 @@
 #   -a  create Python environment AND build Docker image (equivalent to -e with Docker build)
 #   -c  path to config file (default: auto-detect in module)
 
+LOCAL_EXECUTION="${COSIFLOW_LOADER_LOCAL:-false}"
+case "$LOCAL_EXECUTION" in true|false) ;; *) echo "COSIFLOW_LOADER_LOCAL must be true or false" >&2; exit 1 ;; esac
+
 CONTAINER_USER="gamma"
 CONTAINER_NAME="cosi_airflow_scheduler"
 EXTENSION_MODULE=".cfmodule"
@@ -68,14 +71,22 @@ ENVS_TO_CREATE=()
 
 # Helper to run docker exec as airflow user
 dexec() {
-    docker exec -u "$CONTAINER_USER" "$CONTAINER_NAME" "$@"
+    if [ "$LOCAL_EXECUTION" = true ]; then
+        "$@"
+    else
+        docker exec -u "$CONTAINER_USER" "$CONTAINER_NAME" "$@"
+    fi
 }
 
 # Run a container command as the managed user while forwarding stdin. This is
 # used to create files with gamma ownership without interpolating data in a
 # shell command string.
 dexec_stdin() {
-    docker exec -u "$CONTAINER_USER" -i "$CONTAINER_NAME" "$@"
+    if [ "$LOCAL_EXECUTION" = true ]; then
+        "$@"
+    else
+        docker exec -u "$CONTAINER_USER" -i "$CONTAINER_NAME" "$@"
+    fi
 }
 
 # define a macro `log` for printing messages with color green
@@ -566,6 +577,9 @@ resolve_environment_plan() {
 }
 
 resolve_environment_plan
+if [ "$LOCAL_EXECUTION" = true ] && [ "$BUILD_DOCKER" = true ]; then
+    error "Container-local module loading cannot build Docker images; build them before deployment."
+fi
 
 # Function to create a single Python virtual environment
 # Optional 4th argument: python_version (e.g. 3.11) to use python3.11 -m venv; if empty, uses python3

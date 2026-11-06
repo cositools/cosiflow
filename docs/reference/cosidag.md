@@ -430,3 +430,14 @@ The local Compose stack routes generated email to MailHog, available from
 **Develop Tools → Mailhog**. See
 [Notification subscriptions](../plugins/notification-subscriptions.md) for
 events, filters, defaults, and deployment fallback behavior.
+
+
+## Optional execution profile
+
+`task_execution` is an optional keyword-only mapping for the executor and
+Kubernetes placement defaults of a COSIDAG. When omitted, the optional
+`COSIFLOW_TASK_EXECUTION_FILE` selects a profile by exact DAG ID, letting a site
+route unchanged FasTP DAGs. With neither configured, existing defaults are
+preserved and no Kubernetes SDK import is required. An explicit `{}` opts out
+of site routing. See [execution profiles](../getting-started/kubernetes.md)
+for precedence, affinity and configuration examples.

@@ -1,0 +1,29 @@
+{
+  "namespace": "cosiflow-test",
+  "image": "registry.example.org/cosi/cosiflow:rc-kubernetes",
+  "image_pull_policy": "IfNotPresent",
+  "image_pull_secrets": [],
+  "pvc": "cosiflow-shared",
+  "secret": "cosiflow-runtime",
+  "uid": 501,
+  "gid": 20,
+  "scheduler_replicas": 1,
+  "postgres_host": "postgres.example.internal",
+  "postgres_port": "5432",
+  "postgres_user": "airflow_user",
+  "postgres_db": "airflow_db",
+  "public_base_url": "https://cosiflow.example.org",
+  "smtp_host": "smtp.example.internal",
+  "smtp_port": "25",
+  "gcn_db_host": "gcn-db.example.internal",
+  "gcn_db_name": "gcn",
+  "gcn_db_user": "gcn_user",
+  "component_node_selector": {},
+  "worker_resources": {"requests": {"cpu": "500m", "memory": "1Gi"}, "limits": {"cpu": "2", "memory": "4Gi"}},
+  "scheduler_resources": {"requests": {"cpu": "500m", "memory": "1Gi"}, "limits": {"cpu": "2", "memory": "4Gi"}},
+  "webserver_resources": {"requests": {"cpu": "500m", "memory": "1Gi"}, "limits": {"cpu": "2", "memory": "4Gi"}},
+  "task_profiles": {
+    "cosidag_BGO": {"executor": "KubernetesExecutor", "primary_node": "compute-a", "fallback_nodes": ["compute-b"], "node_label": "kubernetes.io/hostname"},
+    "cosidag_GeD": {"executor": "KubernetesExecutor", "primary_node": "compute-a", "fallback_nodes": ["compute-b"], "node_label": "kubernetes.io/hostname"}
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "lab_source_commit": "76dba4321586792da71b45bb250c06d55d590a30",
+  "target_start_commit": "ae4ea179eae82f620b9ed40d79eb15ec212bab45",
+  "branch": "dual-executor-port",
+  "date": "2026-11-04",
+  "scientific_dag_sha256": {
+    "src/dags/cosidag_BGO.py": "d6da8cac8435a0aef9f8032d637a90c7a72f1c0050b3bcef6e32f3355adcfa99",
+    "src/dags/init_pipeline_config.py": "8e06de8a01b6e628ffef9c4020423fe986e6d66eb7888ba2ce4eb0609eed9473",
+    "src/dags/cosidag_ARMselection.py": "92bb655e178f9d19dd47b52c2d9044e1bd17c746d5759e7e1206ff12354c1fe5",
+    "src/dags/cosipipe_initpipeline.py": "b17f0c26f88f5dd198bac04eba158f971a968ae7505c11923fe992636ae8c9a2",
+    "src/dags/cosidag_GeD.py": "bdc3166e0560fa067d26611d47a9bfe5632a121875d4e82b6749cda85d318e04"
+  },
+  "acceptance_status": "Development checks only; stopped before live local/scientific and cluster acceptance."
+}

@@ -226,6 +226,12 @@ assert queued_count("queue-api") == 2
 first = claim_next_path("queue-api", "queue-run-one")
 second = claim_next_path("queue-api", "queue-run-two")
 assert first and second and first["path"] != second["path"]
+# Simulate a worker disappearing after the durable claim but before XCom/task
+# success publication.  The same DagRun must reacquire exactly that claim,
+# without consuming another processing attempt.
+resumed = claim_next_path("queue-api", "queue-run-one")
+assert resumed and resumed["path"] == first["path"]
+assert resumed["attempt_count"] == first["attempt_count"] == 1
 assert claim_next_path("queue-api", "queue-run-three") is None
 assert mark_path_failed("queue-api", first["path"], "queue-run-one", "first failure", 0)
 retry = claim_next_path("queue-api", "queue-run-three")
