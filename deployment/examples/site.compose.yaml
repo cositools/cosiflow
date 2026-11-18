@@ -9,7 +9,7 @@ application:
 module-pipelines:
 - name: fast-transient-analysis-pipeline
   repository: https://github.com/cositools/fast-transient-analysis-pipeline.git
-  ref: d29111e77acc08a1318146d39ef8ca2b424f0299
+  ref: v0.3.0
   config: env/fta-pipe.config.yaml
 execution:
   default_executor: LocalExecutor
