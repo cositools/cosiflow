@@ -172,4 +172,4 @@ data/*
 .DS_Store
 
 # Test folder
-test/results/*
+tests/performance/results/*
