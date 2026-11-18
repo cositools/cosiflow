@@ -1,0 +1,83 @@
+# Existing namespace, RWX PVC, DB/SMTP services and runtime Secret required.
+config_version: 1
+deployment:
+  name: cosiflow-cluster-example
+  mode: kubernetes
+application:
+  image: registry.example.org/cosi/cosiflow:rc
+  public_url: http://127.0.0.1:18081
+module-pipelines:
+- name: fast-transient-analysis-pipeline
+  repository: https://github.com/cositools/fast-transient-analysis-pipeline.git
+  ref: d29111e77acc08a1318146d39ef8ca2b424f0299
+  config: env/fta-pipe.config.yaml
+execution:
+  default_executor: KubernetesExecutor
+  default_pool_slots: 1
+  dag_profiles:
+    cosidag_GeD:
+      executor: KubernetesExecutor
+      primary_node: compute-a
+      fallback_nodes: []
+    cosidag_BGO:
+      executor: KubernetesExecutor
+      primary_node: compute-a
+      fallback_nodes: []
+runtime:
+  uid: 1000
+  gid: 1000
+services:
+  metadata_database:
+    host: postgres
+    port: 5432
+    database: airflow_db
+    user: airflow_user
+  gcn_database:
+    host: gcn-mysql
+    port: 3306
+    database: gcn
+    user: gcn_user
+  smtp:
+    host: mailhog
+    port: 1025
+    starttls: false
+    ssl: false
+kubernetes:
+  context: CHANGE-ME-SITE-CONTEXT
+  namespace: cosiflow-test
+  runtime_secret: cosiflow-runtime
+  shared_pvc: cosiflow-shared
+  shared_path: ~/cosiflow-shared
+  image_pull_policy: IfNotPresent
+  components:
+    scheduler:
+      node_selector:
+        kubernetes.io/hostname: services-a
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: '2'
+          memory: 2Gi
+    webserver:
+      node_selector:
+        kubernetes.io/hostname: services-a
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: '2'
+          memory: 2Gi
+  workers:
+    node_selector:
+      kubernetes.io/hostname: compute-a
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: '3'
+        memory: 6Gi
+    retain_completed_pods: true

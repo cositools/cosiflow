@@ -170,3 +170,12 @@ The next checks are recorded in [the local FasTP acceptance checklist](../develo
 Until those pass, preserve the current local Compose mounts, environment
 installation and LocalExecutor setting. Cluster deployment, failure tests and
 clean installation belong to the subsequent acceptance phase.
+
+## Unified site YAML adapter
+
+`deployment/cosiflowctl` adds a validated YAML interface around this renderer,
+generic `module-pipelines` installation Jobs, default executor selection,
+component/worker placement, resources and spec-hashed bootstrap Jobs. The original
+JSON renderer remains compatible. The new CLI does not provision cluster,
+namespace, database, NFS or Secret infrastructure. See `deployment/README.md`
+in the repository for the ordered workflow and isolated acceptance procedure.

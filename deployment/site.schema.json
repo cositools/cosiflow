@@ -1,0 +1,534 @@
+{
+  "type": "object",
+  "properties": {
+    "config_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "deployment": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$"
+        },
+        "mode": {
+          "enum": [
+            "compose",
+            "kubernetes"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "application": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "public_url": {
+          "type": "string",
+          "pattern": "^https?://[^\\s]+$"
+        }
+      },
+      "required": [
+        "image",
+        "public_url"
+      ],
+      "additionalProperties": false
+    },
+    "module-pipelines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,49}$"
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^(https://|ssh://|git@)[^\\s]+$"
+          },
+          "ref": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{40}$"
+          },
+          "config": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name",
+          "repository",
+          "ref",
+          "config"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "default_executor": {
+          "enum": [
+            "LocalExecutor",
+            "KubernetesExecutor"
+          ]
+        },
+        "default_pool_slots": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "dag_profiles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "executor": {
+                "enum": [
+                  "LocalExecutor",
+                  "KubernetesExecutor"
+                ]
+              },
+              "identity": {
+                "type": "string",
+                "minLength": 1
+              },
+              "primary_node": {
+                "type": "string",
+                "minLength": 1
+              },
+              "preferred_node": {
+                "type": "string",
+                "minLength": 1
+              },
+              "node_label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fallback_nodes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "resources": {
+                "type": "object",
+                "properties": {
+                  "requests": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "limits": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "tolerations": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "priority_class_name": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "executor"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "default_executor",
+        "default_pool_slots"
+      ],
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gid": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "uid",
+        "gid"
+      ],
+      "additionalProperties": false
+    },
+    "services": {
+      "type": "object",
+      "properties": {
+        "metadata_database": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "minLength": 1
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "database": {
+              "type": "string",
+              "minLength": 1
+            },
+            "user": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "host",
+            "port",
+            "database",
+            "user"
+          ],
+          "additionalProperties": false
+        },
+        "gcn_database": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "minLength": 1
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "database": {
+              "type": "string",
+              "minLength": 1
+            },
+            "user": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "host",
+            "port",
+            "database",
+            "user"
+          ],
+          "additionalProperties": false
+        },
+        "smtp": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "minLength": 1
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "starttls": {
+              "type": "boolean"
+            },
+            "ssl": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "host",
+            "port"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "metadata_database",
+        "gcn_database",
+        "smtp"
+      ],
+      "additionalProperties": false
+    },
+    "compose": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "secrets_env_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "web_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "mail_web_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "smtp_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        }
+      },
+      "required": [
+        "workspace",
+        "secrets_env_file"
+      ],
+      "additionalProperties": false
+    },
+    "kubernetes": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^-]"
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "runtime_secret": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$"
+        },
+        "shared_pvc": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$"
+        },
+        "shared_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image_pull_policy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        },
+        "image_pull_secrets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "components": {
+          "type": "object",
+          "properties": {
+            "scheduler": {
+              "type": "object",
+              "properties": {
+                "replicas": {
+                  "const": 1
+                },
+                "node_selector": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "resources": {
+                  "type": "object",
+                  "properties": {
+                    "requests": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "limits": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "webserver": {
+              "type": "object",
+              "properties": {
+                "replicas": {
+                  "const": 1
+                },
+                "node_selector": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "resources": {
+                  "type": "object",
+                  "properties": {
+                    "requests": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "limits": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "required": [],
+                  "additionalProperties": false
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "workers": {
+          "type": "object",
+          "properties": {
+            "node_selector": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "resources": {
+              "type": "object",
+              "properties": {
+                "requests": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "limits": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "retain_completed_pods": {
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "context",
+        "namespace",
+        "runtime_secret",
+        "shared_pvc",
+        "shared_path"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "config_version",
+    "deployment",
+    "application",
+    "module-pipelines",
+    "execution",
+    "runtime",
+    "services"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "COSIflow site configuration v1",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "deployment": {
+            "properties": {
+              "mode": {
+                "const": "compose"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "deployment": {
+            "properties": {
+              "mode": {
+                "const": "kubernetes"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "kubernetes"
+        ]
+      }
+    }
+  ]
+}

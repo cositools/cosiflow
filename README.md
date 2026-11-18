@@ -56,3 +56,11 @@ website. Public hosting requires separate project approval.
 ## License
 
 See [LICENSE](LICENSE).
+
+## Configurable application deployment
+
+The optional [deployment CLI](deployment/README.md) reads a site-owned YAML for
+Compose/LocalExecutor or an existing Kubernetes cluster. Public examples and a
+schema live in `deployment/`; real configuration, secrets and runtime data stay
+outside the checkout. Start with `validate` and `plan` before a new isolated
+runtime acceptance test. Scientific modules are listed under `module-pipelines`.

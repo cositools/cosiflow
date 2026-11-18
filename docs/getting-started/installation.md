@@ -154,3 +154,12 @@ equivalent configuration through a managed secret system.
 
 Read [COSIflow modules](../architecture/modules.md) before installing FasTP or
 another scientific pipeline.
+
+## Site-owned deployment configuration
+
+An optional `deployment/cosiflowctl` command now generates and manages isolated
+Compose or Kubernetes application instances from `site.yaml`. See the
+deployment guide at `deployment/README.md` in the cloned repository
+for examples, dependencies, an offline plan and explicit environment installation.
+This new CLI needs its own runtime acceptance; the manual procedure remains
+available. Site files and credentials belong outside the source checkout.
