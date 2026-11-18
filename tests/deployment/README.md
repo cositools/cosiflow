@@ -32,9 +32,8 @@ On Apple Silicon Macs, AMD64 guests require full emulation.
 
 ### Required sources
 
-- This directory (`retest-tools/`) — contains all support scripts
-- The COSIflow working tree cloned at `../cosiflow` relative to the directory
-  that contains this guide (i.e. `cosi/cosiflow/`)
+- This directory (`deployment/`) — contains all support scripts
+- The COSIflow repository — this guide lives inside it at `tests/deployment/`
 - `infrastructure.json` — used in phase E for
   the Kubernetes deployment; adapt it if the private IP of `cosi-1` differs
   from `192.168.89.11`
@@ -70,12 +69,12 @@ The Mac going into sleep mode during staging caused freezes in the VMs and inter
 
 ## A. Create four new VMs and start the Compose phase
 
-On a Mac, from the directory containing this guide:
+On a Mac, from the `tests/` directory of the repository:
 
 ```bash
 brew install qemu
 GUIDE="$PWD"
-export COSIFLOW_RETEST_DIR="$GUIDE/retest-2026-11-10"
+export COSIFLOW_RETEST_DIR="$HOME/cosiflow-retest/retest-2026-11-10"
 umask 077
 mkdir -p "$COSIFLOW_RETEST_DIR"
 cd "$COSIFLOW_RETEST_DIR"
@@ -87,7 +86,7 @@ test -s image.sha256
 curl -fSL --retry 3 "$base/$image" -o "$image.part"
 mv "$image.part" "$image"
 shasum -a 256 -c image.sha256
-vm() { "$GUIDE/retest-tools/vms.sh" "$@"; }
+vm() { "$GUIDE/deployment/vms.sh" "$@"; }
 guest() { ssh -F "$COSIFLOW_RETEST_DIR/ssh_config" "$@"; }
 vm prepare
 vm start cosi-1 cosi-2 cosi-3
@@ -122,21 +121,21 @@ Save the archive and its SHA-256 so you can reuse the exact same build in the se
 The FasTP module will be cloned by the CLI to the SHA specified in its `site.yaml`.
 
 ```bash
-source_dir="$GUIDE/../cosiflow"
+source_dir="$GUIDE/.."
 archive="$COSIFLOW_RETEST_DIR/cosiflow-candidate.tar.gz"
 git -C "$source_dir" rev-parse HEAD > "$COSIFLOW_RETEST_DIR/cosiflow-base-ref.txt"
 git -C "$source_dir" ls-files --cached --others --exclude-standard -z |
   tar -czf "$archive" --no-xattrs --no-mac-metadata -C "$source_dir" --null -T -
 shasum -a 256 "$archive" | tee "$COSIFLOW_RETEST_DIR/cosiflow-candidate.sha256"
 guest cosi-4 'mkdir -p ~/cosiflow && tar -xzf - -C ~/cosiflow' < "$archive"
-guest cosi-4 'bash -s' < "$GUIDE/retest-tools/install-docker.sh"
+guest cosi-4 'bash -s' < "$GUIDE/deployment/install-docker.sh"
 guest cosi-4 'docker info >/dev/null && docker compose version'
-guest cosi-4 'bash -s' < "$GUIDE/retest-tools/deploy-compose.sh"
+guest cosi-4 'bash -s' < "$GUIDE/deployment/deploy-compose.sh"
 ```
 
 [`install-docker.sh`](install-docker.sh) follows the official Docker APT procedure for Ubuntu Resolute.
 The second SSH session restores membership in the `docker` group.
-[`deploy-compose.sh`](deploy-compose.sh) follows Section 2 of the [COSIflow guide](../cosiflow/deployment/README.md) with dedicated directories, credentials, and databases.
+[`deploy-compose.sh`](deploy-compose.sh) follows Section 2 of the [COSIflow guide](../../deployment/README.md) with dedicated directories, credentials, and databases.
 It stores deployment logs in a private directory.
 The test uses LocalExecutor, a single-slot pool, and the GCN client only to initialize the local schema.
 
@@ -150,9 +149,9 @@ The runtime directory must have enough space for the archive and extracted data.
 On a Mac, transfer the two verification scripts and run the test inside `cosi-4`:
 
 ```bash
-tar -czf - --no-xattrs --no-mac-metadata -C "$GUIDE/retest-tools" science.py airflow-check.py |
-  guest cosi-4 'mkdir -p ~/retest-tools && tar -xzf - -C ~/retest-tools'
-guest cosi-4 'python3 ~/retest-tools/science.py compose ~/compose-evidence'
+tar -czf - --no-xattrs --no-mac-metadata -C "$GUIDE/deployment" science.py airflow-check.py |
+  guest cosi-4 'mkdir -p ~/deployment && tar -xzf - -C ~/deployment'
+guest cosi-4 'python3 ~/deployment/science.py compose ~/compose-evidence'
 ```
 
 [`science.py`](science.py) and [`airflow-check.py`](airflow-check.py) verify the executor, the absence of import errors, and the status of `init_pipelines` (GeD, DC4, `tdrss` parameters, 50-second window).
@@ -193,7 +192,7 @@ every 5 seconds for K3s components that have lost leadership during the
 recovery of emulated VMs. [Lease configuration](k3s-tcg.yaml).
 
 ```bash
-"$GUIDE/retest-tools/k3s-cluster.sh"
+"$GUIDE/deployment/k3s-cluster.sh"
 guest cosi-1
 export KUBECONFIG="$HOME/.kube/config" K3S_CONFIG_FILE=/dev/null
 ```
@@ -216,19 +215,19 @@ shasum -a 256 -c "$COSIFLOW_RETEST_DIR/cosiflow-candidate.sha256"
 guest cosi-1 'mkdir -p ~/cosiflow && tar -xzf - -C ~/cosiflow' < "$archive"
 guest cosi-1 'mkdir -m 700 -p ~/.config/cosiflow-kubernetes'
 guest cosi-1 'cat > ~/.config/cosiflow-kubernetes/infrastructure.json' \
-  < "$GUIDE/infrastructure.json"
-guest cosi-1 'bash -s' < "$GUIDE/retest-tools/install-docker.sh"
+  < "$GUIDE/deployment/infrastructure.json"
+guest cosi-1 'bash -s' < "$GUIDE/deployment/install-docker.sh"
 shasum -a 256 -c "$COSIFLOW_RETEST_DIR/compose-base-images.sha256"
 guest cosi-1 'docker load' < "$COSIFLOW_RETEST_DIR/compose-base-images.tar"
 for node in cosi-2 cosi-3; do
   guest "$node" 'sudo apt-get install -y nfs-common'
 done
-guest cosi-1 'bash -s -- prepare' < "$GUIDE/retest-tools/deploy-kubernetes.sh"
+guest cosi-1 'bash -s -- prepare' < "$GUIDE/deployment/deploy-kubernetes.sh"
 for node in cosi-2 cosi-3; do
   guest cosi-1 'cat ~/cosiflow-kubernetes.tar' |
     guest "$node" 'sudo k3s ctr images import -'
 done
-guest cosi-1 'bash -s -- deploy' < "$GUIDE/retest-tools/deploy-kubernetes.sh"
+guest cosi-1 'bash -s -- deploy' < "$GUIDE/deployment/deploy-kubernetes.sh"
 ```
 
 [`deploy-kubernetes.sh`](deploy-kubernetes.sh) adapts the NFS manifest to the private address of `cosi-1` and to `/srv/cosiflow-shared`, the same directory as seen by the CLI and by the pods via PVC.
@@ -240,7 +239,7 @@ It builds the amd64 image using the Kubernetes provider on the same Airflow base
 Import the image onto all three nodes because the initialization Job can be scheduled on any of them.
 Initialize the GCN schema and call the same deployment CLI used in Compose.
 
-The [Kubernetes chapter of the COSIflow guide](../cosiflow/deployment/README.md#test-3-isolated-kubernetes-installation) describes the prerequisites and retry policies for Jobs.
+The [Kubernetes chapter of the COSIflow guide](../../deployment/README.md#test-3-isolated-kubernetes-installation) describes the prerequisites and retry policies for Jobs.
 The script adapts the scheduler parser for single-process emulated guests, allowing 120 seconds for import and 180 seconds for the parsing process.
 
 If the CLI ends with `timed out waiting for the condition`, check the job specified in the message.
@@ -257,7 +256,7 @@ export KUBECONFIG="$HOME/.kube/config" K3S_CONFIG_FILE=/dev/null
 kubectl -n cosiflow-distributed-test get "job/$1"
 kubectl -n cosiflow-distributed-test wait --for=condition=complete "job/$1" --timeout=10800s
 BASH
-guest cosi-1 'bash -s -- deploy' < "$GUIDE/retest-tools/deploy-kubernetes.sh"
+guest cosi-1 'bash -s -- deploy' < "$GUIDE/deployment/deploy-kubernetes.sh"
 ```
 
 From `cosi-1`, check `/health` using the Service ClusterIP.
@@ -269,10 +268,10 @@ Then launch the two DAGs from the Mac.
 guest cosi-1 'export KUBECONFIG="$HOME/.kube/config" K3S_CONFIG_FILE=/dev/null
   ip=$(kubectl -n cosiflow-distributed-test get svc cosiflow-webserver -o jsonpath="{.spec.clusterIP}")
   curl -fsS --max-time 15 "http://$ip:8080/health"'
-tar -czf - --no-xattrs --no-mac-metadata -C "$GUIDE/retest-tools" science.py airflow-check.py |
-  guest cosi-1 'mkdir -p ~/retest-tools && tar -xzf - -C ~/retest-tools'
+tar -czf - --no-xattrs --no-mac-metadata -C "$GUIDE/deployment" science.py airflow-check.py |
+  guest cosi-1 'mkdir -p ~/deployment && tar -xzf - -C ~/deployment'
 guest cosi-1 'export KUBECONFIG="$HOME/.kube/config" K3S_CONFIG_FILE=/dev/null
-  python3 ~/retest-tools/science.py kubernetes ~/kubernetes-evidence'
+  python3 ~/deployment/science.py kubernetes ~/kubernetes-evidence'
 guest cosi-1 'tar -czf - -C "$HOME" kubernetes-evidence' > "$COSIFLOW_RETEST_DIR/kubernetes-evidence.tar.gz"
 ```
 
@@ -290,7 +289,7 @@ guest cosi-1 'set -e
   cp -p "$HOME/.kube/config" "$KUBECONFIG"
   kubectl config set-cluster default --server=https://192.168.89.12:6443
   kubectl --request-timeout=30s get --raw=/readyz
-  python3 ~/retest-tools/science.py kubernetes ~/kubernetes-evidence --resume'
+  python3 ~/deployment/science.py kubernetes ~/kubernetes-evidence --resume'
 ```
 
 If Airflow reports a `postgres` resolution error, check the CoreDNS pods, the PostgreSQL service endpoints, and the resolution from the scheduler pod.
@@ -337,7 +336,7 @@ run=manual__retest_kubernetes_init_pipelines_TEST_RUN_ID
 guest cosi-1 "export KUBECONFIG=\$HOME/.kube/config K3S_CONFIG_FILE=/dev/null
   kubectl -n cosiflow-distributed-test exec -i deployment/cosiflow-scheduler -- \
     /home/gamma/venv/bin/python - retry-stage init_pipelines $run '{}'" \
-  < "$GUIDE/retest-tools/airflow-check.py"
+  < "$GUIDE/deployment/airflow-check.py"
 ```
 
 Then resume `science.py` using `--resume`.
@@ -346,7 +345,7 @@ The cluster log shows the successful pods and any failed attempts.
 When finished, save the status of the VMs, nodes, deployments, pods, and volumes.
 
 ```bash
-"$GUIDE/retest-tools/vms.sh" status cosi-1 cosi-2 cosi-3 cosi-4 \
+"$GUIDE/deployment/vms.sh" status cosi-1 cosi-2 cosi-3 cosi-4 \
   > "$COSIFLOW_RETEST_DIR/vm-kubernetes-final-state.txt"
 guest cosi-2 'set -e
   sudo k3s kubectl --request-timeout=35s get --raw=/readyz
