@@ -1,0 +1,412 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "cosiflow-distributed-test"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "PersistentVolume",
+      "metadata": {
+        "name": "cosiflow-acceptance-nfs"
+      },
+      "spec": {
+        "capacity": {
+          "storage": "100Gi"
+        },
+        "accessModes": [
+          "ReadWriteMany"
+        ],
+        "persistentVolumeReclaimPolicy": "Retain",
+        "storageClassName": "",
+        "mountOptions": [
+          "nfsvers=4.1"
+        ],
+        "nfs": {
+          "server": "192.168.252.17",
+          "path": "/home/ubuntu/cosiflow-localexecutor-test/cluster-shared"
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "name": "cosiflow-shared",
+        "namespace": "cosiflow-distributed-test"
+      },
+      "spec": {
+        "accessModes": [
+          "ReadWriteMany"
+        ],
+        "storageClassName": "",
+        "volumeName": "cosiflow-acceptance-nfs",
+        "resources": {
+          "requests": {
+            "storage": "100Gi"
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "name": "postgres-data",
+        "namespace": "cosiflow-distributed-test"
+      },
+      "spec": {
+        "accessModes": [
+          "ReadWriteOnce"
+        ],
+        "resources": {
+          "requests": {
+            "storage": "10Gi"
+          }
+        },
+        "storageClassName": "local-path"
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "postgres",
+        "namespace": "cosiflow-distributed-test"
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app": "postgres"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "postgres"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "name": "postgres",
+                "image": "postgres:15",
+                "imagePullPolicy": "IfNotPresent",
+                "env": [
+                  {
+                    "name": "POSTGRES_USER",
+                    "value": "airflow_user"
+                  },
+                  {
+                    "name": "POSTGRES_DB",
+                    "value": "airflow_db"
+                  },
+                  {
+                    "name": "POSTGRES_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "cosiflow-runtime",
+                        "key": "POSTGRES_PASSWORD"
+                      }
+                    }
+                  }
+                ],
+                "ports": [
+                  {
+                    "containerPort": 5432
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "256Mi"
+                  },
+                  "limits": {
+                    "memory": "512Mi"
+                  }
+                },
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "pg_isready",
+                      "-U",
+                      "airflow_user",
+                      "-d",
+                      "airflow_db"
+                    ]
+                  },
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 5
+                },
+                "volumeMounts": [
+                  {
+                    "name": "db",
+                    "mountPath": "/var/lib/postgresql/data"
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/hostname": "cosi-2"
+            },
+            "volumes": [
+              {
+                "name": "db",
+                "persistentVolumeClaim": {
+                  "claimName": "postgres-data"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "postgres",
+        "namespace": "cosiflow-distributed-test"
+      },
+      "spec": {
+        "selector": {
+          "app": "postgres"
+        },
+        "ports": [
+          {
+            "port": 5432,
+            "targetPort": 5432,
+            "name": "service"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "name": "gcn-mysql-data",
+        "namespace": "cosiflow-distributed-test"
+      },
+      "spec": {
+        "accessModes": [
+          "ReadWriteOnce"
+        ],
+        "resources": {
+          "requests": {
+            "storage": "10Gi"
+          }
+        },
+        "storageClassName": "local-path"
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "gcn-mysql",
+        "namespace": "cosiflow-distributed-test"
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app": "gcn-mysql"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "gcn-mysql"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "name": "gcn-mysql",
+                "image": "mysql:8.4",
+                "imagePullPolicy": "IfNotPresent",
+                "env": [
+                  {
+                    "name": "MYSQL_USER",
+                    "value": "gcn_user"
+                  },
+                  {
+                    "name": "MYSQL_DATABASE",
+                    "value": "gcn"
+                  },
+                  {
+                    "name": "MYSQL_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "cosiflow-runtime",
+                        "key": "GCN_DB_PASSWORD"
+                      }
+                    }
+                  },
+                  {
+                    "name": "MYSQL_ROOT_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "cosiflow-runtime",
+                        "key": "MYSQL_ROOT_PASSWORD"
+                      }
+                    }
+                  }
+                ],
+                "ports": [
+                  {
+                    "containerPort": 3306
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "256Mi"
+                  },
+                  "limits": {
+                    "memory": "768Mi"
+                  }
+                },
+                "readinessProbe": {
+                  "tcpSocket": {
+                    "port": 3306
+                  },
+                  "initialDelaySeconds": 20,
+                  "periodSeconds": 5
+                },
+                "volumeMounts": [
+                  {
+                    "name": "db",
+                    "mountPath": "/var/lib/mysql"
+                  }
+                ]
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/hostname": "cosi-3"
+            },
+            "volumes": [
+              {
+                "name": "db",
+                "persistentVolumeClaim": {
+                  "claimName": "gcn-mysql-data"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "gcn-mysql",
+        "namespace": "cosiflow-distributed-test"
+      },
+      "spec": {
+        "selector": {
+          "app": "gcn-mysql"
+        },
+        "ports": [
+          {
+            "port": 3306,
+            "targetPort": 3306,
+            "name": "service"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "mailhog",
+        "namespace": "cosiflow-distributed-test"
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app": "mailhog"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "mailhog"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "name": "mailhog",
+                "image": "mailhog/mailhog:latest",
+                "imagePullPolicy": "IfNotPresent",
+                "env": [],
+                "ports": [
+                  {
+                    "containerPort": 1025
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "128Mi"
+                  },
+                  "limits": {
+                    "memory": "512Mi"
+                  }
+                }
+              }
+            ],
+            "nodeSelector": {
+              "kubernetes.io/hostname": "cosi-1"
+            }
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "mailhog",
+        "namespace": "cosiflow-distributed-test"
+      },
+      "spec": {
+        "selector": {
+          "app": "mailhog"
+        },
+        "ports": [
+          {
+            "port": 1025,
+            "targetPort": 1025,
+            "name": "service"
+          },
+          {
+            "port": 8025,
+            "targetPort": 8025,
+            "name": "web"
+          }
+        ]
+      }
+    }
+  ]
+}
