@@ -1,58 +1,58 @@
-# Repetition of the test on Ubuntu 26.04.1 LTS x86_64
+# Deployment Tutorial (with VMs Ubuntu 26.04.1 LTS x86_64)
 
-This procedure tests both COSIflow deployments (Compose and Kubernetes) end-to-end.
+This procedure tests both COSIflow deployments (**Compose** and **Kubernetes**) end-to-end using 4 Virtual Machines (VMs) with Ubuntu 26.04.1 LTS x86_64. This tutorial is composed by the following steps:
 
-**If you already have a Kubernetes cluster**, you can skip the VM setup entirely:
-phases A–C (Compose on a single node) and phases D–E (Kubernetes) each work on any
-x86-64 Linux machine with Docker and `kubectl` access to the cluster.
-The QEMU VM infrastructure described below exists only to emulate an AMD64 environment
-on an Apple Silicon Mac where no real x86-64 hardware is available.
+* Create the virtual infrastructure
+  * [A. Create four new VMs and start the Compose phase](#a-create-four-new-vms-and-start-the-compose-phase)
+* Compose on a single node
+  * [B. Upload the same candidate build and start Compose](#b-upload-the-same-candidate-build-and-start-compose)
+  * [C. Run the two DAGs and switch phases](#c-run-the-two-dags-and-switch-phases)
+* Kubernetes cluster with 3 nodes
+  * [D. Install and test K3s](#d-install-and-test-k3s)
+  * [E. Deploy COSIflow on the cluster and repeat the GeD test](#e-deploy-cosiflow-on-the-cluster-and-repeat-the-ged-test)
 
-The Ubuntu 24.04 ARM64 VMs from the previous test constitute a separate environment.
+**If you already have a Kubernetes cluster** and you want to **follow only the Kubernetes deployment**, you can skip the VM setup entirely:
+phases A–C (Compose on a single node) and phases D–E (Kubernetes) each work on any x86-64 Linux machine with Docker and `kubectl` access to the cluster.
+The QEMU VM infrastructure described below exists only to emulate an AMD64 environment on an Apple Silicon Mac where no real x86-64 hardware is available.
 On Apple Silicon Macs, AMD64 guests require full emulation.
 
-## Requirements
+**K3s without Compose:** after `vm prepare` in phase A, start and wait for `cosi-1`, `cosi-2`, and `cosi-3`; leave `cosi-4` stopped. Continue with phases D and E. The standalone path in E clones a pinned COSIflow ref and builds its own images; phases B–C and their archives are not required.
+
+* See Section B for [Compose deployment](#b-upload-the-same-candidate-build-and-start-compose)
+* See Section E for [Kubernetes deployment](#e-deploy-cosiflow-on-the-cluster-and-repeat-the-ged-test)
+
+## Verified platform
+
+The full test was verified under this infrastructure
 
 ### Hardware
 
-- Apple Silicon Mac (M1 or later)
-- At least 24 GiB of available RAM (19 GiB reserved for the three Kubernetes
-  VMs plus QEMU overhead)
-- At least 60 GiB of free disk space (four QCOW2 disks: two dynamically
-  expanding 110 GiB disks for `cosi-1` and `cosi-4`, two ~20 GiB disks for
-  `cosi-2` and `cosi-3`)
-- Stable power and network throughout the test (recommended: run
-  `caffeinate -i` in a dedicated terminal)
+* Apple Silicon Mac M3
+* RAM 24 GiB
+* At least 60 GiB of free disk space (four QCOW2 disks: two dynamically expanding 110 GiB disks for `cosi-1` and `cosi-4`, two ~20 GiB disks for `cosi-2` and `cosi-3`)
 
 ### Software (Mac host)
 
-- macOS with [Homebrew](https://brew.sh) installed
-- `qemu` — installed by the guide (`brew install qemu`)
-- `ssh`, `shasum`, `curl`, `python3`, `tar` — included in macOS
+* macOS with [Homebrew](https://brew.sh) installed
+* `qemu` — installed by the guide (`brew install qemu`)
+* `ssh`, `shasum`, `curl`, `python3`, `tar` — included in macOS
 
 ### Required sources
 
-- This directory (`deployment/`) — contains all support scripts
-- The COSIflow repository — this guide lives inside it at `tests/deployment/`
-- `infrastructure.json` — used in phase E for
-  the Kubernetes deployment; adapt it if the private IP of `cosi-1` differs
-  from `192.168.89.11`
+* This directory (`deployment/`) — contains all support scripts
+* The COSIflow repository — this guide lives inside it at `tests/deployment/`
+* `infrastructure.json` — used in phase E for the Kubernetes deployment; adapt it if the private IP of `cosi-1` differs from `192.168.89.11`
 
 ### Reference versions
 
 | Component | Version used in this test |
-|---|---|
+| --- | --- |
 | Ubuntu | 26.04.1 LTS (Resolute) amd64 — `release-20261016` |
 | K3s | as specified in `k3s-cluster.sh` |
 | Docker | latest stable from the official APT repository |
 | QEMU | latest available via Homebrew |
 
-### Expected duration
-
-- Phases A–B (Compose): 30–60 min including image download
-- Phase C (GeD DAG): 30–60 min (depends on network speed for DC4 data)
-- Phases D–E (Kubernetes): 3–5 hours (TCG software emulation of AMD64 on
-  Apple Silicon)
+---
 
 * [QEMU](https://www.qemu.org) is used with Tiny Code Generator (TCG - software emulation engine, it reads the instructions from the virtual operating system and translates them ‘on the fly’ (Just-In-Time) into instructions that your physical computer can understand),
 * a NAT network for internet access,
@@ -74,7 +74,7 @@ On a Mac, from the `tests/` directory of the repository:
 ```bash
 brew install qemu
 GUIDE="$PWD"
-export COSIFLOW_RETEST_DIR="$HOME/cosiflow-retest/retest-2026-11-10"
+export COSIFLOW_RETEST_DIR="$HOME/cosiflow-deployment-test"
 umask 077
 mkdir -p "$COSIFLOW_RETEST_DIR"
 cd "$COSIFLOW_RETEST_DIR"
@@ -179,7 +179,7 @@ vm status cosi-1 cosi-2 cosi-3 cosi-4
 
 ## D. Install and test K3s
 
-On a Mac, use `k3s-cluster.sh` for sections 1.2–6 of this guide.
+On a Mac, use `k3s-cluster.sh` to install the dedicated three-node K3s cluster.
 The script checks the private network, installs the version of K3s specified below, and adds two necessary settings for the two QEMU NICs.
 `node-ip` assigns 192.168.89.11–13 as the internal node addresses.
 `flannel-iface: cluster0` uses the private network for pod traffic.
@@ -193,32 +193,76 @@ recovery of emulated VMs. [Lease configuration](k3s-tcg.yaml).
 
 ```bash
 "$GUIDE/deployment/k3s-cluster.sh"
-guest cosi-1
-export KUBECONFIG="$HOME/.kube/config" K3S_CONFIG_FILE=/dev/null
+"$GUIDE/deployment/k3s-network-check.sh"
 ```
 
-In the `cosi-1` terminal, verify the CoreDNS configuration and, if necessary, apply the anti-affinity settings from §6.
-Run the DNS and HTTP probes from §7, including the nine paths between nodes, and perform the data collection and cleanup from §10.
-Save the logs before performing the cleanup. Sections 6, 7, and 10 marked WORKSTATION are executed in
-this terminal in the QEMU path.
+Run both commands from the **Mac terminal**. The second script runs [`k3s-check.sh`](k3s-check.sh) on `cosi-1` using its private kubeconfig.
+It checks API/node readiness and CoreDNS placement, creates an isolated `cosiflow-check` namespace, and tests service DNS/HTTP and all nine HTTP paths from the three nodes to three web pods.
+It requires one web pod per node; otherwise it stops without claiming complete network coverage.
+
+If CoreDNS replicas are not on distinct nodes, run the following on this **dedicated test cluster** to scale CoreDNS to two replicas and apply the soft anti-affinity preference, then repeat the checks:
+
+```bash
+"$GUIDE/deployment/k3s-network-check.sh" --configure-dns
+```
+
+Logs and workload/node snapshots are saved on `cosi-1` under `~/k3s-check/run.*`.
+The wrapper copies them to a new `$COSIFLOW_RETEST_DIR/k3s-check-*` directory on the Mac, including after a failed check when SSH remains available.
+After successful checks and evidence collection, only the newly created `cosiflow-check` namespace is deleted.
+On failure it is retained for inspection; save the logs and explicitly delete that test namespace before retrying.
+An existing namespace is never reused or deleted by the script.
+
+These scripts package the control-plane, network and evidence/cleanup checks; they do not perform a node-failure test or deploy COSIflow.
+They target the dedicated `cosi-1`/`cosi-2`/`cosi-3` cluster with the default `cluster.local` DNS domain. Do not use `--configure-dns` on a managed site cluster.
 
 ## E. Deploy COSIflow on the cluster and repeat the GeD test
 
-Return to the Mac terminal. Reuse the archive from the Compose phase and the
-[rehearsal infrastructure manifest](infrastructure.json).
+Run the following from the **Mac terminal** using the [rehearsal infrastructure manifest](infrastructure.json).
 Use new VMs to start with empty databases and NFS directories.
 The `cosi-1` node serves NFS and the workers; `cosi-2` hosts the scheduler, web server, and PostgreSQL; `cosi-3` hosts MySQL.
 The pool remains at one slot, and the workers’ memory limit is 6 GiB.
 
+Choose **one** source path. For the standalone K3s test, clone the repository at the pinned commit below. Replace that value with `v1.0.0` when the release tag exists.
+The script accepts full commit SHAs and version tags, checks out the resolved commit in detached mode, and records both ref and SHA.
+It refuses to overwrite local changes, a different checkout, or a directory previously populated by a source archive.
+
 ```bash
+(
+set -euo pipefail
+cosiflow_ref=128f6e87d53307c52c36f61d36211c0bab776ffb
+guest cosi-1 'bash -s' < "$GUIDE/deployment/install-docker.sh"
+guest cosi-1 bash -s -- "$cosiflow_ref" < "$GUIDE/deployment/checkout-cosiflow.sh"
+guest cosi-1 'cat ~/.config/cosiflow-kubernetes/source-ref.txt' \
+  > "$COSIFLOW_RETEST_DIR/cosiflow-kubernetes-source-ref.txt"
+)
+```
+
+Alternatively, when testing the exact working-tree snapshot used in Compose, use this block **instead of the clone block**:
+
+```bash
+(
+set -euo pipefail
+archive="$COSIFLOW_RETEST_DIR/cosiflow-candidate.tar.gz"
 shasum -a 256 -c "$COSIFLOW_RETEST_DIR/cosiflow-candidate.sha256"
 guest cosi-1 'mkdir -p ~/cosiflow && tar -xzf - -C ~/cosiflow' < "$archive"
+guest cosi-1 'bash -s' < "$GUIDE/deployment/install-docker.sh"
+)
+```
+
+Then run this common preparation/deployment block.
+The image archive is an optional optimization: without it, `prepare` builds the missing Airflow and GCN client images on `cosi-1`. If the archive exists, its checksum is required and must pass before loading it. Reuse only images from the same source candidate and runtime UID/GID; the standalone test uses fresh Docker storage.
+The helper scripts are streamed from the Mac, so they need not exist in the older pinned checkout.
+
+```bash
+(
+set -euo pipefail
 guest cosi-1 'mkdir -m 700 -p ~/.config/cosiflow-kubernetes'
 guest cosi-1 'cat > ~/.config/cosiflow-kubernetes/infrastructure.json' \
   < "$GUIDE/deployment/infrastructure.json"
-guest cosi-1 'bash -s' < "$GUIDE/deployment/install-docker.sh"
-shasum -a 256 -c "$COSIFLOW_RETEST_DIR/compose-base-images.sha256"
-guest cosi-1 'docker load' < "$COSIFLOW_RETEST_DIR/compose-base-images.tar"
+if [[ -f "$COSIFLOW_RETEST_DIR/compose-base-images.tar" ]]; then
+  shasum -a 256 -c "$COSIFLOW_RETEST_DIR/compose-base-images.sha256"
+  guest cosi-1 'docker load' < "$COSIFLOW_RETEST_DIR/compose-base-images.tar"
+fi
 for node in cosi-2 cosi-3; do
   guest "$node" 'sudo apt-get install -y nfs-common'
 done
@@ -228,14 +272,14 @@ for node in cosi-2 cosi-3; do
     guest "$node" 'sudo k3s ctr images import -'
 done
 guest cosi-1 'bash -s -- deploy' < "$GUIDE/deployment/deploy-kubernetes.sh"
+)
 ```
 
 [`deploy-kubernetes.sh`](deploy-kubernetes.sh) adapts the NFS manifest to the private address of `cosi-1` and to `/srv/cosiflow-shared`, the same directory as seen by the CLI and by the pods via PVC.
 It creates the Secret on the cluster and waits for the services.
-On the emulated guests, it sets the
-PostgreSQL probe timeout to 10 seconds.
+On the emulated guests, it sets the PostgreSQL probe timeout to 10 seconds.
 The default value of one second caused the endpoint to disappear even while the PostgreSQL process was running.
-It builds the amd64 image using the Kubernetes provider on the same Airflow base image already built on `cosi-4`.
+It builds the amd64 image using the Kubernetes provider on the Airflow base image, either built locally or loaded from the optional Compose archive.
 Import the image onto all three nodes because the initialization Job can be scheduled on any of them.
 Initialize the GCN schema and call the same deployment CLI used in Compose.
 
@@ -249,12 +293,25 @@ The CLI retains completed Jobs with the same hash and proceeds with the rollout.
 If the Job shows as `Failed`, collect the logs and follow the troubleshooting procedure in the Kubernetes chapter.
 
 ```bash
-install_job=cosiflow-install-a6ab07a2-7c367b20c333
-guest cosi-1 bash -s -- "$install_job" <<'BASH'
-set -e
+guest cosi-1 'bash -s' <<'BASH'
+set -euo pipefail
 export KUBECONFIG="$HOME/.kube/config" K3S_CONFIG_FILE=/dev/null
-kubectl -n cosiflow-distributed-test get "job/$1"
-kubectl -n cosiflow-distributed-test wait --for=condition=complete "job/$1" --timeout=10800s
+
+install_job=$(
+  kubectl -n cosiflow-distributed-test get jobs \
+    --sort-by=.metadata.creationTimestamp \
+    -o custom-columns=NAME:.metadata.name --no-headers |
+  awk '/^cosiflow-install-a6ab07a2-/ {name=$0} END {print name}'
+)
+
+test -n "$install_job" || {
+  echo "Nessun Job di installazione FasTP trovato" >&2
+  exit 1
+}
+
+echo "Job selezionato: $install_job"
+kubectl -n cosiflow-distributed-test wait \
+  --for=condition=complete "job/$install_job" --timeout=10800s
 BASH
 guest cosi-1 'bash -s -- deploy' < "$GUIDE/deployment/deploy-kubernetes.sh"
 ```
@@ -314,7 +371,7 @@ On the guest, `sudo dpkg --audit` indicated that the kernel package needed to be
 On a cluster started before `k3s-tcg.yaml` was added, install the file in `/etc/rancher/k3s/config.yaml.d/90-retest-tcg.yaml` on each guest.
 Restart `k3s` one node at a time and verify `/readyz` and the `Ready` status before moving on to the next one.
 
-If the VM freezes during `stage_all_files`, verify that the container has terminated and check the size of the FITS file. If the extraction is partial and the `.gz` file is available, move the partial FITS file out of `data/raw`. 
+If the VM freezes during `stage_all_files`, verify that the container has terminated and check the size of the FITS file. If the extraction is partial and the `.gz` file is available, move the partial FITS file out of `data/raw`.
 On `cosi-1`, use the path to the already downloaded gzip file.
 
 ```bash

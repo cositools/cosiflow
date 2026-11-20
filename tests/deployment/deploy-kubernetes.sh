@@ -120,8 +120,16 @@ PY
     # umask 022: NFS root_squash means files must be group/world-readable for kubelet to traverse them.
     (umask 022; ./deployment/cosiflowctl prepare --config "$site")
 
-    # Verify that the two base images built in the Compose phase are present locally.
-    docker image inspect cosiflow-airflow:site cosiflow-gcn-client:prototype >/dev/null
+    # Compose is optional: build missing base images from this source checkout.
+    # The contexts/UID/GID match the Compose image builds; no Compose service is started.
+    if ! docker image inspect cosiflow-airflow:site >/dev/null 2>&1; then
+      docker build -t cosiflow-airflow:site \
+        --build-arg "UID=$(id -u)" --build-arg "GID=$(id -g)" \
+        -f env/Dockerfile.airflow env
+    fi
+    if ! docker image inspect cosiflow-gcn-client:prototype >/dev/null 2>&1; then
+      docker build -t cosiflow-gcn-client:prototype -f gcn-client/Dockerfile .
+    fi
 
     # Build an AMD64 Kubernetes-specific image that layers on top of the site image.
     docker build -t "$image" --build-arg COSIFLOW_BASE_IMAGE=cosiflow-airflow:site \
