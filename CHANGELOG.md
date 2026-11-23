@@ -4,13 +4,41 @@ This document records the significant changes to COSIflow.
 
 The dates shown are the dates of the annotated tags. The history before
 `v0.1.0`, which started in 2024 but did not contain version tags, is consolidated
-into the first release. The **Unreleased** section describes the current `dev`
-branch after `v0.2.0`; these changes are not part of a release yet.
+into the first release. The **Unreleased** section describes development
+changes not yet part of a release.
 
 ## [Unreleased]
 
+## [v1.0.0] - 2026-11-23
+
+_Compose runtime, module lifecycle, COSIDAG and GCN hardening, and optional
+Kubernetes deployment support._
+
+### Validation and known limitations
+
+- The Compose deployment acceptance test completed successfully on
+  2026-11-18 with FasTP `v0.3.0`, including `init_pipelines` and `cosidag_GeD`.
+  The tested COSIflow revision was
+  `128f6e87d53307c52c36f61d36211c0bab776ffb`; the subsequent commit
+  `c48aa75ea79ed7c8495da472c2e8c8e410415d1e` updated deployment documentation
+  and checkout scripts and was not covered by that acceptance run.
+- Kubernetes deployment support remains experimental. The distributed
+  acceptance test on 2026-11-18–19 did not pass: `background_cut` failed
+  during cluster instability, with a PostgreSQL hostname-resolution error
+  recorded on retry. The distributed `cosidag_GeD` acceptance run was not
+  executed.
+- Module installation and updates with `hot_load_module.sh` require the
+  explicit `docker-compose.development.yaml` override, which enables the
+  necessary write access.
+
 ### Added
 
+- Added optional Kubernetes execution profiles for COSIDAGs and a deployment
+  management tool with Compose and Kubernetes site examples pinned to the
+  FasTP `v0.3.0` commit.
+- Added deployment acceptance tools and guides under `tests/deployment/`,
+  including source-checkout helpers.
+- Added notification subscriptions and COSIflow branding to the Airflow UI.
 - Added a strict, independently buildable MkDocs site for the COSIflow
   installation, architecture, COSIDAG, plugins, GCN client, and development
   guides.
@@ -29,6 +57,8 @@ branch after `v0.2.0`; these changes are not part of a release yet.
 
 ### Changed
 
+- Split the Airflow webserver and scheduler into separate Compose services.
+- Consolidated performance test tools under `tests/performance/`.
 - Airflow initialization and runtime now receive separate environment and mount
   inventories. The base stack uses a dedicated read-only module pool, keeps
   source mounts read-only, and reserves write access for scientific data and
@@ -229,7 +259,8 @@ foundation for subsequent releases.
 - Centralized user, port, credential, COSI directory, and service configuration
   in `docker-compose.yaml`; this baseline does not require a `.env` file.
 
-[Unreleased]: https://github.com/cositools/cosiflow/compare/v0.2.0...dev
+[Unreleased]: https://github.com/cositools/cosiflow/compare/v1.0.0...dual-executor-port
+[v1.0.0]: https://github.com/cositools/cosiflow/compare/v0.2.0...v1.0.0
 [v0.2.0]: https://github.com/cositools/cosiflow/compare/v0.1.1...v0.2.0
 [v0.1.1]: https://github.com/cositools/cosiflow/compare/v0.1.0...v0.1.1
 [v0.1.0]: https://github.com/cositools/cosiflow/tree/v0.1.0
