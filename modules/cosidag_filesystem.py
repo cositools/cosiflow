@@ -1,0 +1,294 @@
+"""Dependency-free filesystem helpers used by COSIDAG sensors.
+
+The helpers in this module deliberately do not import Airflow.  This keeps
+filesystem matching, stability checks, and load benchmarks deterministic and
+cheap to exercise in unit tests.
+"""
+from __future__ import annotations
+
+import fnmatch
+import hashlib
+import os
+import re
+import stat
+from dataclasses import dataclass
+from pathlib import PurePath
+from typing import Iterable, Mapping, Optional
+
+
+DirectorySnapshot = tuple[int, int, int, str]
+
+
+@dataclass(frozen=True)
+class FileRecord:
+    """Metadata collected with one stat during a directory inventory."""
+
+    path: str
+    relative_path: str
+    basename: str
+    size: int
+    mtime_ns: int
+
+    def snapshot(self) -> tuple[int, int]:
+        return self.size, self.mtime_ns
+
+
+def scan_file_inventory(root: str) -> list[FileRecord]:
+    """Return a sorted recursive file inventory using one filesystem walk."""
+    root = os.path.abspath(os.path.expanduser(root))
+    records: list[FileRecord] = []
+    for current_root, dirs, files in os.walk(root):
+        dirs.sort()
+        for filename in sorted(files):
+            path = os.path.join(current_root, filename)
+            try:
+                stat_result = os.stat(path)
+            except OSError:
+                continue
+            if not stat.S_ISREG(stat_result.st_mode):
+                continue
+            records.append(
+                FileRecord(
+                    path=path,
+                    relative_path=os.path.relpath(path, root),
+                    basename=filename,
+                    size=stat_result.st_size,
+                    mtime_ns=stat_result.st_mtime_ns,
+                )
+            )
+    records.sort(key=lambda record: record.path)
+    return records
+
+
+def file_snapshot(path: str) -> Optional[tuple[int, int]]:
+    """Return ``(size, mtime_ns)`` for a regular file, or ``None``."""
+    try:
+        stat_result = os.stat(path)
+    except OSError:
+        return None
+    if not stat.S_ISREG(stat_result.st_mode):
+        return None
+    return stat_result.st_size, stat_result.st_mtime_ns
+
+
+def resolve_confined_relative_path(root: str, relative_path: str) -> str:
+    """Resolve a relative path below ``root`` and reject symlink escape."""
+    root_real = os.path.realpath(os.path.abspath(os.path.expanduser(root)))
+    if os.path.isabs(relative_path):
+        raise ValueError(f"Path must be relative to the candidate folder: {relative_path!r}")
+    resolved = os.path.realpath(os.path.join(root_real, relative_path))
+    try:
+        confined = os.path.commonpath([root_real, resolved]) == root_real
+    except ValueError:
+        confined = False
+    if not confined:
+        raise ValueError(
+            f"Resolved path escapes the candidate folder: {relative_path!r}"
+        )
+    return resolved
+
+
+def canonicalize_confined_path(path: str, roots: Iterable[str]) -> tuple[str, str]:
+    """Return a canonical path and its canonical authorized monitoring root."""
+    canonical = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+    for root in roots:
+        root_real = os.path.realpath(os.path.abspath(os.path.expanduser(root)))
+        try:
+            if os.path.commonpath([root_real, canonical]) == root_real and canonical != root_real:
+                return canonical, root_real
+        except ValueError:
+            continue
+    raise ValueError(f"Candidate path is outside the configured monitoring roots: {path!r}")
+
+
+def directory_snapshot(path: str) -> Optional[DirectorySnapshot]:
+    """Return a compact snapshot that detects directory content changes.
+
+    The count, total size, latest mtime, and digest are all derived from the
+    same inventory.  The digest includes relative path, size, and mtime for
+    every file, so changes that preserve aggregate totals are still detected.
+    """
+    if not os.path.isdir(path):
+        return None
+    inventory = scan_file_inventory(path)
+    digest = hashlib.sha256()
+    total_size = 0
+    latest_mtime_ns = 0
+    for record in inventory:
+        total_size += record.size
+        latest_mtime_ns = max(latest_mtime_ns, record.mtime_ns)
+        digest.update(record.relative_path.encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0")
+        digest.update(str(record.size).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(str(record.mtime_ns).encode("ascii"))
+        digest.update(b"\n")
+    return len(inventory), total_size, latest_mtime_ns, digest.hexdigest()
+
+
+def scan_directory_snapshots(
+    root: str,
+    max_candidate_depth: int,
+) -> dict[str, DirectorySnapshot]:
+    """Build snapshots for nested candidate directories with one tree walk.
+
+    Each regular file is stat'ed once. Direct-file metadata is aggregated
+    bottom-up, so overlapping candidate directories reuse their descendants'
+    summaries instead of recursively walking the same subtree again.
+    """
+    root = os.path.abspath(os.path.expanduser(root))
+    if max_candidate_depth < 1 or not os.path.isdir(root):
+        return {}
+
+    depths: dict[str, int] = {}
+    direct_files: dict[str, list[tuple[str, int, int]]] = {}
+    for current_root, dirs, files in os.walk(root):
+        dirs.sort()
+        files.sort()
+        current_root = os.path.abspath(current_root)
+        relative = os.path.relpath(current_root, root)
+        depth = 0 if relative == os.curdir else len(PurePath(relative).parts)
+        depths[current_root] = depth
+        records: list[tuple[str, int, int]] = []
+        for filename in files:
+            path = os.path.join(current_root, filename)
+            try:
+                stat_result = os.stat(path)
+            except OSError:
+                continue
+            if stat.S_ISREG(stat_result.st_mode):
+                records.append((filename, stat_result.st_size, stat_result.st_mtime_ns))
+        direct_files[current_root] = records
+
+    children: dict[str, list[str]] = {directory: [] for directory in depths}
+    for directory in depths:
+        if directory == root:
+            continue
+        parent = os.path.dirname(directory)
+        if parent in children:
+            children[parent].append(directory)
+
+    aggregated: dict[str, DirectorySnapshot] = {}
+    ordered_directories = sorted(depths, key=lambda path: (depths[path], path), reverse=True)
+    for directory in ordered_directories:
+        digest = hashlib.sha256()
+        file_count = 0
+        total_size = 0
+        latest_mtime_ns = 0
+
+        for filename, size, mtime_ns in direct_files[directory]:
+            file_count += 1
+            total_size += size
+            latest_mtime_ns = max(latest_mtime_ns, mtime_ns)
+            digest.update(b"F\0")
+            digest.update(filename.encode("utf-8", errors="surrogateescape"))
+            digest.update(b"\0")
+            digest.update(str(size).encode("ascii"))
+            digest.update(b"\0")
+            digest.update(str(mtime_ns).encode("ascii"))
+            digest.update(b"\n")
+
+        for child in sorted(children[directory]):
+            child_count, child_size, child_mtime_ns, child_digest = aggregated[child]
+            if child_count == 0:
+                continue
+            file_count += child_count
+            total_size += child_size
+            latest_mtime_ns = max(latest_mtime_ns, child_mtime_ns)
+            digest.update(b"D\0")
+            digest.update(os.path.basename(child).encode("utf-8", errors="surrogateescape"))
+            digest.update(b"\0")
+            digest.update(str(child_count).encode("ascii"))
+            digest.update(b"\0")
+            digest.update(str(child_size).encode("ascii"))
+            digest.update(b"\0")
+            digest.update(str(child_mtime_ns).encode("ascii"))
+            digest.update(b"\0")
+            digest.update(child_digest.encode("ascii"))
+            digest.update(b"\n")
+
+        aggregated[directory] = (
+            file_count,
+            total_size,
+            latest_mtime_ns,
+            digest.hexdigest(),
+        )
+
+    return {
+        directory: aggregated[directory]
+        for directory, depth in depths.items()
+        if 1 <= depth <= max_candidate_depth
+    }
+
+
+def _matches_glob(record: FileRecord, pattern: str) -> bool:
+    normalized = pattern.replace(os.sep, "/")
+    relative = record.relative_path.replace(os.sep, "/")
+    if "/" not in normalized:
+        return fnmatch.fnmatchcase(record.basename, normalized)
+    return PurePath(relative).match(normalized)
+
+
+def resolve_patterns(
+    inventory: Iterable[FileRecord],
+    patterns: Mapping[str, str],
+    select_policy: str,
+) -> tuple[dict[str, FileRecord], list[str]]:
+    """Resolve every pattern from one materialized inventory.
+
+    Returns the selected records and keys that have no match.  Regex patterns
+    retain the existing ``re.match``-against-basename behavior.
+    """
+    if select_policy not in {"first", "latest_mtime"}:
+        raise ValueError(
+            f"Unsupported select_policy {select_policy!r}; expected 'first' or 'latest_mtime'"
+        )
+
+    records = list(inventory)
+    selected: dict[str, FileRecord] = {}
+    missing: list[str] = []
+    for key, pattern in patterns.items():
+        if not isinstance(pattern, str):
+            raise TypeError(f"Pattern for {key!r} must be a string")
+        if pattern.startswith("regex:"):
+            regex = re.compile(pattern[len("regex:") :])
+            matches = [record for record in records if regex.match(record.basename)]
+        else:
+            matches = [record for record in records if _matches_glob(record, pattern)]
+
+        if not matches:
+            missing.append(key)
+            continue
+        if select_policy == "latest_mtime":
+            selected[key] = max(matches, key=lambda record: record.mtime_ns)
+        else:
+            selected[key] = min(matches, key=lambda record: record.path)
+    return selected, missing
+
+
+def stability_observation(
+    previous: Optional[Mapping[str, object]],
+    identity: str,
+    snapshot: object,
+    observed_at: float,
+    idle_seconds: int,
+) -> tuple[bool, dict[str, object]]:
+    """Compare a snapshot with the prior observation and track stable time."""
+    if idle_seconds < 0:
+        raise ValueError("idle_seconds must be non-negative")
+    serialized_snapshot = list(snapshot) if isinstance(snapshot, tuple) else snapshot
+    current = {
+        "identity": identity,
+        "snapshot": serialized_snapshot,
+        "stable_since": observed_at,
+    }
+    if not previous:
+        return False, current
+    if previous.get("identity") != identity or previous.get("snapshot") != serialized_snapshot:
+        return False, current
+    try:
+        stable_since = float(previous["stable_since"])
+    except (KeyError, TypeError, ValueError):
+        return False, current
+    current["stable_since"] = stable_since
+    return (observed_at - stable_since) >= idle_seconds, current

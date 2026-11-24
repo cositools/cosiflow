@@ -1,0 +1,55 @@
+<style id="cosiflow-shared-styles">
+  :root {
+    --cosiflow-page-padding-block: 18px;
+    --cosiflow-page-padding-inline: 24px;
+    --cosiflow-page-max-width: 1200px;
+    --cosiflow-heading-color: #2c3e50;
+    --cosiflow-muted-color: #666;
+  }
+
+  .cosiflow-page {
+    box-sizing: border-box;
+    padding:
+      var(--cosiflow-page-padding-block)
+      var(--cosiflow-page-padding-inline);
+    width: 100%;
+  }
+
+  .cosiflow-page--contained {
+    margin-inline: auto;
+    max-width: var(--cosiflow-page-max-width);
+  }
+
+  .cosiflow-page--flush {
+    --cosiflow-page-padding-block: 0;
+    --cosiflow-page-padding-inline: 0;
+  }
+
+  .cosiflow-page-title {
+    color: var(--cosiflow-heading-color);
+  }
+
+  .cosiflow-title-row {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: space-between;
+  }
+
+  .cosiflow-muted {
+    color: var(--cosiflow-muted-color);
+  }
+
+  body[data-color-scheme="dark"] {
+    --cosiflow-heading-color: #e0e0e0;
+    --cosiflow-muted-color: #aaa;
+  }
+
+  @media (max-width: 768px) {
+    :root {
+      --cosiflow-page-padding-block: 14px;
+      --cosiflow-page-padding-inline: 16px;
+    }
+  }
+</style>

@@ -1,0 +1,165 @@
+# Installation
+
+## Prerequisites
+
+- Docker Engine or Docker Desktop with Docker Compose v2.
+- A Unix-like host shell for the checked-in helper scripts.
+- GCN Kafka client credentials for the configured consumer. Compose requires
+  these values before creating the services.
+
+Clone the repository into a writable workspace. No fixed home-directory path
+is required for the core stack.
+
+## Configure the environment
+
+Create the ignored environment file from its non-sensitive template:
+
+```bash
+cd cosiflow/env
+cp .env.example .env
+python3 bootstrap-secrets.py
+chmod 600 .env
+```
+
+`bootstrap-secrets.py` generates local Airflow and database values without
+printing them. Add the assigned GCN credentials to the two remaining fields:
+
+```dotenv
+GCN_CLIENT_ID=<your-gcn-client-id>
+GCN_CLIENT_SECRET=<your-gcn-client-secret>
+```
+
+See [Configuration](configuration.md) for the complete contract and credential
+rotation guidance.
+
+## Prepare persistent directories
+
+From the repository root:
+
+```bash
+mkdir -p data/postgres_data data/gcn_mysql_data data/heasarc data/logs modules-pool
+```
+
+These directories are bind-mounted into the containers. They remain on disk
+after `docker compose down` and are not removed by `docker compose down -v`.
+
+## Build and start
+
+Run Compose from `cosiflow/env`:
+
+```bash
+docker compose build
+docker compose up -d
+docker compose ps
+```
+
+When upgrading an existing checkout from the former combined `airflow`
+service, remove the retired container once before starting the split runtime:
+
+```bash
+docker compose down --remove-orphans
+docker compose up -d
+```
+
+This prevents the old webserver-plus-scheduler container from running beside
+the dedicated `airflow-webserver` and `airflow-scheduler` services.
+
+Startup is ordered as follows:
+
+1. PostgreSQL and GCN MySQL pass their health checks.
+2. `airflow-init` validates required runtime values, migrates the Airflow
+   database, re-encrypts supported Airflow secrets, synchronizes permissions,
+   reconciles the administrator, and provisions COSIflow roles.
+3. `airflow-webserver` and `airflow-scheduler` start independently only after
+   initialization succeeds. Each container runs one Airflow process as PID 1.
+4. The GCN client starts after its MySQL database is healthy.
+
+Follow Airflow logs with:
+
+```bash
+docker compose logs -f airflow-webserver airflow-scheduler
+```
+
+If the web UI reports that the Airflow scheduler service is unavailable, check
+its state and restart only that service:
+
+```bash
+docker compose ps airflow-scheduler
+docker compose restart airflow-scheduler
+docker compose logs --tail=100 airflow-scheduler
+```
+
+The web UI remains available while the scheduler is stopped and warns that DAG
+updates and new task scheduling are temporarily suspended.
+
+The default local endpoints are:
+
+- Airflow: `http://127.0.0.1:8080/home`
+- MailHog: `http://127.0.0.1:8025`
+
+The initial Airflow username defaults to `admin`; its password is the value of
+`AIRFLOW_ADMIN_PASSWORD` in the ignored `.env` file.
+
+Open a shell in the scheduler container for Airflow CLI and module operations:
+
+```bash
+docker compose exec airflow-scheduler bash
+```
+
+## Optional development and X11 access
+
+The base stack mounts DAGs, plugins, pipeline code, callbacks, modules, Python
+environments, and the dedicated module pool read-only. It does not mount the
+repository root, parent workspace, `env/.env`, benchmark scripts, or the host
+X11 socket.
+
+Module installation and containerized benchmarks require the development
+override because they create module links or environments:
+
+```bash
+docker compose down
+docker compose -f docker-compose.yaml -f docker-compose.development.yaml up -d
+```
+
+Use the same two `-f` arguments for subsequent `build`, `exec`, `logs`, and
+`down` commands in that session. The override grants the scheduler write access
+only to the DAG, pipeline, and managed-environment directories and mounts
+`test/` read-only. The webserver retains read-only source mounts.
+
+For a trusted graphical task, add the X11 override and provide `DISPLAY`
+explicitly:
+
+```bash
+DISPLAY=:0 docker compose \
+  -f docker-compose.yaml \
+  -f docker-compose.x11.yaml \
+  up -d
+```
+
+The X11 socket is mounted read-only into `airflow-scheduler` only. Do not enable
+this override for ordinary web, scheduler, GCN, or batch workloads.
+
+## Stop the stack
+
+```bash
+docker compose down
+```
+
+The checked-in Compose definition is for local development. It binds user
+interfaces to loopback and does not publish either database. Shared deployments
+must put an authenticated HTTPS reverse proxy in front of the UI and provide
+equivalent configuration through a managed secret system.
+
+## Next step
+
+Read [COSIflow modules](../architecture/modules.md) before installing FasTP or
+another scientific pipeline.
+
+## Site-owned deployment configuration
+
+An optional `deployment/cosiflowctl` command now generates and manages isolated
+Compose or Kubernetes application instances from `site.yaml`. See the
+deployment guide at `deployment/README.md` in the cloned repository
+for examples, dependencies, an offline plan and explicit environment installation.
+This new CLI needs its own runtime acceptance; the manual procedure remains
+available. Site files and credentials belong outside the source checkout.

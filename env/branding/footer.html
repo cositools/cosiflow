@@ -1,0 +1,20 @@
+{% block footer %}
+  {% if auth_manager.is_logged_in() %}
+    <footer class="footer">
+      <div class="container">
+        <div>
+          COSIflow version:
+          <a href="__COSIFLOW_VERSION_URL__" target="_blank" rel="noopener noreferrer">__COSIFLOW_VERSION_LABEL__</a>
+          <br>
+          Powered by Airflow v:
+          {% if airflow_version %}
+            <a href="https://pypi.org/project/apache-airflow/{{ airflow_version }}/" target="_blank" rel="noopener noreferrer">{{ airflow_version }}</a>
+          {% else %}
+            N/A
+          {% endif %}
+        </div>
+        <div></div>
+      </div>
+    </footer>
+  {% endif %}
+{% endblock %}

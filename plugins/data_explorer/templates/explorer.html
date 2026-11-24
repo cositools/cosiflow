@@ -1,0 +1,906 @@
+{% extends "airflow/main.html" %}
+
+{% block title %}COSI Data Explorer{% endblock %}
+
+{% block head_css %}
+{{ super() }}
+{% include "cosiflow_ui/styles.html" %}
+<style>
+    /* Main body styling with clean, modern appearance */
+    /* Note: body margin is handled by Airflow layout */
+    
+    /* Page title styling */
+    h1 {
+        color: #2c3e50;
+    }
+
+    /* Navigation buttons container */
+    .nav-buttons {
+        margin-bottom: 20px;
+    }
+
+    /* Individual navigation button styling */
+    .nav-buttons a {
+        display: inline-block;
+        background-color: #3498db;
+        color: white;
+        padding: 10px 16px;
+        margin-right: 10px;
+        text-decoration: none;
+        border-radius: 4px;
+        font-weight: bold;
+    }
+
+    /* Hover effect for navigation buttons */
+    .nav-buttons a:hover {
+        background-color: #2980b9;
+        text-decoration: none;
+        color: white;
+    }
+
+    /* Current path display styling */
+    .current-path {
+        background-color: #ecf0f1;
+        padding: 10px;
+        border-radius: 4px;
+        margin-bottom: 20px;
+        font-family: monospace;
+        border-left: 4px solid #3498db;
+    }
+
+    /* Remove default list styling */
+    ul {
+        list-style-type: none;
+        padding-left: 0;
+    }
+
+    /* List item spacing */
+    li {
+        margin: 8px 0;
+    }
+
+    /* File and folder link styling */
+    a.file-link {
+        color: #34495e;
+        text-decoration: none;
+    }
+
+    /* Hover effect for file and folder links */
+    a.file-link:hover {
+        text-decoration: underline;
+    }
+
+    /* Main container with two columns */
+    .main-container {
+        display: flex;
+        gap: 20px;
+        min-height: 600px;
+    }
+
+    /* Left column for file/folder listing */
+    .file-list {
+        flex: 1;
+        min-width: 300px;
+    }
+
+    /* Right column for file preview */
+    .preview-panel {
+        flex: 1;
+        min-width: 300px;
+        background-color: #ffffff;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 20px;
+        position: sticky;
+        top: 20px;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+    
+    /* Dark mode adjustments for preview panel */
+    body[data-color-scheme="dark"] .preview-panel {
+        background-color: #2c2c2c;
+        border-color: #444;
+    }
+    
+    body[data-color-scheme="dark"] .preview-title {
+        color: #e0e0e0;
+    }
+
+    /* Preview panel header */
+    .preview-header {
+        border-bottom: 1px solid #eee;
+        padding-bottom: 10px;
+        margin-bottom: 15px;
+    }
+
+    .preview-title {
+        font-weight: bold;
+        color: #2c3e50;
+        margin: 0;
+    }
+
+    .preview-filename {
+        color: #7f8c8d;
+        font-size: 0.9em;
+        margin: 5px 0 0 0;
+    }
+
+    /* Preview content area */
+    .preview-content {
+        min-height: 200px;
+    }
+
+    /* Image preview styling */
+    .preview-image-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        flex-wrap: wrap;
+    }
+
+    .preview-image-toolbar button,
+    .preview-image-toolbar a {
+        min-width: 36px;
+        padding: 6px 10px;
+        border: 1px solid #bdc3c7;
+        border-radius: 4px;
+        background: #ffffff;
+        color: #2c3e50;
+        cursor: pointer;
+        text-decoration: none;
+        text-align: center;
+    }
+
+    .preview-image-toolbar button:hover,
+    .preview-image-toolbar a:hover {
+        border-color: #3498db;
+        color: #2980b9;
+        text-decoration: none;
+    }
+
+    .preview-image-toolbar button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+    }
+
+    .preview-zoom-level {
+        min-width: 52px;
+        color: #566573;
+        font-variant-numeric: tabular-nums;
+        text-align: center;
+    }
+
+    .preview-open-image {
+        margin-left: auto;
+    }
+
+    .preview-image-viewport {
+        width: 100%;
+        max-height: 55vh;
+        overflow: auto;
+        border: 1px solid #e1e8ed;
+        border-radius: 4px;
+        background:
+            linear-gradient(45deg, #f2f2f2 25%, transparent 25%),
+            linear-gradient(-45deg, #f2f2f2 25%, transparent 25%),
+            linear-gradient(45deg, transparent 75%, #f2f2f2 75%),
+            linear-gradient(-45deg, transparent 75%, #f2f2f2 75%);
+        background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+        background-size: 16px 16px;
+    }
+
+    .preview-image {
+        display: block;
+        width: 100%;
+        max-width: none;
+        height: auto;
+        margin: 0 auto;
+        cursor: zoom-in;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: width 0.12s ease;
+        user-select: none;
+        -webkit-user-drag: none;
+    }
+
+    .preview-image-help {
+        margin: 8px 0 0;
+        color: #7f8c8d;
+        font-size: 0.82em;
+        text-align: center;
+    }
+
+    body[data-color-scheme="dark"] .preview-image-toolbar button,
+    body[data-color-scheme="dark"] .preview-image-toolbar a {
+        background: #2c2c2c;
+        border-color: #555;
+        color: #e0e0e0;
+    }
+
+    body[data-color-scheme="dark"] .preview-zoom-level {
+        color: #c7c7c7;
+    }
+
+    .preview-caption {
+        margin-top: 16px;
+        padding: 14px;
+        border-left: 4px solid #3498db;
+        background-color: #f4f8fb;
+        color: #2c3e50;
+        line-height: 1.5;
+    }
+
+    .preview-caption-title {
+        display: block;
+        margin-bottom: 6px;
+    }
+
+    .preview-metadata {
+        margin-top: 12px;
+        padding: 12px 14px;
+        border: 1px solid #e1e8ed;
+        border-radius: 4px;
+        background-color: #fafafa;
+        font-size: 0.88em;
+    }
+
+    .preview-metadata dl {
+        display: grid;
+        grid-template-columns: minmax(100px, auto) 1fr;
+        gap: 5px 12px;
+        margin: 0;
+    }
+
+    .preview-metadata dt {
+        font-weight: bold;
+        color: #566573;
+    }
+
+    .preview-metadata dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+    }
+
+    body[data-color-scheme="dark"] .preview-caption,
+    body[data-color-scheme="dark"] .preview-metadata {
+        background-color: #252525;
+        border-color: #4a4a4a;
+        color: #e0e0e0;
+    }
+
+    body[data-color-scheme="dark"] .preview-metadata dt {
+        color: #b8c7d1;
+    }
+
+    /* Text preview styling */
+    .preview-text {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 4px;
+        padding: 15px;
+        font-family: 'Courier New', monospace;
+        font-size: 0.9em;
+        white-space: pre-wrap;
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    body[data-color-scheme="dark"] .preview-text {
+        background-color: #1a1a1a;
+        border-color: #444;
+        color: #e0e0e0;
+    }
+
+    /* Loading and error states */
+    .preview-loading {
+        text-align: center;
+        color: #7f8c8d;
+        padding: 40px;
+    }
+
+    .preview-error {
+        color: #e74c3c;
+        text-align: center;
+        padding: 40px;
+    }
+
+    /* File type indicators */
+    .file-type-icon {
+        margin-right: 8px;
+    }
+
+    /* File button styling */
+    .file-item {
+        margin: 8px 0;
+    }
+
+    .file-button {
+        width: 100%;
+        text-align: left;
+        background: #ffffff;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        padding: 12px 16px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        position: relative;
+    }
+    
+    body[data-color-scheme="dark"] .file-button {
+        background: #2c2c2c;
+        border-color: #444;
+        color: #e0e0e0;
+    }
+
+    .file-button:hover {
+        background-color: #f8f9fa;
+        border-color: #3498db;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    body[data-color-scheme="dark"] .file-button:hover {
+        background-color: #383838;
+    }
+
+    .file-button:active {
+        transform: translateY(1px);
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+
+    .file-button.active {
+        background-color: #e3f2fd;
+        border-color: #2196f3;
+        box-shadow: 0 2px 8px rgba(33, 150, 243, 0.2);
+    }
+    
+    body[data-color-scheme="dark"] .file-button.active {
+        background-color: #1565c0;
+        border-color: #42a5f5;
+        color: white;
+    }
+
+    .file-type-icon {
+        font-size: 18px;
+        flex-shrink: 0;
+    }
+
+    .file-name {
+        flex: 1;
+        font-weight: 500;
+        color: #2c3e50;
+    }
+    
+    body[data-color-scheme="dark"] .file-name {
+        color: #e0e0e0;
+    }
+
+    .file-actions {
+        display: flex;
+        gap: 8px;
+        font-size: 12px;
+        color: #7f8c8d;
+    }
+
+    .preview-hint, .download-hint {
+        opacity: 0.7;
+        transition: opacity 0.2s ease;
+    }
+
+    .file-button:hover .preview-hint {
+        opacity: 1;
+        color: #2196f3;
+    }
+
+    .file-button:hover .download-hint {
+        opacity: 1;
+        color: #4caf50;
+    }
+
+    /* Responsive design */
+    @media (max-width: 768px) {
+        .main-container {
+            flex-direction: column;
+        }
+        
+        .preview-panel {
+            position: static;
+            max-height: none;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="cosiflow-page cosiflow-page--contained">
+    <!-- Main page header -->
+    <h1 class="cosiflow-page-title">Data File Browser</h1>
+
+    <!-- Navigation buttons for easy access to other pages -->
+    <div class="nav-buttons">
+        <a href="{{ url_for('HEASARCExplorerView.explorer_home') }}">Explorer Home</a>
+        {% if foldername %}
+            <a href="{{ url_for('HEASARCExplorerView.explorer_home') }}">← Back to Root</a>
+        {% endif %}
+    </div>
+
+    <!-- Display error message if any -->
+    {% if error_message %}
+        <div style="background-color: #e74c3c; color: white; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
+            <strong>Error:</strong> {{ error_message }}
+        </div>
+    {% endif %}
+
+    <!-- Breadcrumb navigation -->
+    {% if foldername %}
+        <div class="breadcrumb" style="background-color: #ecf0f1; padding: 10px; border-radius: 4px; margin-bottom: 20px; font-family: monospace;">
+            <a href="{{ url_for('HEASARCExplorerView.explorer_home') }}">🏠 Root</a>
+            {% set path_parts = foldername.split('/') %}
+            {% for i in range(path_parts|length) %}
+                {% if i < path_parts|length - 1 %}
+                    <span> / </span>
+                    <a href="{{ url_for('HEASARCExplorerView.explorer_folder', foldername=path_parts[:i+1]|join('/')) }}">{{ path_parts[i] }}</a>
+                {% else %}
+                    <span> / </span>
+                    <strong>{{ path_parts[i] }}</strong>
+                {% endif %}
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <!-- Main content area with two columns -->
+    <div class="main-container">
+        <!-- Left column: File and folder listing -->
+        <div class="file-list">
+            <!-- Display folders if any exist in the current directory -->
+            {% if folders and folders|length > 0 %}
+                <h2>Folders:</h2>
+                <ul>
+                {% for folder in folders %}
+                    <li>
+                        <!-- Folder links navigate to subdirectories -->
+                        {% if folder == ".." %}
+                            <!-- Parent directory navigation -->
+                            {% set parent_path = foldername.split('/')[:-1]|join('/') %}
+                            {% if parent_path %}
+                                <a class="file-link" href="{{ url_for('HEASARCExplorerView.explorer_folder', foldername=parent_path) }}">
+                                    📁 .. (Parent Directory)
+                                </a>
+                            {% else %}
+                                <a class="file-link" href="{{ url_for('HEASARCExplorerView.explorer_home') }}">
+                                    📁 .. (Parent Directory)
+                                </a>
+                            {% endif %}
+                        {% elif foldername %}
+                            <a class="file-link" href="{{ url_for('HEASARCExplorerView.explorer_folder', foldername=foldername ~ '/' ~ folder) }}">
+                                📁 {{ folder }}
+                            </a>
+                        {% else %}
+                            <a class="file-link" href="{{ url_for('HEASARCExplorerView.explorer_folder', foldername=folder) }}">
+                                📁 {{ folder }}
+                            </a>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+                </ul>
+            {% endif %}
+
+            <!-- Display files if any exist in the current directory -->
+            {% if files and files|length > 0 %}
+                <h2>Files in {{ foldername }}:</h2>
+                <ul>
+                {% for file in files %}
+                    <li class="file-item">
+                        <!-- File button for preview and download -->
+                        <button class="file-button preview-file" 
+                                data-filepath="{{ foldername ~ '/' ~ file if foldername else file }}"
+                                data-filename="{{ file }}"
+                                data-download-url="{{ url_for('HEASARCExplorerView.download_file', filepath=foldername ~ '/' ~ file) }}"
+                                title="Single-click to preview, double-click to download">
+                            <span class="file-type-icon">{{ get_file_icon(file) }}</span>
+                            <span class="file-name">{{ file }}</span>
+                        </button>
+                    </li>
+                {% endfor %}
+                </ul>
+            {% endif %}
+        </div>
+
+        <!-- Right column: File preview panel -->
+        <div class="preview-panel">
+            <div class="preview-header">
+                <h3 class="preview-title">Select a plot</h3>
+                <p class="preview-filename">Click on a file to preview its contents</p>
+            </div>
+            <div class="preview-content">
+                <div class="preview-loading" id="preview-placeholder">
+                    <p>Select a file to preview its contents</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- JavaScript for file preview functionality -->
+<script>
+    const previewUrlTemplate = {{ url_for(
+        'HEASARCExplorerView.preview_file',
+        filepath='__FILEPATH__'
+    ) | tojson }};
+    const imageUrlTemplate = {{ url_for(
+        'HEASARCExplorerView.image_file',
+        filepath='__FILEPATH__'
+    ) | tojson }};
+    const downloadUrlTemplate = {{ url_for(
+        'HEASARCExplorerView.download_file',
+        filepath='__FILEPATH__'
+    ) | tojson }};
+    const allowedInlineImageMimeTypes = new Set([
+        'image/png',
+        'image/jpeg',
+        'image/gif',
+        'image/bmp',
+        'image/webp',
+    ]);
+
+    function createPreviewElement(tagName, options = {}) {
+        const element = document.createElement(tagName);
+        if (options.className) {
+            element.className = options.className;
+        }
+        if (options.text !== undefined) {
+            element.textContent = String(options.text);
+        }
+        return element;
+    }
+
+    function replacePreviewContent(...nodes) {
+        const previewContent = document.querySelector('.preview-content');
+        if (previewContent) {
+            previewContent.replaceChildren(...nodes);
+        }
+    }
+
+    function setPreviewTitle(title) {
+        const previewTitle = document.querySelector('.preview-title');
+        if (previewTitle) {
+            previewTitle.textContent = title;
+        }
+    }
+
+    function showPreviewMessage(className, ...messages) {
+        const container = createPreviewElement('div', { className });
+        messages.forEach(message => {
+            container.append(createPreviewElement('p', { text: message }));
+        });
+        replacePreviewContent(container);
+    }
+
+    function validateRouteUrl(rawUrl, trustedTemplate) {
+        if (typeof rawUrl !== 'string' || !rawUrl) {
+            throw new TypeError('Missing route URL');
+        }
+
+        const marker = '__FILEPATH__';
+        const trustedUrl = new URL(trustedTemplate, window.location.origin);
+        const markerIndex = trustedUrl.pathname.indexOf(marker);
+        if (markerIndex < 0) {
+            throw new TypeError('Invalid trusted route template');
+        }
+
+        const candidate = new URL(rawUrl, window.location.origin);
+        const pathPrefix = trustedUrl.pathname.slice(0, markerIndex);
+        const pathSuffix = trustedUrl.pathname.slice(markerIndex + marker.length);
+        const allowedProtocol = candidate.protocol === 'http:' || candidate.protocol === 'https:';
+        const allowedPath = candidate.pathname.startsWith(pathPrefix)
+            && candidate.pathname.endsWith(pathSuffix)
+            && candidate.pathname.length > pathPrefix.length + pathSuffix.length;
+
+        if (!allowedProtocol
+                || candidate.origin !== window.location.origin
+                || candidate.username
+                || candidate.password
+                || candidate.search
+                || candidate.hash
+                || !allowedPath) {
+            throw new TypeError('Unsupported route URL');
+        }
+        return candidate.href;
+    }
+
+    function isValidBase64(value) {
+        return typeof value === 'string'
+            && value.length > 0
+            && value.length % 4 === 0
+            && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
+    }
+
+    function validateInlineImagePayload(data) {
+        if (!allowedInlineImageMimeTypes.has(data.mime_type) || !isValidBase64(data.content)) {
+            throw new TypeError('Unsupported inline image payload');
+        }
+        return `data:${data.mime_type};base64,${data.content}`;
+    }
+
+    function formatFileSize(size) {
+        const parsedSize = Number(size);
+        return Number.isSafeInteger(parsedSize) && parsedSize >= 0
+            ? `${parsedSize} bytes`
+            : 'unknown';
+    }
+
+    function createImageMetadata(data) {
+        const fragment = document.createDocumentFragment();
+        if (data.caption) {
+            const caption = createPreviewElement('div', { className: 'preview-caption' });
+            caption.append(createPreviewElement('strong', {
+                className: 'preview-caption-title',
+                text: 'Figure caption',
+            }));
+            caption.append(document.createTextNode(String(data.caption)));
+            fragment.append(caption);
+        }
+
+        const hiddenCaptionKeys = new Set(['Description', 'Caption']);
+        const metadataEntries = Object.entries(data.metadata || {})
+            .filter(([key]) => !hiddenCaptionKeys.has(key));
+        if (metadataEntries.length) {
+            const metadata = createPreviewElement('div', { className: 'preview-metadata' });
+            const list = document.createElement('dl');
+            metadataEntries.forEach(([key, value]) => {
+                list.append(createPreviewElement('dt', { text: key }));
+                list.append(createPreviewElement('dd', { text: value }));
+            });
+            metadata.append(list);
+            fragment.append(metadata);
+        }
+        return fragment;
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const previewButtons = document.querySelectorAll('.preview-file');
+        let currentPreviewButton = null;
+
+        previewButtons.forEach(button => {
+            let clickTimeout;
+
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+                const filepath = this.getAttribute('data-filepath');
+                const filename = this.getAttribute('data-filename');
+                clearTimeout(clickTimeout);
+                clickTimeout = setTimeout(() => {
+                    toggleFilePreview(this, filepath, filename);
+                }, 200);
+            });
+
+            button.addEventListener('dblclick', function(e) {
+                e.preventDefault();
+                clearTimeout(clickTimeout);
+                try {
+                    const downloadUrl = validateRouteUrl(
+                        this.getAttribute('data-download-url'),
+                        downloadUrlTemplate
+                    );
+                    window.location.href = downloadUrl;
+                } catch (error) {
+                    console.error('Rejected download URL', error);
+                    setPreviewTitle('Download unavailable');
+                    showPreviewMessage('preview-error', 'The download URL is invalid.');
+                }
+            });
+        });
+
+        function toggleFilePreview(button, filepath, filename) {
+            previewButtons.forEach(btn => btn.classList.remove('active'));
+            if (currentPreviewButton === button) {
+                closePreview();
+                currentPreviewButton = null;
+                return;
+            }
+
+            button.classList.add('active');
+            currentPreviewButton = button;
+            loadFilePreview(filepath, filename);
+        }
+
+        function closePreview() {
+            const previewFilename = document.querySelector('.preview-filename');
+            showPreviewMessage(
+                'preview-loading',
+                'Select a file to preview its contents',
+                'Click once on any file to see its preview here'
+            );
+            if (previewFilename) {
+                previewFilename.textContent = 'Click on a file to preview its contents';
+            }
+            setPreviewTitle('Select a plot');
+        }
+    });
+
+    function loadFilePreview(filepath, filename) {
+        const previewFilename = document.querySelector('.preview-filename');
+        if (previewFilename) {
+            previewFilename.textContent = filename;
+        }
+        setPreviewTitle('Loading plot...');
+        showPreviewMessage('preview-loading', 'Loading preview...');
+
+        const encodedFilepath = filepath
+            .split('/')
+            .map(segment => encodeURIComponent(segment))
+            .join('/');
+        let previewUrl;
+        try {
+            previewUrl = validateRouteUrl(
+                previewUrlTemplate.replace('__FILEPATH__', encodedFilepath),
+                previewUrlTemplate
+            );
+        } catch (error) {
+            console.error('Rejected preview URL', error);
+            setPreviewTitle('Preview unavailable');
+            showPreviewMessage('preview-error', 'The preview URL is invalid.');
+            return;
+        }
+
+        fetch(previewUrl)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Preview request failed with status ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => displayPreview(data, filename))
+            .catch(error => {
+                console.error('Error loading preview:', error);
+                setPreviewTitle('Preview unavailable');
+                showPreviewMessage('preview-error', 'Unable to load the file preview.');
+            });
+    }
+
+    function displayPreview(data, filename) {
+        try {
+            if (!data || typeof data !== 'object') {
+                throw new TypeError('Invalid preview response');
+            }
+            if (data.error) {
+                setPreviewTitle('Preview unavailable');
+                showPreviewMessage('preview-error', String(data.error));
+                return;
+            }
+
+            if (data.content_type === 'image') {
+                const imageUrl = validateRouteUrl(data.image_url, imageUrlTemplate);
+                const inlineImageUrl = validateInlineImagePayload(data);
+                setPreviewTitle(String(data.preview_title || 'Plot'));
+
+                const toolbar = createPreviewElement('div', { className: 'preview-image-toolbar' });
+                toolbar.setAttribute('role', 'toolbar');
+                toolbar.setAttribute('aria-label', 'Image zoom controls');
+                const zoomOut = createPreviewElement('button', { className: 'preview-zoom-out', text: '−' });
+                const zoomLabel = createPreviewElement('span', { className: 'preview-zoom-level', text: '100%' });
+                const zoomIn = createPreviewElement('button', { className: 'preview-zoom-in', text: '+' });
+                const zoomReset = createPreviewElement('button', { className: 'preview-zoom-reset', text: 'Fit' });
+                [zoomOut, zoomIn, zoomReset].forEach(button => { button.type = 'button'; });
+                zoomOut.title = 'Zoom out';
+                zoomOut.setAttribute('aria-label', 'Zoom out');
+                zoomIn.title = 'Zoom in';
+                zoomIn.setAttribute('aria-label', 'Zoom in');
+                zoomReset.title = 'Fit image to preview';
+                zoomLabel.setAttribute('aria-live', 'polite');
+                const openImage = createPreviewElement('a', {
+                    className: 'preview-open-image',
+                    text: 'Open full image ↗',
+                });
+                openImage.href = imageUrl;
+                openImage.target = '_blank';
+                openImage.rel = 'noopener noreferrer';
+                openImage.title = 'Open the full-size image in a new tab';
+                toolbar.append(zoomOut, zoomLabel, zoomIn, zoomReset, openImage);
+
+                const viewport = createPreviewElement('div', { className: 'preview-image-viewport' });
+                const image = createPreviewElement('img', { className: 'preview-image' });
+                image.src = inlineImageUrl;
+                image.alt = String(filename || '');
+                image.title = 'Double-click to open the full-size image in a new tab';
+                viewport.append(image);
+                const help = createPreviewElement('p', {
+                    className: 'preview-image-help',
+                    text: 'Use − / + to zoom. Double-click the image to open it full-size.',
+                });
+                replacePreviewContent(toolbar, viewport, help, createImageMetadata(data));
+                initializeImagePreview({
+                    viewport,
+                    image,
+                    zoomOut,
+                    zoomIn,
+                    zoomReset,
+                    zoomLabel,
+                    imageUrl,
+                });
+            } else if (data.content_type === 'image_metadata') {
+                const imageUrl = validateRouteUrl(data.image_url, imageUrlTemplate);
+                setPreviewTitle(String(data.preview_title || 'Plot'));
+                const notice = createPreviewElement('div', { className: 'preview-error' });
+                notice.append(createPreviewElement('p', {
+                    text: 'The image cannot be shown as an inline preview.',
+                }));
+                notice.append(createPreviewElement('p', {
+                    text: `File size: ${formatFileSize(data.size)}`,
+                }));
+                const linkParagraph = document.createElement('p');
+                const link = createPreviewElement('a', { text: 'Open the full-size image in a new tab ↗' });
+                link.href = imageUrl;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                linkParagraph.append(link);
+                notice.append(linkParagraph);
+                replacePreviewContent(notice, createImageMetadata(data));
+            } else if (data.content_type === 'text') {
+                setPreviewTitle('File contents');
+                replacePreviewContent(createPreviewElement('div', {
+                    className: 'preview-text',
+                    text: data.content === undefined ? '' : data.content,
+                }));
+            } else if (data.content_type === 'binary') {
+                setPreviewTitle('Preview unavailable');
+                showPreviewMessage(
+                    'preview-error',
+                    'Binary file preview not supported',
+                    `File size: ${formatFileSize(data.size)}`
+                );
+            } else {
+                setPreviewTitle('Preview unavailable');
+                showPreviewMessage('preview-error', 'Preview not available for this file type');
+            }
+        } catch (error) {
+            console.error('Rejected preview data', error);
+            setPreviewTitle('Preview unavailable');
+            showPreviewMessage('preview-error', 'The preview response is invalid.');
+        }
+    }
+
+    function initializeImagePreview(elements) {
+        const { viewport, image, zoomOut, zoomIn, zoomReset, zoomLabel, imageUrl } = elements;
+        const minimumZoom = 0.25;
+        const maximumZoom = 4;
+        const zoomStep = 0.25;
+        let zoom = 1;
+
+        function applyZoom(nextZoom) {
+            zoom = Math.min(maximumZoom, Math.max(minimumZoom, nextZoom));
+            image.style.width = `${zoom * 100}%`;
+            zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+            zoomOut.disabled = zoom <= minimumZoom;
+            zoomIn.disabled = zoom >= maximumZoom;
+            image.style.cursor = zoom < maximumZoom ? 'zoom-in' : 'default';
+        }
+
+        zoomOut.addEventListener('click', () => applyZoom(zoom - zoomStep));
+        zoomIn.addEventListener('click', () => applyZoom(zoom + zoomStep));
+        zoomReset.addEventListener('click', () => {
+            applyZoom(1);
+            viewport.scrollTo({ top: 0, left: 0 });
+        });
+
+        viewport.addEventListener('wheel', event => {
+            if (!event.ctrlKey && !event.metaKey) {
+                return;
+            }
+            event.preventDefault();
+            applyZoom(zoom + (event.deltaY < 0 ? zoomStep : -zoomStep));
+        }, { passive: false });
+
+        image.addEventListener('dblclick', event => {
+            event.preventDefault();
+            window.open(imageUrl, '_blank', 'noopener,noreferrer');
+        });
+
+        applyZoom(1);
+    }
+</script>
+{% endblock %}

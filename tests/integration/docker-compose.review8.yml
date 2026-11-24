@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: review8
+      POSTGRES_PASSWORD: review8-test-only
+      POSTGRES_DB: review8
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U review8 -d review8"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  airflow:
+    image: cosiflow-airflow:native
+    profiles: ["tools"]
+    environment:
+      AIRFLOW_HOME: /tmp/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://review8:review8-test-only@postgres:5432/review8
+      AIRFLOW__CORE__FERNET_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../../modules:/home/gamma/airflow/modules:ro
+      - ../../env/migrations:/migrations:ro

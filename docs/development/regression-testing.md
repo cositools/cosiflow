@@ -1,0 +1,521 @@
+# Regression testing
+
+COSIflow keeps repository-level regression tests under `tests/`. The suites
+protect supported behavior owned by the Review issues and are intentionally
+separate from production acceptance tests.
+
+Test selection and CI integration are tracked in
+[Review 14](https://github.com/cositools/cosiflow/issues/15). A test is retained
+only after the repository owner has reviewed the behavior, assertions,
+fixtures, dependencies, runtime, and maintenance cost.
+
+## Run the tests
+
+From the COSIflow repository root, run the complete committed suite with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Run only the security regression tests with:
+
+```bash
+python3 -m unittest discover -s tests/security -t tests -v
+```
+
+The security suite uses only the Python standard library. It does not require
+Airflow, Docker containers, database servers, real credentials, or network
+access. Tests that require an optional runtime dependency must declare and
+report an explicit skip when that dependency is unavailable.
+
+## Suite layout
+
+| Path | Owning Review | Protected behavior |
+| --- | --- | --- |
+| `tests/security/test_validate_runtime_secrets.py` | Reviews 5 and 22 | Required values, minimum lengths, revoked-value detection, Airflow key separation, Fernet format, PostgreSQL/UI-port/data-root validation, DSN escaping, and prevention of secret disclosure in errors |
+| `tests/security/test_bootstrap_secrets.py` | Review 5 | Secret generation and rotation, preservation of unmanaged configuration, replacement of revoked values, generated-key validity, and `.env` permissions |
+| `tests/security/test_compose_security.py` | Review 5 | Required Compose secrets, Docker-daemon isolation, loopback-only published ports, and internal database networking |
+| `tests/security/test_rotation_guards.py` | Review 5 | Backup confirmation, presence of old credentials, safe generated-password format, and refusal before Docker or database access when preconditions fail |
+| `tests/security/test_shared_auth.py` | Reviews 6 and 22 | Auth Manager-generated anonymous redirects including alternate backends/base paths, fail-closed authorization, absence of pre-authorization side effects, capability checks, and the Viewer/Scientist/Operator/Admin permission matrix |
+| `tests/security/test_endpoint_matrix.py` | Review 6 | Complete route-to-permission coverage, POST-only mutations, least-privilege manifests, and CSRF tokens in mutating forms and requests |
+| `tests/security/test_configure_rbac.py` | Review 6 | Viewer isolation, Scientist/Operator/Admin provisioning, stale-permission removal, verification failures, and idempotent reconciliation |
+| `tests/security/test_review19_data_explorer.py` | Review 19 | Sanitized Data Explorer failures, server-side diagnostics, image isolation, DOM-safe hostile payload handling, same-origin route validation, raster MIME allowlisting, and base64 validation |
+| `tests/security/test_review21_container_isolation.py` | Review 21 | Service-scoped environments, narrow mounts, read-only code, dedicated module pool, and explicit development/X11 overrides |
+| `tests/test_review22_startup_contracts.py` | Review 22 | Split webserver/scheduler services, init gating, service-specific health/restart/stop contracts, direct exit and SIGTERM behavior, custom published ports, and derived/overridden public URLs |
+| `tests/test_review22_scheduler_warning.py` | Review 22 | Fail-closed Airflow template patch, stable scheduler-unavailable message, idempotency, and upstream-template drift detection |
+| `tests/test_review28_benchmark_safety.py` | Review 28 | Cleanup dual opt-in and path confinement, all-target preflight, success/timeout exit semantics, run ownership, and bounded stop verification |
+| `tests/test_issue18_contracts.py` | Review 18 | Removal of the unused paths module and the supported COSIDAG import contract |
+| `tests/test_review30_dead_code_cleanup.py` | Review 30 | Route inventory, single ownership of GCN identity inserts, the cross-repository `cfg` compatibility contract, removal of obsolete typed helpers/imports, and tombstones for legacy MailHog and path contracts |
+| `tests/test_review8_cosidag_state.py` | Review 8 | Runtime retrigger identity/configuration, transactional schema, claim/finalization wiring, migration, and reset-plugin contracts |
+| `tests/test_review23_cosidag_queue_contract.py` | Review 23 | Structured and legacy date validation, safe file patterns, canonical confinement, reschedule-safe stability state, bounded queue/refill contracts, retry policy, manual-retry audit, and honest Airflow Params |
+| `tests/integration/test_review8_postgres.py` | Reviews 8 and 23 | Real PostgreSQL uniqueness, reschedule-safe stability observations, bounded enqueue, concurrent queue claims, one automatic retry, terminal failure, audited manual retry, idempotent finalization, and reset isolation |
+| `tests/test_review12_worker_resilience.py` | Review 12 | Worker backoff and failure budgets, poison-row isolation, supervisor fallback, stale heartbeat handling, and Compose restart/healthcheck contracts |
+| `tests/integration/test_review12_mysql.py` | Review 12 | Real MySQL retry scheduling, stale-lock recovery, stale healthcheck failure, and container restart behavior |
+| `tests/test_review25_gcn_payload_integrity.py` | Review 25 | Exact inbound bytes, immutable idempotency, hardened XML parsing, exact topic policy, shared injection paths, and migration contracts |
+| `tests/integration/test_review25_mysql.py` | Review 25 | Real MySQL binary storage, immutable conflict handling, concurrent deduplication, and idempotent inbox migration |
+| `tests/test_review26_gcn_storage_limits.py` | Review 26 | Heartbeat coalescing, SQL migration parsing/checksums, payload byte boundaries, query limits, and configuration contracts |
+| `tests/integration/test_review26_mysql.py` | Review 26 | Empty/current/legacy schema migration, checksum drift rejection, data preservation, replay, and concurrent initialization |
+| `tests/test_review27_failure_notifications.py` | Review 27 | No-throw callback behavior, current attempt/map log resolution, bounded non-UTF-8 tails, complete HTML escaping, URL validation, subscription filtering, opt-in success, and removal of tracked recipients |
+| `tests/integration/test_review27_postgres.py` | Review 27 | Real PostgreSQL migration/seed idempotency, active-user recipient lookup, success opt-in, and user-deletion cascade |
+| `tests/test_review13_module_loader_safety.py` | Review 13 | YAML schema validation, destructive-path confinement, overlapping-environment rejection, traversal and symlink rejection, shell-payload isolation, and mutation-free install/update/remove failures |
+| `tests/test_review29_module_loader_lifecycle.py` | Review 29 | Single-snapshot configuration, enabled and explicit multi-environment selection, fail-closed command handling, activation-shell validation, cleanup, and repeatable install/remove behavior |
+| `tests/integration/review16/test_scheduler_load.sh` | Review 16 | Real LocalExecutor scheduling with two slots, six rescheduling sensors, PostgreSQL task state, and independent ready work |
+| `tests/integration/review28/test_localexecutor_stop.sh` | Review 28 | Real PostgreSQL/LocalExecutor termination of one benchmark-owned run while a concurrent manual run remains active |
+| `tests/integration/test_review21_container_isolation.py` | Review 21 | Negative in-container access checks for repository roots, `.env`, X11, and read-only code mounts |
+
+`tests/security/support.py` and `tests/security/auth_support.py` provide
+repository-path, script-loading, and Auth Manager test doubles; they do not
+contain test cases.
+
+## Review 22 startup-contract tests
+
+The Review 22 suite resolves the base Compose model with default and custom
+ports, verifies the init gate and the independent webserver/scheduler health,
+restart, and stop contracts, and executes the entrypoint against disposable
+process fixtures. The SIGTERM test proves that the scheduler receives the
+container signal directly after `exec`:
+
+```bash
+python3 -m unittest tests.test_review22_startup_contracts -v
+```
+
+The related secret-validation and shared-auth suites cover invalid UI ports,
+unsafe data roots, derived and explicit public URLs, and alternate Auth Manager
+login endpoints.
+
+The scheduler-warning suite protects the Airflow 2.10.3 image patch that avoids
+a Pendulum/PyO3 panic when the stale heartbeat warning is rendered:
+
+```bash
+python3 -m unittest tests.test_review22_scheduler_warning -v
+```
+
+The patch must be idempotent and must fail the image build if the upstream
+template no longer matches the reviewed Airflow version.
+
+## Review 27 notification tests
+
+The Review 27 contract suite runs with the ordinary test command and uses
+Airflow-compatible test doubles. Run it alone with:
+
+```bash
+python3 -m unittest tests.test_review27_failure_notifications -v
+```
+
+The PostgreSQL suite uses the disposable Review 8 Compose fixture and never
+connects to an existing Airflow database:
+
+```bash
+COSIFLOW_RUN_REVIEW27_POSTGRES_TESTS=1 \
+  python3 -m unittest tests.integration.test_review27_postgres -v
+```
+
+It applies and seeds the notification schema twice and removes the isolated
+container and volume after the run.
+
+## Review 8 transactional-state tests
+
+The Review 8 unit/contract suite is part of the ordinary command above and has
+no optional dependencies. Run it alone with:
+
+```bash
+python3 -m unittest tests.test_review8_cosidag_state -v
+```
+
+The PostgreSQL integration suite uses a disposable Compose project backed by a
+`tmpfs`. It applies the schema twice to verify idempotency and removes the
+container and volume after the run:
+
+```bash
+COSIFLOW_RUN_REVIEW8_POSTGRES_TESTS=1 \
+  python3 -m unittest tests.integration.test_review8_postgres -v
+```
+
+Docker and Compose are required only for this focused integration suite. It
+does not connect to the development or production COSIflow databases.
+
+## Review 23 queue and runtime-contract tests
+
+The Review 23 contract suite is part of the ordinary test command. It exercises
+strict structured and legacy dates, file and directory glob behavior, pattern
+validation, real-path confinement, reschedule-safe stability state, queue
+source contracts, manual retry overrides, and the conditional Airflow Trigger
+form:
+
+```bash
+python3 -m unittest tests.test_review23_cosidag_queue_contract -v
+```
+
+Its real-database coverage shares the disposable Review 8 PostgreSQL suite.
+That suite now also verifies durable stability observations across sensor
+reschedules, the discovery batch limit, distinct concurrent claims through
+`SKIP LOCKED`, first-failure requeue, second-failure terminal state, and
+audited manual retry. Successful rows remain durable and are never made
+eligible by retention cleanup.
+
+## Review 12 worker-resilience tests
+
+The Review 12 unit suite is part of the ordinary command above. Its injected
+failures use test doubles and replace real sleeps with recorded delays:
+
+```bash
+python3 -m unittest tests.test_review12_worker_resilience -v
+```
+
+The optional integration suite uses disposable MySQL storage and a dedicated
+Compose project. It builds the GCN client image, verifies the real retry and
+lock-recovery SQL, checks a stale application heartbeat, and confirms that an
+intentionally failing probe container is restarted by `unless-stopped`:
+
+```bash
+COSIFLOW_RUN_REVIEW12_MYSQL_TESTS=1 \
+  python3 -m unittest tests.integration.test_review12_mysql -v
+```
+
+The suite removes its containers and volumes after the run. It uses synthetic
+test-only credentials and does not connect to GCN or the development database.
+
+## Review 25 GCN payload-integrity tests
+
+The deterministic suite uses synthetic payloads and topics. It verifies exact
+byte hashing, invalid UTF-8 separation, manual-inbox identities, immutable
+outbox keys, fail-closed XML and topic policies, the shared client/plugin path,
+and the schema migration contract:
+
+```bash
+python3 -m unittest tests.test_review25_gcn_payload_integrity -v
+```
+
+The opt-in integration suite reuses the disposable MySQL Compose definition,
+rebuilds the local GCN client image, and exercises the real constraints and
+transactions:
+
+```bash
+COSIFLOW_RUN_REVIEW25_MYSQL_TESTS=1 \
+  python3 -m unittest tests.integration.test_review25_mysql -v
+```
+
+It verifies exact binary storage, identical manual-inbox deduplication,
+conflicting outbox rejection without audit-row mutation, concurrent identical
+inserts, and repeatable migration from the former `LONGTEXT` inbox schema. It
+uses no GCN credentials, assigned production topics, or broker connection and
+removes its containers and volumes after the run.
+
+## Review 30 dead-code and ownership tests
+
+The Review 30 suite is a dependency-free static contract. It inventories all
+AppBuilder routes against the explicit authorization policy, rejects direct
+Flask routes in plugin sources, and keeps the supported MailHog redirect below
+`/mailhog`. It also verifies that `plugins/gcn_shared/storage.py` remains the
+only owner of inbox/outbox identity inserts and that the GCN client and Notices
+Explorer delegate to those primitives.
+
+The same suite prevents the removed path module, `PathInfo` fallback,
+`COSIFLOW_DATA_ROOT`, and obsolete typed configuration helpers from returning.
+It deliberately retains and exercises the module-level `cfg` function because
+the external FasTP DAGs import it while Airflow parses `cosidag_GeD.py`,
+`cosidag_BGO.py`, and `cosidag_ARMselection.py`.
+
+```bash
+python3 -m unittest tests.test_review30_dead_code_cleanup -v
+```
+
+Run it together with the Review 18, 24, and 25 suites when changing COSIDAG
+paths, plugin routing, or GCN persistence boundaries. Test ownership and CI
+promotion remain governed by [Review 14](https://github.com/cositools/cosiflow/issues/15).
+
+Before removing or renaming a module-level symbol, search both the COSIflow
+repository and every repository mounted under `modules_pool`. An internal
+zero-reference result is not sufficient evidence that a symbol is dead: DAG
+modules are independent consumers and their imports are evaluated by the
+Airflow scheduler. Any intentional contract removal must update all consumers
+in the same change window and include a DAG-import validation.
+
+## Review 26 GCN storage and limit tests
+
+The deterministic suite injects a monotonic clock and fake database connection
+to prove that unchanged heartbeat calls produce at most one write per interval
+while state changes write immediately. It also checks exact payload byte
+boundaries, SQL scripts containing quoted semicolons and custom delimiters,
+ordered migration checksums, and rejection of excessive query windows and
+filters:
+
+```bash
+python3 -m unittest tests.test_review26_gcn_storage_limits -v
+```
+
+The optional MySQL 8.4 suite uses an isolated Compose project. It verifies a
+fresh migration, replay, bootstrap of an existing Review 25 schema, upgrade of
+a legacy textual schema without losing a sentinel notice, fail-closed checksum
+drift, and serialization of concurrent initializers:
+
+```bash
+COSIFLOW_RUN_REVIEW26_MYSQL_TESTS=1 \
+  python3 -m unittest tests.integration.test_review26_mysql -v
+```
+
+The suite uses synthetic credentials, does not connect to GCN, and removes its
+containers and volumes after the run.
+
+## Review 13 module-loader safety tests
+
+The Review 13 suite requires PyYAML and otherwise uses temporary directories
+and a fake `docker` executable. It does not start containers, create virtual
+environments, remove real paths, or build images:
+
+```bash
+python3 -m unittest tests.test_review13_module_loader_safety -v
+```
+
+The parser tests cover valid quoted YAML, duplicate keys, malformed documents,
+wrong types, unsafe identifiers, destructive paths, and duplicate or nested
+environment targets. The shell tests verify that invalid input produces no
+mutating Docker call, that removal rejects a missing module and preflights its
+configured paths, and that valid arguments, including supported paths with
+spaces, remain single argv values.
+
+## Review 29 module-loader lifecycle tests
+
+The Review 29 suite extends the Review 13 fake-Docker harness and requires
+PyYAML. It verifies the documented enabled-environment invocation, explicit
+selection order, one configuration snapshot per invocation, empty-selection
+failure before mutation, command-failure propagation, partial-state cleanup,
+activation in a clean Bash process, and repeated install/remove operations:
+
+```bash
+python3 -m unittest \
+  tests.test_review13_module_loader_safety \
+  tests.test_review29_module_loader_lifecycle \
+  -v
+```
+
+The tests use temporary module trees and never modify the running COSIflow
+container. Run them with the supported Airflow image when the host interpreter
+does not provide PyYAML.
+
+## Review 16 scheduler-scalability tests
+
+The Review 16 unit suite uses temporary filesystem trees and does not require
+Airflow. It verifies consecutive size/mtime observations, directory-change
+detection, one-inventory pattern resolution, selection policies, reschedule
+configuration, persistent-queue exclusion, and the absence of
+blocking sleeps:
+
+```bash
+python3 -m unittest tests.test_review16_scheduler_scalability -v
+```
+
+When Airflow is installed, the same suite also instantiates a COSIDAG and
+checks that both filesystem waits use `reschedule` mode. It also verifies that
+a changing first folder does not block selection of a later stable folder.
+Nested candidate coverage asserts one tree walk and one stat per file at both
+one and three candidate depths, then verifies date filtering, deepest-first
+priority, `min_files`, stability, and the selected folder in Airflow.
+The synthetic load test reports the legacy repeated-scan baseline and the
+one-inventory path at increasing file counts:
+
+```bash
+python3 test/review16_load_test.py \
+  --sizes 1000,5000,10000 \
+  --patterns 8 \
+  --output test/results/review16_load_test.json
+```
+
+Elapsed time is diagnostic because it depends on the host filesystem. The
+structural performance contract for `resolve_inputs` is one recursive walk of
+the selected run directory per readiness cycle, regardless of the number of
+configured patterns. Folder-candidate traversal before selection is tracked
+separately.
+
+The nested folder benchmark compares the shared bottom-up inventory with the
+former recursive snapshot per candidate:
+
+```bash
+python3 test/review16_nested_folder_benchmark.py \
+  --depths 4,8,16 \
+  --files-per-level 50 \
+  --output test/results/review16_nested_folder_benchmark.json
+```
+
+The structural contract is one walk and exactly one file visit per cycle,
+independent of the number of overlapping candidates. Elapsed time is recorded
+only as diagnostic information.
+
+The isolated scheduler-load test uses PostgreSQL, `LocalExecutor`,
+`parallelism = 2`, a two-slot default pool, six independent rescheduling
+sensors, and a second DAG containing immediately runnable work. It requires
+the local Airflow image and removes its temporary Compose project and database
+volume after the run:
+
+```bash
+docker compose -f env/docker-compose.yaml build airflow-scheduler
+tests/integration/review16/test_scheduler_load.sh
+```
+
+The test fails unless all six sensors reach `up_for_reschedule`, no sensor
+remains running after that barrier, the waiting count remains greater than the
+available slots, and the independent task creates its sentinel and reaches
+`success` within 30 seconds. This scheduler test is separate from the
+10,000-file filesystem benchmark.
+
+## Review 5 safety model
+
+The Review 5 suite tests failure paths without exposing or changing operational
+state:
+
+- environment dictionaries contain synthetic values only;
+- `.env` files are created inside temporary directories and deleted after each
+  test;
+- secret values are never written to test output;
+- rotation guard tests stop before any database operation;
+- a fake `docker` executable verifies that invalid input cannot reach Docker;
+- Compose isolation checks inspect the committed runtime manifests without
+  starting services.
+
+The suite does not perform a real PostgreSQL or MySQL credential rotation. A
+real rotation changes persistent database state and requires verified backups,
+controlled credentials, and explicit operational approval. That evidence is a
+deployment or maintenance activity rather than a routine unit-test fixture.
+
+## Review 6 authorization model
+
+The Review 6 suite verifies both policy declarations and execution order:
+
+- every exposed AppBuilder route must match the canonical endpoint manifest;
+- anonymous requests redirect to login before the protected view runs;
+- missing permissions, missing users, and Auth Manager errors return 403 before
+  protected code runs;
+- Viewer, Scientist, Operator, and Admin receive the expected capabilities;
+- RBAC reconciliation grants Admin every COSIflow permission explicitly while
+  route authorization remains permission-based rather than role-name-based;
+- repeated RBAC reconciliation is idempotent;
+- mutating routes are POST-only and their templates submit CSRF tokens.
+
+The tests use deterministic Auth Manager and FAB security-manager doubles so
+they run without Airflow. They exercise the same public method contract used by
+the plugins, but do not replace an authenticated smoke test in the supported
+Airflow image or production SSO validation.
+
+## Review 19 Data Explorer security tests
+
+The Review 19 suite uses synthetic exceptions, temporary image files, and
+framework doubles to verify every Data Explorer error boundary without reading
+real scientific data. Run the focused suite with:
+
+```bash
+python3 -m unittest tests.security.test_review19_data_explorer -v
+```
+
+The server tests require only Python. The hostile-payload DOM test runs when a
+Node.js executable is available. Set `REVIEW19_NODE` to an explicit executable
+when Node.js is not on `PATH`:
+
+```bash
+REVIEW19_NODE=/path/to/node \
+  python3 -m unittest tests.security.test_review19_data_explorer -v
+```
+
+The DOM test executes the browser script against a minimal in-memory DOM. It
+checks HTML and event-attribute payloads, filename and metadata handling,
+same-origin route enforcement, unsupported URL schemes, raster MIME types,
+base64 validation, and the generic fetch-failure message. The Review 6
+endpoint and role-matrix suites remain the authority for Data Explorer access.
+
+## Review 28 benchmark-safety tests
+
+The deterministic Review 28 suite uses temporary directory trees and mocked
+Airflow status responses. It verifies that destructive cleanup needs both
+configuration and CLI authorization, every target is preflighted before any
+deletion, repository and symlink escapes are rejected, dry-run has no side
+effects, failed or timed-out runs return non-zero, and stop verification fails
+closed:
+
+```bash
+python3 -m unittest tests.test_review28_benchmark_safety -v
+```
+
+The isolated integration test starts a disposable PostgreSQL database and an
+Airflow 2.10.3 scheduler using `LocalExecutor` with two slots. It triggers a
+benchmark-owned run and a manual run of the same long-running DAG, stops only
+the benchmark run, and checks that its heartbeat no longer changes while the
+manual run continues:
+
+```bash
+tests/integration/review28/test_localexecutor_stop.sh
+```
+
+The Compose project uses synthetic credentials and temporary database storage.
+It is removed after the test and does not connect to development or production
+databases.
+
+## Review 21 container-isolation tests
+
+The deterministic Review 21 suite resolves the base and optional Compose
+configurations with synthetic values. It compares environment-variable names,
+mount sources, targets, write modes, and networks without printing secret
+values:
+
+```bash
+python3 -m unittest tests.security.test_review21_container_isolation -v
+```
+
+The optional negative-access test starts a one-off Airflow container from the
+local image. It verifies that the repository root, `.env`, and X11 are absent,
+that code mounts reject writes, and that authorized data and log paths remain
+writable:
+
+```bash
+COSIFLOW_RUN_REVIEW21_CONTAINER_TESTS=1 \
+  python3 -m unittest tests.integration.test_review21_container_isolation -v
+```
+
+It uses the existing local Airflow image, starts no database dependency, and
+does not read or print the local `.env` contents.
+
+## Adding or changing a regression test
+
+For every proposed test:
+
+1. identify the owning Review issue and the supported behavior being protected;
+2. prefer deterministic local fixtures and synthetic values;
+3. avoid real credentials, sensitive payloads, external network calls, and
+   production assumptions;
+4. prove denied or invalid operations have no side effects where relevant;
+5. document optional dependencies and justified skips;
+6. run the focused suite and the complete suite;
+7. obtain repository-owner approval before merge.
+
+Do not retain a generated test merely because it passed once. Tests that lock
+down incidental implementation details, depend on unstable external services,
+or impose unjustified maintenance cost should be revised or explicitly
+rejected in Review 14.
+
+## CI and production boundary
+
+Review 14 owns the pull-request CI workflow for approved unit, integration,
+characterization, and regression tests. Until that workflow is merged, the
+commands above are the authoritative local verification commands.
+
+Production-only checks remain outside this suite. They include SSO mapping,
+production secret delivery, TLS and ingress, monitoring, backup and restore,
+failover, rollback, and representative end-to-end workflow execution on the
+target environment.
+
+
+## Execution-profile port regressions
+
+`tests/test_cosidag_execution.py` covers exact site routing without pipeline
+source changes, optional SDK imports, precedence/conflicts and placement
+validation. `tests/test_kubernetes_configuration.py` renders application
+resources offline and checks shared interpreter/data paths, site parameters
+and the separation of init, module installation and runtime. These tests do
+not start scientific DAGs or validate a Kubernetes installation. Optional
+SDK/Airflow graph checks report a skip if those dependencies are unavailable.
+
+```bash
+python3 -m unittest tests.test_cosidag_execution tests.test_kubernetes_configuration -v
+```
+
+The PostgreSQL integration regression also exercises reacquiring a claim for
+the same DagRun without increasing the processing attempt count. Run that
+integration suite only as part of the separately scheduled acceptance phase.

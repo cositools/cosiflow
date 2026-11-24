@@ -1,0 +1,114 @@
+{% extends "appbuilder/base.html" %}
+
+{% block content %}
+{% include "cosiflow_ui/styles.html" %}
+<style>
+  .notice-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 18px; }
+  .notice-table th, .notice-table td { border-bottom: 1px solid #ddd; padding: 7px 8px; text-align: left; vertical-align: top; }
+  .notice-table th { background: #f7f7f7; }
+  .notice-kv th { width: 220px; }
+  .notice-error { background: #fff0f0; border: 1px solid #e0a0a0; padding: 10px; margin-bottom: 12px; }
+  .notice-muted { color: #666; }
+  .notice-summary {
+    background: #f8fbfd;
+    border: 1px solid #d9e7f2;
+    border-radius: 4px;
+    color: #2b4c60;
+    margin-bottom: 16px;
+    padding: 11px 13px;
+  }
+  .notice-status { display: inline-block; padding: 2px 7px; border-radius: 4px; background: #eef2f7; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #f7f7f7; padding: 12px; border: 1px solid #ddd; }
+</style>
+
+<div class="cosiflow-page notice-wrap">
+  <p><a href="{{ url_for('ExploreNoticesView.index', tab='outbox') }}">Back to outbox</a></p>
+  <h2 class="cosiflow-page-title">Outbox Notice Detail</h2>
+
+  {% if error %}
+    <div class="notice-error">{{ error }}</div>
+  {% endif %}
+
+  {% if notice %}
+    <div class="notice-summary">
+      <p><strong>Status:</strong> <span class="notice-status">{{ notice.status }}</span></p>
+      <p>
+        <code>dry_run_published</code> means the outbox worker processed the row without sending to the GCN network.
+        A real network send is represented by <code>published</code>. Any failure is captured in <code>last_error</code>
+        and in the delivery attempts below.
+      </p>
+    </div>
+
+    <table class="notice-table notice-kv">
+      <tbody>
+        <tr><th>ID</th><td>{{ notice.id }}</td></tr>
+        <tr><th>Status</th><td>{{ notice.status }}</td></tr>
+        <tr><th>Topic</th><td>{{ notice.topic }} <span class="notice-muted">({{ notice.topic_kind }})</span></td></tr>
+        <tr><th>Validation</th><td>{{ notice.validation_status }}</td></tr>
+        <tr><th>Created</th><td>{{ notice.created_at }}</td></tr>
+        <tr><th>Published</th><td>{{ notice.published_at or "" }}</td></tr>
+        <tr><th>Attempts</th><td>{{ notice.attempts_count }} / {{ notice.max_attempts }}</td></tr>
+        <tr><th>Last Error</th><td>{{ notice.last_error or "" }}</td></tr>
+        <tr><th>DAG</th><td>{{ notice.created_by_dag_id }} / {{ notice.task_id }}</td></tr>
+        <tr><th>DAG Run</th><td>{{ notice.dag_run_id }}</td></tr>
+        <tr><th>Source</th><td>{{ notice.source_pipeline }}<br>{{ notice.source_config_path or "" }}<br>{{ notice.source_product_dir or "" }}</td></tr>
+        <tr><th>Mission</th><td>{{ notice.mission }} / {{ notice.instrument }}</td></tr>
+        <tr><th>Alert</th><td>{{ notice.alert_type }} / {{ notice.alert_tense }} / record {{ notice.record_number }}</td></tr>
+        <tr><th>Event</th><td>{{ notice.event_name }}<br>{{ notice.event_ids_pretty }}</td></tr>
+        <tr><th>Times</th><td>trigger={{ notice.trigger_time or "" }}<br>alert={{ notice.alert_datetime or "" }}</td></tr>
+        <tr><th>Schema</th><td>{{ notice.schema_url or "" }}<br><span class="notice-muted">{{ notice.schema_version or "" }}</span></td></tr>
+        <tr><th>Idempotency</th><td>{{ notice.idempotency_key }}</td></tr>
+        <tr><th>Payload SHA256</th><td>{{ notice.payload_sha256 }}</td></tr>
+      </tbody>
+    </table>
+
+    <h4>Delivery Attempts</h4>
+    <table class="notice-table">
+      <thead>
+        <tr>
+          <th>Attempt</th>
+          <th>Status</th>
+          <th>Dry Run</th>
+          <th>Started</th>
+          <th>Finished</th>
+          <th>Producer</th>
+          <th>Kafka</th>
+          <th>Error</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for attempt in attempts %}
+          <tr>
+            <td>{{ attempt.attempt_no }}</td>
+            <td><span class="notice-status">{{ attempt.status }}</span></td>
+            <td>{{ attempt.dry_run }}</td>
+            <td>{{ attempt.started_at }}</td>
+            <td>{{ attempt.finished_at or "" }}</td>
+            <td>{{ attempt.producer_client_label or "" }}</td>
+            <td>partition={{ attempt.kafka_partition or "" }}, offset={{ attempt.kafka_offset or "" }}</td>
+            <td>{{ attempt.error_class or "" }} {{ attempt.error_message or "" }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="notice-muted">No delivery attempts recorded yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h4>Payload JSON</h4>
+    <pre>{{ notice.payload_json_pretty }}</pre>
+
+    <h4>Validation Errors</h4>
+    <pre>{{ notice.validation_errors_pretty }}</pre>
+
+    <h4>Attempt Metadata</h4>
+    {% for attempt in attempts %}
+      <p class="notice-muted">Attempt {{ attempt.attempt_no }}</p>
+      <pre>{{ attempt.kafka_metadata_pretty }}</pre>
+    {% else %}
+      <pre></pre>
+    {% endfor %}
+  {% else %}
+    <p>Outbound notice not found.</p>
+  {% endif %}
+</div>
+{% endblock %}

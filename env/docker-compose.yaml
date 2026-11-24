@@ -1,0 +1,268 @@
+# Local-development Compose stack. Shared deployments must publish only their
+# HTTPS reverse proxy and inject equivalent values from a secret manager.
+
+x-build-args: &build-args
+  UID: ${UID:-501}
+  GID: ${GID:-20}
+
+x-airflow-common-environment: &airflow-common-environment
+  AIRFLOW_HOME: /home/gamma/airflow
+  AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY:?AIRFLOW__WEBSERVER__SECRET_KEY is required}
+  AIRFLOW__CORE__INTERNAL_API_SECRET_KEY: ${AIRFLOW__CORE__INTERNAL_API_SECRET_KEY:?AIRFLOW__CORE__INTERNAL_API_SECRET_KEY is required}
+  AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:?AIRFLOW__CORE__FERNET_KEY is required}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: ${POSTGRES_USER:-airflow_user}
+  POSTGRES_DB: ${POSTGRES_DB:-airflow_db}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+  PYTHONDONTWRITEBYTECODE: "1"
+
+x-airflow-init-environment: &airflow-init-environment
+  AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
+  AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@localhost}
+  AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?AIRFLOW_ADMIN_PASSWORD is required}
+  COSI_DATA_DIR: ${COSI_DATA_DIR:-/home/gamma/workspace/data}
+
+x-airflow-runtime-environment: &airflow-runtime-environment
+  GCN_DB_HOST: gcn-mysql
+  GCN_DB_PORT: "3306"
+  GCN_DB_NAME: ${GCN_DB_NAME:-gcn}
+  GCN_DB_USER: ${GCN_DB_USER:-gcn_user}
+  GCN_DB_PASSWORD: ${GCN_DB_PASSWORD:?GCN_DB_PASSWORD is required}
+  GCN_DB_CONNECT_TIMEOUT: ${GCN_DB_CONNECT_TIMEOUT:-10}
+  HOST_IP: 127.0.0.1
+  MAILHOG_WEBUI_PORT: ${MAILHOG_WEBUI_PORT:-8025}
+  AIRFLOW_WEBUI_PORT: ${AIRFLOW_WEBUI_PORT:-8080}
+  AIRFLOW_PUBLIC_BASE_URL: ${AIRFLOW_PUBLIC_BASE_URL:-}
+  COSIFLOW_ALERT_FALLBACK_RECIPIENTS: ${COSIFLOW_ALERT_FALLBACK_RECIPIENTS:-}
+  COSIFLOW_ALERT_LOG_TAIL_LINES: ${COSIFLOW_ALERT_LOG_TAIL_LINES:-30}
+  COSIFLOW_ALERT_LOG_TAIL_BYTES: ${COSIFLOW_ALERT_LOG_TAIL_BYTES:-65536}
+  AIRFLOW__SMTP__SMTP_HOST: mailhog
+  AIRFLOW__SMTP__SMTP_PORT: "1025"
+  AIRFLOW__SMTP__SMTP_MAIL_FROM: donotreply@cosiflow.alert.errors.it
+  AIRFLOW__SMTP__SMTP_STARTTLS: "False"
+  AIRFLOW__SMTP__SMTP_SSL: "False"
+  COSI_DATA_DIR: ${COSI_DATA_DIR:-/home/gamma/workspace/data}
+  COSI_INPUT_DIR: ${COSI_INPUT_DIR:-/home/gamma/workspace/data/input}
+  COSI_LOG_DIR: ${COSI_LOG_DIR:-/home/gamma/workspace/log}
+  COSI_OBS_DIR: ${COSI_OBS_DIR:-/home/gamma/workspace/data/obs}
+  COSI_TRANSIENT_DIR: ${COSI_TRANSIENT_DIR:-/home/gamma/workspace/data/transient}
+  COSI_TRIGGER_DIR: ${COSI_TRIGGER_DIR:-/home/gamma/workspace/data/tdrss}
+  COSI_MAPS_DIR: ${COSI_MAPS_DIR:-/home/gamma/workspace/data/maps}
+  COSI_SOURCE_DIR: ${COSI_SOURCE_DIR:-/home/gamma/workspace/data/source}
+  GCN_CONSUMER_TOPICS: ${GCN_CONSUMER_TOPICS:-gcn.classic.text.FERMI_GBM_FIN_POS,gcn.classic.text.FERMI_GBM_FLT_POS,gcn.classic.text.FERMI_GBM_GND_POS,gcn.classic.text.FERMI_GBM_POS_TEST,gcn.classic.text.FERMI_GBM_SUBTHRESH,gcn.classic.text.SWIFT_BAT_GRB_LC,gcn.classic.text.SWIFT_BAT_GRB_POS_ACK,gcn.classic.text.SWIFT_BAT_GRB_POS_TEST,gcn.classic.text.SWIFT_BAT_QL_POS,gcn.classic.text.SWIFT_BAT_SCALEDMAP}
+  GCN_HEARTBEAT_DEGRADED_SECONDS: ${GCN_HEARTBEAT_DEGRADED_SECONDS:-30}
+  GCN_HEARTBEAT_OFFLINE_SECONDS: ${GCN_HEARTBEAT_OFFLINE_SECONDS:-90}
+  GCN_MAX_INBOUND_PAYLOAD_BYTES: ${GCN_MAX_INBOUND_PAYLOAD_BYTES:-1048576}
+  GCN_MAX_OUTBOUND_PAYLOAD_BYTES: ${GCN_MAX_OUTBOUND_PAYLOAD_BYTES:-1048576}
+  GCN_MAX_ATTEMPTS: ${GCN_MAX_ATTEMPTS:-3}
+  GCN_DRY_RUN: ${GCN_DRY_RUN:-true}
+  GCN_REQUIRE_TEST_TOPICS: ${GCN_REQUIRE_TEST_TOPICS:-true}
+  GCN_TOPIC_ALLOWLIST: ${GCN_TOPIC_ALLOWLIST:-gcn.notices.cosi.test.alert,gcn.notices.cosi.bgo.test.alert,gcn.notices.cosi.ged.test.alert}
+  GCN_SCHEMA_ROOT: ${GCN_SCHEMA_ROOT:-/home/gamma/gcn-schema}
+  GCN_COSI_ALERT_SCHEMA: ${GCN_COSI_ALERT_SCHEMA:-/home/gamma/gcn-schema/gcn/notices/cosi/alert.schema.json}
+
+x-gcn-client-environment: &gcn-client-environment
+  GCN_DB_HOST: gcn-mysql
+  GCN_DB_PORT: "3306"
+  GCN_DB_NAME: ${GCN_DB_NAME:-gcn}
+  GCN_DB_USER: ${GCN_DB_USER:-gcn_user}
+  GCN_DB_PASSWORD: ${GCN_DB_PASSWORD:?GCN_DB_PASSWORD is required}
+  GCN_DB_CONNECT_TIMEOUT: ${GCN_DB_CONNECT_TIMEOUT:-10}
+  GCN_CLIENT_ID: ${GCN_CLIENT_ID:?GCN_CLIENT_ID is required}
+  GCN_CLIENT_SECRET: ${GCN_CLIENT_SECRET:?GCN_CLIENT_SECRET is required}
+  GCN_DOMAIN: ${GCN_DOMAIN:-gcn.nasa.gov}
+  GCN_CONSUMER_GROUP_ID: ${GCN_CONSUMER_GROUP_ID:-cosiflow-gcn-client}
+  GCN_CONSUMER_TOPICS: ${GCN_CONSUMER_TOPICS:-gcn.classic.text.FERMI_GBM_FIN_POS,gcn.classic.text.FERMI_GBM_FLT_POS,gcn.classic.text.FERMI_GBM_GND_POS,gcn.classic.text.FERMI_GBM_POS_TEST,gcn.classic.text.FERMI_GBM_SUBTHRESH,gcn.classic.text.SWIFT_BAT_GRB_LC,gcn.classic.text.SWIFT_BAT_GRB_POS_ACK,gcn.classic.text.SWIFT_BAT_GRB_POS_TEST,gcn.classic.text.SWIFT_BAT_QL_POS,gcn.classic.text.SWIFT_BAT_SCALEDMAP}
+  GCN_CONSUMER_ENABLED: ${GCN_CONSUMER_ENABLED:-true}
+  GCN_CONSUMER_POLL_TIMEOUT: ${GCN_CONSUMER_POLL_TIMEOUT:-1.0}
+  GCN_CONSUMER_COMMIT: ${GCN_CONSUMER_COMMIT:-true}
+  GCN_PRODUCER_ENABLED: ${GCN_PRODUCER_ENABLED:-false}
+  GCN_DRY_RUN: ${GCN_DRY_RUN:-true}
+  GCN_REQUIRE_TEST_TOPICS: ${GCN_REQUIRE_TEST_TOPICS:-true}
+  GCN_OUTBOUND_TOPIC_DEFAULT: ${GCN_OUTBOUND_TOPIC_DEFAULT:-gcn.notices.cosi.test.alert}
+  GCN_TOPIC_ALLOWLIST: ${GCN_TOPIC_ALLOWLIST:-gcn.notices.cosi.test.alert,gcn.notices.cosi.bgo.test.alert,gcn.notices.cosi.ged.test.alert}
+  GCN_PUBLISH_POLL_SECONDS: ${GCN_PUBLISH_POLL_SECONDS:-5}
+  GCN_PUBLISH_BATCH_SIZE: ${GCN_PUBLISH_BATCH_SIZE:-10}
+  GCN_MAX_ATTEMPTS: ${GCN_MAX_ATTEMPTS:-3}
+  GCN_PRODUCER_CLIENT_LABEL: ${GCN_PRODUCER_CLIENT_LABEL:-cosiflow-gcn-client}
+  GCN_SCHEMA_ROOT: ${GCN_SCHEMA_ROOT:-/app/gcn-schema}
+  GCN_COSI_ALERT_SCHEMA: ${GCN_COSI_ALERT_SCHEMA:-/app/gcn-schema/gcn/notices/cosi/alert.schema.json}
+  GCN_COSI_ALERT_SCHEMA_URL: ${GCN_COSI_ALERT_SCHEMA_URL:-https://gcn.nasa.gov/schema/main/gcn/notices/cosi/alert.schema.json}
+  GCN_INIT_DB_ON_START: ${GCN_INIT_DB_ON_START:-true}
+  GCN_HEARTBEAT_INTERVAL_SECONDS: ${GCN_HEARTBEAT_INTERVAL_SECONDS:-10}
+  GCN_HEARTBEAT_DEGRADED_SECONDS: ${GCN_HEARTBEAT_DEGRADED_SECONDS:-30}
+  GCN_HEARTBEAT_OFFLINE_SECONDS: ${GCN_HEARTBEAT_OFFLINE_SECONDS:-90}
+  GCN_MAX_INBOUND_PAYLOAD_BYTES: ${GCN_MAX_INBOUND_PAYLOAD_BYTES:-1048576}
+  GCN_MAX_OUTBOUND_PAYLOAD_BYTES: ${GCN_MAX_OUTBOUND_PAYLOAD_BYTES:-1048576}
+  GCN_WORKER_BACKOFF_INITIAL_SECONDS: ${GCN_WORKER_BACKOFF_INITIAL_SECONDS:-1}
+  GCN_WORKER_BACKOFF_MAX_SECONDS: ${GCN_WORKER_BACKOFF_MAX_SECONDS:-30}
+  GCN_WORKER_BACKOFF_JITTER_RATIO: ${GCN_WORKER_BACKOFF_JITTER_RATIO:-0.2}
+  GCN_WORKER_FAILURE_BUDGET: ${GCN_WORKER_FAILURE_BUDGET:-5}
+  GCN_OUTBOX_RETRY_INITIAL_SECONDS: ${GCN_OUTBOX_RETRY_INITIAL_SECONDS:-5}
+  GCN_OUTBOX_RETRY_MAX_SECONDS: ${GCN_OUTBOX_RETRY_MAX_SECONDS:-300}
+  GCN_OUTBOX_LOCK_TIMEOUT_SECONDS: ${GCN_OUTBOX_LOCK_TIMEOUT_SECONDS:-300}
+  GCN_WATCHDOG_INTERVAL_SECONDS: ${GCN_WATCHDOG_INTERVAL_SECONDS:-5}
+  GCN_WATCHDOG_START_GRACE_SECONDS: ${GCN_WATCHDOG_START_GRACE_SECONDS:-30}
+  GCN_LOG_LEVEL: ${GCN_LOG_LEVEL:-INFO}
+
+x-airflow-image: &airflow-image
+  image: cosiflow-airflow:native
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+    args:
+      <<: *build-args
+      COSIFLOW_GIT_REF: ${COSIFLOW_GIT_REF:-unknown}
+      COSIFLOW_GIT_SHA: ${COSIFLOW_GIT_SHA:-unknown}
+      COSIFLOW_GIT_TAG: ${COSIFLOW_GIT_TAG:-}
+      COSIFLOW_GITHUB_URL: ${COSIFLOW_GITHUB_URL:-https://github.com/cositools/cosiflow}
+  user: gamma
+
+x-airflow-runtime: &airflow-runtime
+  <<: *airflow-image
+  environment:
+    <<: [*airflow-common-environment, *airflow-runtime-environment]
+  depends_on:
+    airflow-init:
+      condition: service_completed_successfully
+    gcn-mysql:
+      condition: service_healthy
+    mailhog:
+      condition: service_started
+  restart: "on-failure:5"
+  stop_grace_period: 30s
+  volumes:
+    - ../../fast-transient-analysis-pipeline:/home/gamma/airflow/modules_pool/fast-transient-analysis-pipeline:ro
+    - ../../envs:/home/gamma/envs:ro
+    - ../dags:/home/gamma/airflow/dags:ro
+    - ${COSIFLOW_MODULES_HOST_DIR:-../modules-pool}:/home/gamma/airflow/modules_pool:ro
+    - ../plugins:/home/gamma/airflow/plugins:ro
+    - ../pipeline:/home/gamma/airflow/pipeline:ro
+    - ../callbacks:/home/gamma/airflow/callbacks:ro
+    - ../modules:/home/gamma/airflow/modules:ro
+    - ./airflow.cfg:/home/gamma/airflow/airflow.cfg:ro
+    - ../data/heasarc:/home/gamma/workspace/data
+    - ../data/logs:/home/gamma/airflow/logs
+  networks:
+    - application
+    - database
+
+services:
+  gcn-mysql:
+    image: mysql:8.4
+    container_name: cosi_gcn_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${GCN_MYSQL_ROOT_PASSWORD:?GCN_MYSQL_ROOT_PASSWORD is required}
+      MYSQL_DATABASE: ${GCN_DB_NAME:-gcn}
+      MYSQL_USER: ${GCN_DB_USER:-gcn_user}
+      MYSQL_PASSWORD: ${GCN_DB_PASSWORD:?GCN_DB_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - ../data/gcn_mysql_data:/var/lib/mysql
+    networks:
+      - database
+
+  gcn-client:
+    image: cosiflow-gcn-client:prototype
+    build:
+      context: ..
+      dockerfile: gcn-client/Dockerfile
+    container_name: cosi_gcn_client
+    environment:
+      <<: *gcn-client-environment
+    depends_on:
+      gcn-mysql:
+        condition: service_healthy
+    command: ["python", "-m", "app.main", "run"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.main", "healthcheck"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 20s
+    networks:
+      - application
+      - database
+
+  postgres:
+    image: postgres:15
+    container_name: cosi_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-airflow_user}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow_db}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ../data/postgres_data:/var/lib/postgresql/data
+    networks:
+      - database
+
+  airflow-init:
+    <<: *airflow-image
+    container_name: cosi_airflow_init
+    environment:
+      <<: [*airflow-common-environment, *airflow-init-environment]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh", "init"]
+    restart: "no"
+    volumes:
+      - ../plugins:/home/gamma/airflow/plugins:ro
+      - ../modules:/home/gamma/airflow/modules:ro
+      - ./airflow.cfg:/home/gamma/airflow/airflow.cfg:ro
+      - ../data/heasarc:/home/gamma/workspace/data
+      - ../data/logs:/home/gamma/airflow/logs
+    networks:
+      - database
+
+  airflow-webserver:
+    <<: *airflow-runtime
+    container_name: cosi_airflow_webserver
+    entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh", "webserver"]
+    ports:
+      - "127.0.0.1:${AIRFLOW_WEBUI_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  airflow-scheduler:
+    <<: *airflow-runtime
+    container_name: cosi_airflow_scheduler
+    entrypoint: ["bash", "/home/gamma/entrypoint-airflow.sh", "scheduler"]
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$${HOSTNAME}\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  mailhog:
+    image: mailhog/mailhog
+    platform: linux/amd64
+    container_name: cosi_mailhog
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:${MAILHOG_WEBUI_PORT:-8025}:8025"
+    networks:
+      - application
+
+networks:
+  application:
+    internal: false
+  database:
+    internal: true

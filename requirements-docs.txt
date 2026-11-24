@@ -1,0 +1,5 @@
+# Keep documentation tools independent from application requirements.
+# Update these exact top-level pins only in a reviewed dependency change.
+mkdocs==1.6.1
+mkdocs-material==9.6.14
+linkchecker==10.5.0

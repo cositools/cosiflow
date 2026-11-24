@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""Manage a site-owned Compose or Kubernetes COSIflow application deployment."""
+from __future__ import annotations
+import argparse
+import json
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tempfile
+
+try:
+    import yaml
+    from config import ROOT, load_site, runtime_root
+    from bundle import write_bundle
+except ModuleNotFoundError as exc:
+    raise SystemExit('Install deployment dependencies: python3 -m pip install -r deployment/requirements.txt') from exc
+
+DSN = 'export AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="$(python /home/gamma/validate_runtime_secrets.py --scope runtime --sqlalchemy-dsn)"; '
+
+
+def run(command, *, capture=False, input=None):
+    # Never echo env files, secret resources, expanded Compose config or DSNs.
+    return subprocess.run(command, check=True, text=True, capture_output=capture, input=input)
+
+
+def compose(site, out):
+    return ['docker', 'compose', '--env-file', site['compose']['secrets_env_file'],
+            '--project-name', site['deployment']['name'], '-f', str(out / 'compose.json')]
+
+
+def kubectl(site):
+    k = site['kubernetes']
+    return ['kubectl', '--context', k['context'], '--namespace', k['namespace']]
+
+
+def verify_sources(site):
+    pool = runtime_root(site) / 'modules-pool'
+    for m in site['module-pipelines']:
+        dest = pool / m['name']
+        if not (dest / '.git').exists():
+            raise ValueError(f'Module {m["name"]} missing; run prepare on the runtime/shared filesystem host')
+        sha = run(['git', '-C', str(dest), 'rev-parse', 'HEAD'], capture=True).stdout.strip()
+        dirty = run(['git', '-C', str(dest), 'status', '--porcelain', '--untracked-files=normal'], capture=True).stdout.strip()
+        if sha.lower() != m['ref'].lower() or dirty:
+            raise ValueError(f'Module {m["name"]} must be clean at its configured SHA; existing checkouts are never reset')
+        config = (dest / m['config']).resolve()
+        if not config.is_relative_to(dest.resolve()) or not config.is_file():
+            raise ValueError(f'Module {m["name"]} configuration is missing or escapes its checkout')
+
+
+def prepare(site):
+    root = runtime_root(site)
+    for sub in ['envs', 'modules-pool', 'dags', 'pipeline', 'data', 'logs']:
+        (root / sub).mkdir(parents=True, exist_ok=True)
+    if site['deployment']['mode'] == 'compose':
+        for sub in ['postgres-data', 'gcn-mysql-data']:
+            (root / sub).mkdir(exist_ok=True)
+    for m in site['module-pipelines']:
+        dest = root / 'modules-pool' / m['name']
+        if not dest.exists():
+            # Stage in a new temporary directory; a failed clone never replaces a checkout.
+            with tempfile.TemporaryDirectory(prefix='.clone-', dir=root / 'modules-pool') as tmp:
+                source = Path(tmp) / 'source'
+                run(['git', 'clone', '--no-checkout', '--', m['repository'], str(source)])
+                run(['git', '-C', str(source), 'checkout', '--detach', m['ref']])
+                source.rename(dest)
+    verify_sources(site)
+    print('Runtime directories and pinned module checkouts ready; no environments recreated')
+
+
+def active_guard(site, out):
+    if site['deployment']['mode'] == 'kubernetes':
+        pods = json.loads(run(kubectl(site) + ['get', 'pods', '-l', 'kubernetes_executor=True', '-o', 'json'], capture=True).stdout)
+        if any(p['status'].get('phase') in ['Running', 'Pending', 'Unknown'] for p in pods['items']):
+            raise ValueError('Task workers are active; pause DAGs and wait before deploying/stopping')
+    else:
+        c = compose(site, out)
+        if run(c + ['ps', '--status', 'running', '-q', 'airflow-scheduler'], capture=True).stdout.strip():
+            code = ('import os,subprocess; os.environ["AIRFLOW__DATABASE__SQL_ALCHEMY_CONN"]='
+                    'subprocess.check_output(["python","/home/gamma/validate_runtime_secrets.py","--scope","runtime","--sqlalchemy-dsn"],text=True).strip(); '
+                    'from airflow.settings import Session; from airflow.models import TaskInstance; '
+                    's=Session(); n=s.query(TaskInstance).filter(TaskInstance.state.in_(["running","queued"])).count(); s.close(); '
+                    'raise SystemExit(1 if n else 0)')
+            try:
+                run(c + ['exec', '-T', 'airflow-scheduler', 'python', '-c', code], capture=True)
+            except subprocess.CalledProcessError as exc:
+                raise ValueError('Cannot establish an idle scheduler; pause DAGs and wait before deploying/stopping') from exc
+
+
+def completed_job(site, name):
+    result = run(kubectl(site) + ['get', 'job', name, '--ignore-not-found', '-o', 'json'], capture=True).stdout
+    if not result.strip():
+        return False
+    status = json.loads(result).get('status', {})
+    if status.get('failed'):
+        raise ValueError(f'Job {name} previously failed; inspect its logs and deliberately remove that failed Job before retrying')
+    return any(c['type'] == 'Complete' and c['status'] == 'True' for c in status.get('conditions', []))
+
+
+def apply_jobs(site, filename):
+    objects = json.loads(filename.read_text())['items']
+    for item in objects:
+        name = item['metadata']['name']
+        if completed_job(site, name):
+            print('Keeping completed Job', name)
+            continue
+        # A matching running Job is applied unchanged, then awaited. Names are spec hashes.
+        run(kubectl(site) + ['apply', '-f', '-'], input=json.dumps(item))
+        run(kubectl(site) + ['wait', '--for=condition=complete', 'job/' + name, '--timeout=1800s'])
+
+
+def cluster_prerequisites(site):
+    k = kubectl(site)
+    run(k + ['get', 'namespace', site['kubernetes']['namespace']], capture=True)
+    claim = json.loads(run(k + ['get', 'pvc', site['kubernetes']['shared_pvc'], '-o', 'json'], capture=True).stdout)
+    if claim.get('status', {}).get('phase') != 'Bound':
+        raise ValueError('The shared PVC must be Bound before deployment')
+    secret = json.loads(run(k + ['get', 'secret', site['kubernetes']['runtime_secret'], '-o', 'json'], capture=True).stdout)
+    required = {'POSTGRES_PASSWORD', 'AIRFLOW__CORE__FERNET_KEY', 'AIRFLOW__WEBSERVER__SECRET_KEY',
+                'AIRFLOW__CORE__INTERNAL_API_SECRET_KEY', 'AIRFLOW_ADMIN_PASSWORD', 'AIRFLOW_ADMIN_USERNAME',
+                'AIRFLOW_ADMIN_EMAIL', 'GCN_DB_PASSWORD'}
+    if not required.issubset(secret.get('data', {})) or any(not secret['data'][x] for x in required):
+        raise ValueError('Runtime Secret is missing required keys; see the deployment guide')
+
+
+def require_links(site):
+    for m in site['module-pipelines']:
+        link = runtime_root(site) / 'dags' / (m['name'] + '.cfmodule')
+        if not link.is_symlink():
+            raise ValueError(f'Module {m["name"]} is not installed; first deploy requires --install-modules')
+
+
+def deploy(site, out, install):
+    verify_sources(site)
+    if not install:
+        require_links(site)
+    active_guard(site, out)
+    if site['deployment']['mode'] == 'compose':
+        secrets = Path(site['compose']['secrets_env_file'])
+        if not secrets.is_file() or secrets.stat().st_mode & 0o077:
+            raise ValueError('Compose secrets_env_file must exist and be private (chmod 600)')
+        c = compose(site, out)
+        # Profiles are site-owned, independent of scientific DAG sources.
+        target = runtime_root(site) / 'task-execution.json'
+        tmp = target.with_suffix('.tmp')
+        tmp.write_text(json.dumps(site['execution'].get('dag_profiles', {})))
+        tmp.replace(target)
+        for command in compose_commands(site, out, install):
+            run(command)
+    else:
+        cluster_prerequisites(site)
+        k = kubectl(site)
+        # The existing namespace, storage, DBs, SMTP and GCN schema belong to the site.
+        run(k + ['apply', '-f', str(out / 'bootstrap.json')])
+        apply_jobs(site, out / 'init.json')
+        if install:
+            apply_jobs(site, out / 'module-install.json')
+        run(k + ['apply', '-f', str(out / 'runtime.json')])
+        for name in ['cosiflow-scheduler', 'cosiflow-webserver']:
+            run(k + ['rollout', 'status', 'deployment/' + name, '--timeout=300s'])
+    print('Application deployed. Run status, verify /health, then trigger scientific acceptance explicitly.')
+
+
+def compose_commands(site, out, install):
+    c = compose(site, out)
+    commands = [c + ['up', '-d', '--wait', 'postgres', 'gcn-mysql', 'mailhog'],
+                c + ['run', '--rm', '--no-deps', 'airflow-init'],
+                c + ['run', '--rm', '--no-deps', 'gcn-client', 'python', '-m', 'app.main', 'init-db']]
+    if install:
+        for m in site['module-pipelines']:
+            commands.append(c + ['run', '--rm', '--no-deps', '-e', 'COSIFLOW_LOADER_LOCAL=true',
+                '-e', 'COSIFLOW_MODULES_HOST_DIR=/home/gamma/airflow/modules_pool', '--entrypoint', 'bash',
+                'airflow-scheduler', '/home/gamma/hot_load_module.sh', m['name'], 'install', '-c',
+                '/home/gamma/airflow/modules_pool/' + m['name'] + '/' + m['config']])
+    commands += [c + ['run', '--rm', '--no-deps', '--entrypoint', 'bash', 'airflow-scheduler', '-ec',
+                    DSN + f'airflow pools set default_pool {site["execution"]["default_pool_slots"]} "Configured deployment pool"'],
+                 c + ['up', '-d', 'airflow-scheduler', 'airflow-webserver']]
+    return commands
+
+
+def plan(site, out, install):
+    mode = site['deployment']['mode']
+    if mode == 'compose':
+        commands = compose_commands(site, out, install)
+        print('Check pinned module sources and idle tasks; atomically write execution profiles; then:')
+    else:
+        k = kubectl(site)
+        names = ['bootstrap.json', 'init.json'] + (['module-install.json'] if install else []) + ['runtime.json']
+        commands = [k + ['apply', '-f', str(out / name)] for name in names]
+        print('Check namespace/PVC/Secret and idle task workers; skip completed spec-hashed Jobs; wait for each Job before runtime rollout.')
+    for cmd in commands:
+        print(shlex.join(cmd))
+    print('No cluster, Docker, Git or credentials were accessed. Use deploy to execute the ordered workflow.')
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=['validate', 'prepare', 'render', 'plan', 'build', 'deploy', 'status', 'stop'])
+    parser.add_argument('--config', required=True, type=Path)
+    parser.add_argument('--output', type=Path, help='New bundle directory (render/plan only); never overwritten')
+    parser.add_argument('--install-modules', action='store_true', help='Explicitly run module environment installers during deploy')
+    args = parser.parse_args(argv)
+    if args.output is not None and args.command not in ['render', 'plan']:
+        parser.error('--output is only supported by render/plan')
+    if args.install_modules and args.command not in ['deploy', 'plan']:
+        parser.error('--install-modules is only supported by deploy/plan')
+    site = load_site(args.config)
+    if args.command == 'validate':
+        print('Valid site configuration:', site['deployment']['mode'])
+        return
+    if args.command == 'prepare':
+        prepare(site)
+        return
+    if args.command in ['render', 'plan']:
+        if args.output is None:
+            parser.error('render/plan require --output pointing to a new directory')
+        out = write_bundle(site, args.output.resolve())
+        print('Rendered', out)
+        if args.command == 'plan':
+            plan(site, out, args.install_modules)
+        return
+    # A private temporary bundle avoids stale manifests and unsafe output overwrites.
+    with tempfile.TemporaryDirectory(prefix='cosiflowctl-') as tmp:
+        out = write_bundle(site, Path(tmp) / 'bundle')
+        mode = site['deployment']['mode']
+        if args.command == 'build':
+            if mode == 'compose':
+                run(compose(site, out) + ['build', 'airflow-init', 'gcn-client'])
+            else:
+                base = site['deployment']['name'] + '-base:build'
+                run(['docker', 'build', '-t', base, '--build-arg', f'UID={site["runtime"]["uid"]}', '--build-arg', f'GID={site["runtime"]["gid"]}', '-f', str(ROOT / 'env/Dockerfile.airflow'), str(ROOT / 'env')])
+                run(['docker', 'build', '-t', site['application']['image'], '--build-arg', 'COSIFLOW_BASE_IMAGE=' + base, '-f', str(ROOT / 'deployment/kubernetes/Dockerfile'), str(ROOT)])
+        elif args.command == 'deploy':
+            deploy(site, out, args.install_modules)
+        elif args.command == 'status':
+            run(compose(site, out) + ['ps', '-a'] if mode == 'compose' else kubectl(site) + ['get', 'deployments,pods,pvc', '-o', 'wide'])
+        elif args.command == 'stop':
+            active_guard(site, out)
+            run(compose(site, out) + ['stop'] if mode == 'compose' else kubectl(site) + ['scale', 'deployment/cosiflow-scheduler', 'deployment/cosiflow-webserver', '--replicas=0'])
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, OSError, yaml.YAMLError, subprocess.CalledProcessError) as exc:
+        # Avoid printing subprocess output, which may contain private config.
+        if isinstance(exc, subprocess.CalledProcessError):
+            print('Deployment command failed; inspect the service/Job logs. Exit code:', exc.returncode, file=sys.stderr)
+        else:
+            print(str(exc), file=sys.stderr)
+        sys.exit(1)

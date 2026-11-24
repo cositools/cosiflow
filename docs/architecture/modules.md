@@ -1,0 +1,434 @@
+# COSIflow modules
+
+A COSIflow module adds DAG definitions, pipeline code, managed Python
+environments, and optionally a Docker image to a running COSIflow instance.
+`hot_load_module.sh` installs, updates, and removes modules from the dedicated
+`modules-pool/` directory.
+
+## Prerequisites
+
+Before managing modules:
+
+1. configure and start COSIflow as described in the
+   [installation guide](../getting-started/installation.md);
+2. place every trusted module directory under `cosiflow/modules-pool/`;
+3. start Airflow with `docker-compose.development.yaml` and run
+   `hot_load_module.sh` from the host, normally from `cosiflow/env`;
+4. generate the required ignored `cosiflow/env/.env` as documented in the main
+   README; the stack intentionally fails when a credential is absent.
+
+For authenticated GCN Kafka consumption, `.env` needs:
+
+```dotenv
+GCN_CLIENT_ID=<your-gcn-client-id>
+GCN_CLIENT_SECRET=<your-gcn-client-secret>
+```
+
+Public-consumer credentials can receive public notices. Publishing COSI mission
+notices requires separate producer authorization from the GCN team. Keep
+`GCN_PRODUCER_ENABLED=false` and `GCN_DRY_RUN=true` for ordinary development.
+
+## Module layout
+
+The standard layout is:
+
+```text
+your-module/
+├── env/
+│   ├── Dockerfile
+│   ├── requirements-main.txt
+│   └── your-module.config.yaml
+└── src/
+    ├── dags/
+    │   └── *.py
+    └── pipeline/
+        └── *.py
+```
+
+`env/Dockerfile` is needed only when `install_mode` builds a module image.
+Requirement filenames are arbitrary; the YAML configuration selects them.
+
+The current Fast Transient Analysis Pipeline is a concrete multi-environment
+example. Place its checkout under the dedicated module pool so the Airflow
+container does not need access to the parent workspace:
+
+```text
+fast-transient-analysis-pipeline/
+├── env/
+│   ├── Dockerfile
+│   ├── fta-pipe.config.yaml
+│   ├── requirements_cosipy.txt
+│   ├── requirements_bct.txt
+│   └── requirements_nimcosipy.txt
+└── src/
+    ├── dags/
+    │   ├── cosipipe_initpipeline.py
+    │   ├── cosidag_BGO.py
+    │   ├── cosidag_GeD.py
+    │   └── cosidag_ARMselection.py
+    └── pipeline/
+        ├── stage_files.py
+        ├── bkg_cut.py
+        └── fast_transient_pipeline/
+```
+
+### Cross-repository Python contracts
+
+Module DAGs are external consumers of the Python files mounted at
+`/home/gamma/airflow/modules`. Public imports therefore cannot be classified as
+dead code by searching the COSIflow repository alone. In particular, the FasTP
+`cosidag_GeD.py`, `cosidag_BGO.py`, and `cosidag_ARMselection.py` DAGs import
+`COSIDAG` and the module-level `cfg` compatibility helper.
+
+Before removing or renaming an exported helper, search the configured
+`modules_pool` repositories, run their DAG-import checks, and deploy producer
+and consumer changes together. Retain a compatibility shim when an atomic
+cross-repository migration is not available.
+
+## Install a module
+
+With the COSIflow stack running:
+
+```bash
+cd cosiflow/env
+./hot_load_module.sh <module-directory> install
+```
+
+Start the stack with the development override before running the installer:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.development.yaml up -d
+```
+
+The installer:
+
+1. creates
+   `/home/gamma/airflow/dags/<module>.cfmodule`, pointing into the module's DAG
+   directory under `modules_pool`;
+2. creates the corresponding pipeline link under
+   `/home/gamma/airflow/pipeline`;
+3. recreates enabled Python environments when requested;
+4. builds `<module>:latest` when requested.
+
+Airflow can take a short time to parse newly linked DAGs.
+
+### Command-line path overrides
+
+Paths are relative to the module root. Absolute paths are accepted only when
+their canonical target is still inside that module root:
+
+```bash
+./hot_load_module.sh <module> install \
+  -d src/dags \
+  -p src/pipeline \
+  -f env
+```
+
+| Option | Meaning |
+| --- | --- |
+| `-d` | DAG directory |
+| `-p` | pipeline directory |
+| `-f` | Docker build context containing `Dockerfile` |
+| `-e` | create Python environments |
+| `-r` | requirements file for legacy single-environment mode |
+| `-E name1,name2` | create selected configured environments |
+| `-E all` | create every configured environment |
+| `-a` | create environments and build the image |
+| `-c` | use an explicit YAML configuration file |
+
+## YAML configuration
+
+The hot-loader checks, in order:
+
+1. `module_envs.yaml` in the module root;
+2. `cosiflow.config.yaml` in the module root;
+3. the first `*.config.yaml` in the module root;
+4. the first `*.config.yaml` under the module's `env/` directory.
+
+An explicit `-c` path overrides auto-detection, but it must resolve to a regular
+file inside the selected module. The loader uses PyYAML from the running
+Airflow environment, rejects duplicate keys and schema/type errors, and
+loads one normalized snapshot before creating links, environments, or images.
+The source YAML is not reparsed during the operation, so one invocation cannot
+mix values from different versions of a concurrently edited file. Command-line
+overrides are applied once to that snapshot.
+
+Example:
+
+```yaml
+install_mode: both
+
+paths:
+  dags: src/dags
+  pipeline: src/pipeline
+  images: env
+
+environments:
+  analysis:
+    requirements: env/requirements-analysis.txt
+    requirements_no_deps: env/requirements-nodeps.txt
+    venv_path: /home/gamma/envs/analysis
+    enabled: true
+    description: "Primary analysis environment"
+    python_version: "3.12"
+
+default_environment: analysis
+```
+
+### Installation modes
+
+| `install_mode` | Python environments | Docker image | Links |
+| --- | --- | --- | --- |
+| `environment` | yes | no | yes |
+| `container` | no | yes | yes |
+| `both` | yes | yes | yes |
+| `none` | no | no | yes |
+
+### Environment fields
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `requirements` | yes | Main pip requirement file |
+| `requirements_no_deps` | no | Additional file installed with `pip --no-deps` |
+| `venv_path` | no | Target path; defaults to `/home/gamma/envs/<name>` |
+| `enabled` | no | Installed by default when true |
+| `description` | no | Text shown in hot-loader logs |
+| `python_version` | no | Interpreter suffix, for example `3.11` or `3.12` |
+
+`default_environment` is useful metadata for module documentation and code, but
+the current hot-loader does not select environments from it. Selection is based
+on `enabled` or `-E`.
+
+When environment creation is requested, the effective selection must contain
+at least one configured environment. A configuration in `environment` or
+`both` mode with no enabled environment exits non-zero before links are
+created. Use `-E name1,name2` for an explicit subset or `-E all` for every
+configured environment. Duplicate and unknown selections are rejected.
+
+### Lifecycle and success checks
+
+The loader reports a step as successful only after checking its result:
+
+- DAG and pipeline links must exist inside the container and resolve to the
+  expected module directories;
+- a managed environment must contain an executable interpreter, report the
+  configured environment as `sys.prefix`, and pass `python -m pip check`;
+- the activation helper is written as the `gamma` user, checked with
+  `bash -n`, and sourced in a clean Bash process to verify `VIRTUAL_ENV` and
+  the selected `python` path;
+- removal verifies that links, environments, and activation helpers are
+  absent before reporting success;
+- an already absent image is an idempotent success, while an unavailable
+  Docker daemon or a failed image removal is an error.
+
+Environment creation is fail-fast. If creation or validation fails, the
+partial environment and its activation helper are removed and the loader exits
+non-zero without printing the final `ready` message. Repeating install/update
+recreates the managed environments; repeating remove succeeds only after
+confirming that the managed artifacts are absent.
+
+### Loader safety boundaries
+
+Module names and environment names are restricted to letters, digits, `.`, `_`,
+and `-`; separators, traversal components, whitespace, and shell metacharacters
+are rejected. DAG, pipeline, Docker-context, configuration, and requirements
+paths must resolve inside the module root, including after resolving symlinks.
+
+Managed environment paths must be strict descendants of
+`/home/gamma/envs`. The root itself, parent paths, prefix-similar directories,
+and symlinks resolving outside that root are rejected. Two configured
+environments may not use the same target or ancestor/descendant targets. Every
+recursive environment deletion passes through this check. Validation failures
+exit before the loader runs mutating Docker commands.
+
+YAML values are passed as ordinary command arguments or file content; the
+loader does not interpolate configuration values into `bash -c` strings.
+
+## Update a module
+
+```bash
+cd cosiflow/env
+./hot_load_module.sh <module-directory> update
+```
+
+`update` refreshes the links and repeats the configured installation. Managed
+virtual environments are deleted and recreated to avoid stale dependencies.
+The Docker image is rebuilt when the configured installation mode includes it.
+
+Source-only DAG or pipeline edits are already visible through the symlinks, but
+`update` is still appropriate after dependency or image changes.
+
+## Remove a module
+
+```bash
+cd cosiflow/env
+./hot_load_module.sh <module-directory> remove
+```
+
+The module directory must still exist. When a configuration is present,
+`remove` performs the same module-root and environment-path preflight as
+installation before unlinking or deleting anything. Removal does not require
+the configured Dockerfile to remain present.
+
+With a detected configuration, removal deletes:
+
+- the DAG and pipeline symlinks;
+- every environment declared in the configuration, including its activation
+  helper;
+- `<module>:latest` when `install_mode` is `container` or `both`.
+
+The module source directory and scientific data are not deleted. Without a
+configuration file, legacy removal attempts to remove the default `cosipy`
+environment and module image as well as the links.
+
+## Creating a new module
+
+Create the directories from the COSIflow repository root:
+
+```bash
+mkdir -p modules-pool/my-module/src/dags
+mkdir -p modules-pool/my-module/src/pipeline
+mkdir -p modules-pool/my-module/env
+```
+
+Add at least:
+
+1. a DAG file under `src/dags`;
+2. any task libraries under `src/pipeline`;
+3. a `*.config.yaml` describing the desired links and runtimes;
+4. requirement files for external-Python tasks;
+5. a Dockerfile only if Docker tasks need a module image.
+
+COSIDAG development is documented in the
+[COSIDAG reference](../reference/cosidag.md).
+
+## Module Dockerfile
+
+Module images are built only for externally orchestrated runners. Airflow has
+no Docker daemon access. A minimal Debian/Python template is:
+
+```dockerfile
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG UID=501
+ARG GID=20
+
+RUN groupadd -g "${GID}" gamma || true && \
+    useradd -m -u "${UID}" -g "${GID}" -s /bin/bash gamma || true
+
+USER gamma
+WORKDIR /home/gamma
+
+RUN python -m venv /home/gamma/envs/analysis
+COPY --chown=gamma:gamma requirements-analysis.txt /home/gamma/requirements.txt
+RUN /home/gamma/envs/analysis/bin/python -m pip install --upgrade pip setuptools wheel && \
+    /home/gamma/envs/analysis/bin/python -m pip install -r /home/gamma/requirements.txt
+
+ENV VIRTUAL_ENV=/home/gamma/envs/analysis
+ENV PATH="/home/gamma/envs/analysis/bin:${PATH}"
+
+CMD ["/bin/bash"]
+```
+
+Choose an image and system packages compatible with the scientific stack.
+Match the module image UID/GID to the Airflow `gamma` user when writing to
+shared mounts. Pin released packages and VCS commits where reproducibility is
+required.
+
+## Operator selection
+
+| Operator | Use when |
+| --- | --- |
+| `PythonOperator` | dependencies already exist in the Airflow environment |
+| `ExternalPythonOperator` | the task needs a managed, isolated Python environment |
+| Dedicated external runner | the task needs a container image; never grant the Airflow webserver Docker access |
+
+Container images improve isolation, but reproducibility still depends on pinned
+base-image digests and dependency versions.
+
+## Plugin RBAC provisioning
+
+During `airflow-init`, the entrypoint migrates the metastore, runs
+`airflow sync-perm`, synchronizes the Admin account, and then executes
+`/home/gamma/configure_rbac.py`. The configurator uses Flask-AppBuilder APIs,
+never metadata-table SQL, and fails init if the verified matrix differs.
+
+| Permission | Viewer | Scientist | Operator | Admin |
+| --- | :---: | :---: | :---: | :---: |
+| `can_read / COSIflow GCN Notices` | No | Yes | Yes | FAB Admin |
+| `can_create / COSIflow GCN Inbox` | No | No | Yes | FAB Admin |
+| `can_create / COSIflow GCN Outbox` | No | No | Yes | FAB Admin |
+| `can_read / COSIflow Scientific Data` | No | Yes | Yes | FAB Admin |
+| `can_read / COSIflow COSIDAG State` | No | Yes | Yes | FAB Admin |
+| `can_edit / COSIflow COSIDAG State` | No | No | Yes | FAB Admin |
+| `can_edit / COSIflow DAG Catalog` | No | No | Yes | FAB Admin |
+| `can_read / COSIflow Mail Sandbox` | No | No | Yes | FAB Admin |
+
+Scientist is extended from the current Viewer permission set and Operator from
+the current Op set. Default Airflow roles are not modified. Reruns add missing
+base or COSIflow permissions, remove only obsolete `COSIflow *` permissions and
+managed menu entries from the two managed roles, and preserve unrelated custom
+permissions.
+
+Run and verify twice after a rollout:
+
+```bash
+docker compose run --rm airflow-init
+docker compose run --rm airflow-init
+docker compose run --rm --entrypoint python airflow-init /home/gamma/configure_rbac.py --verify-only
+```
+
+Before assigning real users, confirm that Viewer has no `COSIflow *`
+permission. Assign read-only scientific users to Scientist and operational
+users to Operator. Keep Admin limited to administrators. The menu policy is
+defense in depth: direct requests remain protected by route permissions.
+
+## Troubleshooting
+
+### DAGs do not appear
+
+Check the links and parser from inside Airflow:
+
+```bash
+docker exec -u gamma cosi_airflow_scheduler \
+  ls -la /home/gamma/airflow/dags
+
+docker exec -u gamma cosi_airflow_scheduler \
+  airflow dags list
+```
+
+The Airflow menu **Develop Tools → Refresh DAGs List** runs the same parser
+diagnostic and synchronizes the resulting DAG bag.
+
+### Environment creation fails
+
+- verify that the requested interpreter exists in the Airflow image;
+- verify every requirement path relative to the module root;
+- recreate rather than modifying an old environment in place;
+- inspect the hot-loader output for the exact pip command that failed.
+
+### Docker build fails
+
+- verify `paths.images` and the Dockerfile name;
+- remember that the build context is the configured `images` directory;
+- make sure every `COPY` source is inside that context;
+- verify available disk and memory.
+
+### Permission errors
+
+- align the COSIflow and module-image UID/GID;
+- pre-create host bind-mount directories as the host user;
+- inspect ownership both on the host and inside the container.
+
+### Module not found
+
+- confirm that its directory is under `cosiflow/modules-pool/`, or under the
+  dedicated directory selected by `COSIFLOW_MODULES_HOST_DIR`;
+- match the command argument to the directory name exactly;
+- verify the `modules_pool` mount in `docker-compose.yaml`;
+- verify that Airflow was started with `docker-compose.development.yaml`.

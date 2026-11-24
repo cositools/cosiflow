@@ -1,0 +1,159 @@
+# Configuration
+
+The executable configuration sources are
+[`env/.env.example`](https://github.com/cositools/cosiflow/blob/dev-review/env/.env.example),
+[`env/docker-compose.yaml`](https://github.com/cositools/cosiflow/blob/dev-review/env/docker-compose.yaml),
+and the
+[`Airflow entrypoint`](https://github.com/cositools/cosiflow/blob/dev-review/env/entrypoint-airflow.sh).
+The ignored `env/.env` supplies local values to Compose; it must never be
+committed. Compose uses it only for interpolation. The base stack does not pass
+it through `env_file` or make it reachable through a repository-root mount.
+
+## Required secrets
+
+The template contains nine blank secret values:
+
+| Variable | Consumer |
+| --- | --- |
+| `AIRFLOW_ADMIN_PASSWORD` | Initial/synchronized Airflow administrator |
+| `AIRFLOW__WEBSERVER__SECRET_KEY` | Airflow web sessions |
+| `AIRFLOW__CORE__INTERNAL_API_SECRET_KEY` | Airflow internal API |
+| `AIRFLOW__CORE__FERNET_KEY` | Airflow connection and variable encryption |
+| `POSTGRES_PASSWORD` | Airflow metadata database |
+| `GCN_DB_PASSWORD` | GCN application database user |
+| `GCN_MYSQL_ROOT_PASSWORD` | GCN MySQL initialization and administration |
+| `GCN_CLIENT_ID` | GCN Kafka authentication |
+| `GCN_CLIENT_SECRET` | GCN Kafka authentication |
+
+Compose uses required-value interpolation, so blank values fail before the
+affected containers are created. The Airflow entrypoint independently validates
+its runtime secrets and never prints them. Airflow web, internal API, and
+Fernet keys must be distinct.
+
+Secret validation is service-scoped. `airflow-init` receives the administrator
+password but no GCN database credential. `airflow-webserver` and
+`airflow-scheduler` receive the GCN application credential but no administrator
+username, email, or password. Each database and the GCN client retain only
+their own credentials.
+
+## Local ports
+
+| Variable | Default | Binding |
+| --- | --- | --- |
+| `AIRFLOW_WEBUI_PORT` | `8080` | `127.0.0.1` host to Airflow `8080` |
+| `MAILHOG_WEBUI_PORT` | `8025` | `127.0.0.1` host to MailHog `8025` |
+
+MailHog SMTP is also bound to `127.0.0.1:1025`. PostgreSQL and GCN MySQL have
+no published host port. Changing `HOST_IP` does not change the Compose bind
+address; the checked-in value is used to construct UI links inside the runtime.
+Both UI port values must be integers from 1 through 65535 or Airflow startup
+fails before either runtime process is executed.
+
+## Notification delivery
+
+Recipient preferences are stored in PostgreSQL and linked to Airflow users; no
+recipient list is versioned. The initialization service applies the COSIflow
+notification migration and gives active Admin users idempotent default
+subscriptions to task and DAG failures. Retry and success subscriptions remain
+explicit opt-ins in the administration view.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AIRFLOW_PUBLIC_BASE_URL` | derived from `HOST_IP` and `AIRFLOW_WEBUI_PORT` | Optional public base used by Airflow when constructing links; set an explicit HTTPS/reverse-proxy URL in shared deployments |
+| `COSIFLOW_ALERT_FALLBACK_RECIPIENTS` | empty | Comma-separated deployment-only fallback used only when subscription lookup fails |
+| `COSIFLOW_ALERT_LOG_TAIL_LINES` | `30` | Maximum lines retained in the email preview |
+| `COSIFLOW_ALERT_LOG_TAIL_BYTES` | `65536` | Maximum bytes read from the end of the current log |
+
+Fallback values must be simple valid email addresses, must not be committed to
+`.env.example`, and do not replace normal database routing. Invalid limits are
+rejected in favor of safe built-in bounds. Details are in
+[Notification subscriptions](../plugins/notification-subscriptions.md).
+
+## Data paths
+
+| Variable | Container default | Purpose |
+| --- | --- | --- |
+| `COSI_DATA_DIR` | `/home/gamma/workspace/data` | Root presented by Data Explorer |
+| `COSI_INPUT_DIR` | `/home/gamma/workspace/data/input` | General input domain |
+| `COSI_LOG_DIR` | `/home/gamma/workspace/log` | Pipeline-configurable log path |
+| `COSI_OBS_DIR` | `/home/gamma/workspace/data/obs` | Observation data |
+| `COSI_TRANSIENT_DIR` | `/home/gamma/workspace/data/transient` | Transient products |
+| `COSI_TRIGGER_DIR` | `/home/gamma/workspace/data/tdrss` | Trigger data |
+| `COSI_MAPS_DIR` | `/home/gamma/workspace/data/maps` | Map products |
+| `COSI_SOURCE_DIR` | `/home/gamma/workspace/data/source` | Source products |
+
+Compose bind-mounts host `data/heasarc` at the `COSI_DATA_DIR` default and host
+`data/logs` at Airflow's `/home/gamma/airflow/logs`. The similarly named
+`COSI_LOG_DIR` is a separate environment contract and is not that Airflow log
+mount.
+
+`COSI_DATA_DIR` must be an absolute path and cannot be `/`. The entrypoint
+validates it before creating the `obs`, `transient`, `tdrss`, `maps`, and
+`source` subdirectories. Missing, relative, and filesystem-root values fail
+without starting Airflow.
+
+## Container mount isolation
+
+The base Compose file exposes only narrow paths:
+
+| Service | Read-only mounts | Read-write mounts |
+| --- | --- | --- |
+| `airflow-init` | plugins, modules, `airflow.cfg` | scientific data, Airflow logs |
+| `airflow-webserver` | managed Python environments, DAGs, dedicated module pool, plugins, pipeline, callbacks, modules, `airflow.cfg` | scientific data, Airflow logs |
+| `airflow-scheduler` | managed Python environments, DAGs, dedicated module pool, plugins, pipeline, callbacks, modules, `airflow.cfg` | scientific data, Airflow logs |
+| `postgres` | none | PostgreSQL data |
+| `gcn-mysql` | none | GCN MySQL data |
+| `gcn-client`, `mailhog` | none | none |
+
+The parent workspace and COSIflow repository root are not mounted. The default
+module source is `modules-pool/`; set `COSIFLOW_MODULES_HOST_DIR` to another
+dedicated directory if needed. That directory must contain only trusted module
+sources and must not contain credentials or unrelated projects.
+
+`docker-compose.development.yaml` explicitly makes the scheduler's DAG,
+pipeline, and managed-environment paths writable and mounts `test/` read-only.
+The separate `docker-compose.x11.yaml` override adds `DISPLAY` and the read-only
+X11 socket only to the scheduler, where LocalExecutor tasks run. Neither
+capability is present in the base stack.
+
+## GCN safety defaults
+
+The checked-in defaults consume the configured inbound topics but keep outbound
+publication conservative:
+
+```text
+GCN_PRODUCER_ENABLED=false
+GCN_DRY_RUN=true
+GCN_REQUIRE_TEST_TOPICS=true
+```
+
+The allowlist contains only synthetic COSI test topics. Membership is exact,
+and `GCN_REQUIRE_TEST_TOPICS=true` additionally requires a dot-delimited
+segment equal to `test`; names such as `latest` or `contest` do not pass. An
+empty allowlist fails closed. These defaults support local validation even
+when no real GCN topic has been assigned. Do not enable real publication
+without an approved topic, producer authorization, and the review described in the
+[GCN client reference](../reference/gcn-client.md#publishing-outside-dry-run-mode).
+
+## Credential rotation
+
+Do not copy internal security-review files into public documentation. The
+public rotation contract is the checked-in
+[`env/rotate-local-databases.sh`](https://github.com/cositools/cosiflow/blob/dev-review/env/rotate-local-databases.sh)
+script:
+
+1. Create and verify restorable backups of both database directories.
+2. Stop the Compose stack.
+3. Put newly generated database credentials in the protected `env/.env` file.
+4. Supply the previous PostgreSQL, GCN application, and GCN root passwords as
+   `OLD_POSTGRES_PASSWORD`, `OLD_GCN_DB_PASSWORD`, and
+   `OLD_GCN_MYSQL_ROOT_PASSWORD` through a protected shell or secret runner.
+5. From `cosiflow/env`, run `./rotate-local-databases.sh --backup-confirmed`.
+6. Restart the stack and verify service health and application access.
+
+The script refuses to run without explicit backup confirmation. It updates all
+three database principals, checks that each new credential works, and checks
+that each old credential is rejected. It does not create or verify the backup
+for you. Rotate Airflow session, internal API, and Fernet keys under a separate
+maintenance plan because changing them can invalidate sessions or require
+re-encryption of stored data.

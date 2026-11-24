@@ -1,0 +1,26 @@
+{% extends "airflow/main.html" %}
+
+{% block title %}Refresh DAG Catalog - Airflow{% endblock %}
+
+{% block content %}
+{% include "cosiflow_ui/styles.html" %}
+<div class="cosiflow-page cosiflow-page--contained">
+  <h2 class="cosiflow-page-title">Refresh DAG Catalog</h2>
+  <p>Run a manual DAG parse and synchronize the catalog with the Airflow metastore.</p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category if category != 'error' else 'danger' }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <form method="post" action="{{ url_for('RefreshDagsView.refresh_dags') }}">
+    {% if csrf_token %}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    {% endif %}
+    <button type="submit" class="btn btn-warning" onclick="return confirm('Refresh and synchronize the DAG catalog now?');">
+      Refresh DAGs List
+    </button>
+  </form>
+</div>
+{% endblock %}
